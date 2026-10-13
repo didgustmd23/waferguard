@@ -42,21 +42,25 @@ class SensorQualityFilter(TransformerMixin, BaseEstimator):
             raise ValueError("센서 품질 필터에는 컬럼명이 중복되지 않은 DataFrame이 필요합니다.")
         if not 0 <= self.missing_ratio_threshold <= 1:
             raise ValueError("센서 결측률 기준은 0 이상 1 이하여야 합니다.")
+        
         self.feature_names_in_ = np.asarray(X.columns, dtype=object)
         self.n_features_in_ = X.shape[1]
         self.missing_ratios_ = X.isna().mean()
         self.high_missing_features_ = tuple(
             X.columns[self.missing_ratios_ > self.missing_ratio_threshold]
         )
+
         # 관측값이 하나뿐인 컬럼은 결측값 대치 이전에 상수 센서로 판정한다.
         remaining = [column for column in X if column not in self.high_missing_features_]
         self.constant_features_ = tuple(
             column for column in remaining
             if self.drop_zero_variance and X[column].nunique(dropna=True) <= 1
         )
+
         self.retained_features_ = tuple(
             column for column in remaining if column not in self.constant_features_
         )
+
         if not self.retained_features_:
             raise ValueError("센서 품질 필터 적용 후 남은 feature가 없습니다. 학습 데이터와 Profile 기준을 확인하세요.")
         return self
@@ -64,17 +68,22 @@ class SensorQualityFilter(TransformerMixin, BaseEstimator):
     def transform(self, X):
         """학습 시 유지하기로 한 열만 원래 순서대로 반환한다."""
         check_is_fitted(self, "retained_features_")
+        
         # 평가 데이터의 결측률이나 상수 여부를 다시 계산하지 않는다.
         if not isinstance(X, pd.DataFrame):
             raise ValueError("센서 품질 필터에는 DataFrame이 필요합니다.")
+        
         missing = sorted(set(self.retained_features_) - set(X.columns))
+
         if missing:
             raise ValueError(f"학습에서 유지한 feature가 입력에 없습니다: {missing}")
+        
         return X.loc[:, list(self.retained_features_)].copy()
 
     def get_feature_names_out(self, input_features=None):
         """필터 이후 남은 특징 이름을 scikit-learn API 형식으로 돌려준다."""
         check_is_fitted(self, "retained_features_")
+
         return np.asarray(self.retained_features_, dtype=object)
 
 
@@ -85,6 +94,7 @@ class SensorQualityFilter(TransformerMixin, BaseEstimator):
 def quality_filter_record(pipeline, *, fold=None):
     """fit된 Pipeline의 센서 제거 기준·개수·이름을 기록용 사전으로 만든다."""
     quality = pipeline.named_steps["quality_filter"]
+    
     return {
         "fold": fold,
         "input_feature_count": quality.n_features_in_,
@@ -127,10 +137,13 @@ def preprocessing_steps(dataset, *, scale=False, pandas_output=False):
     quality_steps = [("quality_filter", SensorQualityFilter(
         dataset.missing_ratio_threshold, dataset.drop_zero_variance
     ))]
+
     # 수치형 데이터의 기존 단계 이름은 유지해 기존 실행 경로와 호환한다.
     numeric_steps = [("imputer", SimpleImputer(strategy="median", keep_empty_features=True))]
+    
     if scale:
         numeric_steps.append(("scaler", StandardScaler()))
+
     if not dataset.categorical_feature_columns:
         if pandas_output:
             for _, transformer in numeric_steps:
@@ -142,6 +155,7 @@ def preprocessing_steps(dataset, *, scale=False, pandas_output=False):
         ("imputer", SimpleImputer(strategy="most_frequent", keep_empty_features=True)),
         ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
     ])
+
     preprocessor = ColumnTransformer([
         ("numeric", Pipeline(numeric_steps), partial(
             _numeric_columns, categorical_columns=dataset.categorical_feature_columns
@@ -150,8 +164,10 @@ def preprocessing_steps(dataset, *, scale=False, pandas_output=False):
             _categorical_columns, categorical_columns=dataset.categorical_feature_columns
         )),
     ], sparse_threshold=0)
+
     if pandas_output:
         preprocessor.set_output(transform="pandas")
+        
     return quality_steps + [("preprocessor", preprocessor)]
 
 

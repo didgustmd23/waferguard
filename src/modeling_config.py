@@ -204,14 +204,17 @@ def _require_value(
 def _load_optional_column_names(source: dict[str, Any], key: str) -> tuple[str, ...]:
     # Profile에 해당 역할을 선언하지 않으면 빈 목록으로 처리한다.
     value = source.get(key, [])
+
     # 컬럼 역할은 실제 DataFrame 컬럼명과 비교하므로 비어 있지 않은 문자열만 허용한다.
     if not isinstance(value, list) or not all(
         isinstance(column, str) and column for column in value
     ):
         raise ValueError(f"설정 key '{key}'는 비어 있지 않은 문자열 목록이어야 합니다")
+    
     # 같은 역할을 두 번 선언하면 feature 제외 규칙이 모호해지므로 차단한다.
     if len(value) != len(set(value)):
         raise ValueError(f"설정 key '{key}'에 중복값이 있으면 안 됩니다")
+    
     return tuple(value)
 
 
@@ -266,10 +269,13 @@ def load_dataset_spec(
     label_column = _require_value(columns, "label", str)
     timestamp_column = columns.get("timestamp")
     timestamp_format = columns.get("timestamp_format")
+
     if timestamp_column is not None and not isinstance(timestamp_column, str):
         raise ValueError("설정 key 'columns.timestamp'는 문자열 또는 null이어야 합니다")
+    
     if timestamp_format is not None and not isinstance(timestamp_format, str):
         raise ValueError("설정 key 'columns.timestamp_format'는 문자열 또는 null이어야 합니다")
+    
     if (timestamp_column is None) != (timestamp_format is None):
         raise ValueError("columns.timestamp와 columns.timestamp_format은 함께 설정해야 합니다")
 
@@ -277,20 +283,27 @@ def load_dataset_spec(
     raw_column_roles = raw_profile.get("column_roles", {})
     if not isinstance(raw_column_roles, dict):
         raise ValueError("설정 key 'column_roles'는 object여야 합니다")
+    
     id_columns = _load_optional_column_names(raw_column_roles, "id_columns")
     group_columns = _load_optional_column_names(raw_column_roles, "group_columns")
+
     excluded_feature_columns = _load_optional_column_names(
         raw_column_roles, "excluded_feature_columns"
     )
+
     role_columns = id_columns + group_columns + excluded_feature_columns
+
     if len(role_columns) != len(set(role_columns)):
         raise ValueError("column 역할 목록에 같은 column을 두 번 지정하면 안 됩니다")
 
     # Label·timestamp는 이미 모델 입력에서 제외되므로 역할 목록에 중복 선언하지 않음
     reserved_columns = {label_column}
+
     if timestamp_column is not None:
         reserved_columns.add(timestamp_column)
+
     duplicated_roles = [column for column in role_columns if column in reserved_columns]
+
     if duplicated_roles:
         raise ValueError(
             "column 역할 목록에 label 또는 timestamp column을 중복 지정하면 안 됩니다: "
@@ -299,22 +312,28 @@ def load_dataset_spec(
 
     # 범주형 feature는 명시적으로 선언하고, 나머지 선택 feature는 수치형으로 검증한다.
     raw_feature_types = raw_profile.get("feature_types", {})
+
     if not isinstance(raw_feature_types, dict):
         raise ValueError("설정 key 'feature_types'는 object여야 합니다")
+    
     categorical_feature_columns = _load_optional_column_names(
         raw_feature_types, "categorical_columns"
     )
+
     invalid_categorical_roles = [
         column for column in categorical_feature_columns if column in reserved_columns
     ]
+
     if invalid_categorical_roles:
         raise ValueError(
             "feature_types.categorical_columns에 label 또는 timestamp를 포함하면 안 됩니다: "
             f"{invalid_categorical_roles}"
         )
+    
     overlapping_roles = [
         column for column in categorical_feature_columns if column in role_columns
     ]
+
     if overlapping_roles:
         raise ValueError(
             "feature_types.categorical_columns에 feature가 아닌 column을 포함하면 안 됩니다: "
@@ -325,18 +344,22 @@ def load_dataset_spec(
     label_types = (int, float, str)
     positive_label = _require_value(labels, "positive", label_types)
     negative_label = _require_value(labels, "negative", label_types)
+    
     if isinstance(positive_label, bool) or isinstance(negative_label, bool):
         raise ValueError("labels.positive와 labels.negative는 bool 값이면 안 됩니다")
+    
     if positive_label == negative_label:
         raise ValueError("labels.positive와 labels.negative는 서로 달라야 합니다")
 
     # Feature 선택 방법을 읽고 prefix 방식일 때만 prefix 값을 요구
     feature_selection_mode = _require_value(feature_columns, "selection", str)
     feature_column_prefix = feature_columns.get("prefix")
+
     if feature_selection_mode not in {"prefix", "all_except_metadata"}:
         raise ValueError(
             "feature_columns.selection은 'prefix' 또는 'all_except_metadata'여야 합니다"
         )
+    
     if feature_selection_mode == "prefix":
         if not isinstance(feature_column_prefix, str) or not feature_column_prefix:
             raise ValueError("prefix 방식의 feature_columns.prefix는 비어 있지 않은 문자열이어야 합니다")
@@ -347,13 +370,16 @@ def load_dataset_spec(
     missing_ratio_threshold = float(
         _require_value(quality_rules, "missing_ratio_threshold", (int, float))
     )
+
     drop_zero_variance = _require_value(quality_rules, "drop_zero_variance", bool)
+
     if not 0.0 <= missing_ratio_threshold <= 1.0:
         raise ValueError("quality_rules.missing_ratio_threshold는 0 이상 1 이하여야 합니다")
 
     # 원본 파일 형식이 정의된 경우 source 목록과 adapter 설정을 함께 검증
     ingestion: IngestionSpec | None = None
     raw_ingestion = raw_profile.get("ingestion")
+
     if raw_ingestion is not None:
         if not isinstance(raw_ingestion, dict):
             raise ValueError("설정 key 'ingestion'은 object 또는 null이어야 합니다")
@@ -363,17 +389,23 @@ def load_dataset_spec(
 
         # 각 원본 source의 이름·경로·읽기 옵션을 Profile에서 독립적으로 읽음
         raw_sources = _require_value(raw_ingestion, "sources", list)
+
         if not raw_sources:
             raise ValueError("ingestion.sources에는 source가 하나 이상 있어야 합니다")
+        
         sources: list[IngestionSourceSpec] = []
+
         for raw_source in raw_sources:
             if not isinstance(raw_source, dict):
                 raise ValueError("각 ingestion source는 object여야 합니다")
+            
             source_name = _require_value(raw_source, "name", str)
             source_path = Path(_require_value(raw_source, "path", str))
             read_csv_options = _require_mapping(raw_source, "read_csv_options")
+
             if project_root is not None and not source_path.is_absolute():
                 source_path = project_root / source_path
+
             sources.append(
                 IngestionSourceSpec(
                     name=source_name,
@@ -381,11 +413,13 @@ def load_dataset_spec(
                     read_csv_options=read_csv_options,
                 )
             )
+
         if len({source.name for source in sources}) != len(sources):
             raise ValueError("ingestion.sources의 name은 중복되면 안 됩니다")
 
         # adapter_options는 source 결합 규칙처럼 adapter 전용 설정을 담는다.
         adapter_options = raw_ingestion.get("adapter_options", {})
+
         if not isinstance(adapter_options, dict):
             raise ValueError("ingestion.adapter_options는 object여야 합니다")
 
@@ -429,8 +463,10 @@ def load_modeling_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> Model
     # Dataset Profile 경로를 공통 실험 설정 위치를 기준으로 해석
     profile_reference = _require_value(raw_config, "dataset_profile", str)
     profile_path = Path(profile_reference)
+
     if not profile_path.is_absolute():
         profile_path = path.parent / profile_path
+
     dataset = load_dataset_spec(profile_path, project_root=path.parent)
 
     # 실험·평가·특징 선택·모델 설정 영역을 분리
@@ -442,55 +478,70 @@ def load_modeling_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> Model
 
     # 센서 축소 정책은 선택 사항이며, 명시한 전체·축소 비교 쌍에만 적용한다.
     reduction_policy = None
+
     if "reduction_policy" in feature_selection:
         reduction = _require_mapping(feature_selection, "reduction_policy")
         sensor_count = _require_value(reduction, "max_sensor_count", int)
         target_loss = float(_require_value(reduction, "target_ap_loss_ratio", (int, float)))
         max_loss = float(_require_value(reduction, "max_ap_loss_ratio", (int, float)))
         pairs = _require_value(reduction, "comparison_pairs", list)
+    
         if sensor_count < 1 or not 0 <= target_loss <= max_loss <= 1:
             raise ValueError("센서 축소 정책은 센서 수 >= 1, 0 <= 목표 AP 하락률 <= 최대 AP 하락률 <= 1이어야 합니다")
+        
         if not pairs or any(
             not isinstance(pair, list) or len(pair) != 2
             or not all(isinstance(name, str) and name.strip() for name in pair)
             or pair[0] == pair[1] for pair in pairs
         ):
             raise ValueError("comparison_pairs에는 서로 다른 전체·축소 실험 이름 두 개씩을 지정해야 합니다")
+        
         parsed_pairs = tuple(tuple(pair) for pair in pairs)
+
         if len(set(parsed_pairs)) != len(parsed_pairs):
             raise ValueError("comparison_pairs에는 중복 비교 쌍을 지정할 수 없습니다")
+        
         reduction_policy = FeatureReductionPolicy(sensor_count, target_loss, max_loss, parsed_pairs)
 
     # 기존 설정 파일도 로드하되, 정책이 있으면 필수 항목·범위를 엄격히 검증한다.
     policy = raw_config.get("threshold_policy", asdict(ThresholdPolicy()))
+
     if not isinstance(policy, dict):
         raise ValueError("threshold_policy는 object여야 합니다")
+    
     min_recall = float(_require_value(policy, "min_recall", (int, float)))
     max_reinspection = float(_require_value(policy, "max_reinspection_ratio", (int, float)))
     selection_rule = _require_value(policy, "selection_rule", str)
     on_infeasible = _require_value(policy, "on_infeasible", str)
+
     if not 0 <= min_recall <= 1 or not 0 <= max_reinspection <= 1:
         raise ValueError("threshold_policy의 목표 비율은 0 이상 1 이하의 유한한 값이어야 합니다")
+    
     if selection_rule != "min_reinspection":
         raise ValueError("threshold_policy.selection_rule은 min_reinspection만 지원합니다")
+    
     if on_infeasible != "report_only":
         raise ValueError("threshold_policy.on_infeasible은 report_only만 지원합니다")
 
     # 데이터셋과 독립적인 수치 기반 실험 설정을 읽음
     random_state = _require_value(experiment, "random_state", int)
     default_threshold = float(_require_value(experiment, "default_threshold", (int, float)))
+
     pca_explained_variance = float(
         _require_value(experiment, "pca_explained_variance", (int, float))
     )
+
     n_splits = _require_value(cv, "n_splits", int)
     n_repeats = _require_value(cv, "n_repeats", int)
 
     # List 기반 설정은 실행 중 수정되지 않도록 Tuple로 변환
     primary_metrics = tuple(_require_value(metrics, "primary", list))
     secondary_metrics = tuple(_require_value(metrics, "secondary", list))
+
     top_k_feature_counts = tuple(
         _require_value(feature_selection, "top_k_feature_counts", list)
     )
+
     baseline_model = _require_value(models, "baseline", str)
     candidate_models = tuple(_require_value(models, "candidates", list))
 
@@ -513,9 +564,11 @@ def load_modeling_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> Model
         raise ValueError("models.baseline은 비어 있으면 안 됩니다")
     if not candidate_models or not all(isinstance(model, str) for model in candidate_models):
         raise ValueError("models.candidates에는 모델 이름이 하나 이상 있어야 합니다")
+    
     # 이름 오타가 후보를 조용히 제외하거나 빈 결과의 KeyError로 이어지지 않게 차단한다.
     supported_models = SUPPORTED_CANDIDATE_MODELS
     unknown_models = sorted(set(candidate_models) - supported_models)
+    
     if unknown_models:
         raise ValueError(f"models.candidates에 지원하지 않는 모델이 있습니다: {unknown_models}")
     if baseline_model != "logistic_regression":

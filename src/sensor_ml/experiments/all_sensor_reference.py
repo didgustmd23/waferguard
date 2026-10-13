@@ -31,12 +31,16 @@ def reference_blocks(frame, config, reference_dir):
     validate_train_role(frame)
     if SOURCE_ROW_ID not in frame or frame[SOURCE_ROW_ID].duplicated().any():
         raise ValueError("Train의 원본 행 ID가 없거나 중복되어 있습니다.")
+    
     execution = json.loads((reference_dir / "experiment/execution.json").read_text(encoding="utf-8"))
     current = json.loads(json.dumps(asdict(config), default=str))
+
     if (dataset_contract(current["dataset"]) != dataset_contract(execution["config"]["dataset"])
             or current["experiment"] != execution["config"]["experiment"]):
         raise ValueError("현재 데이터 정의·실험 설정이 저장 V2와 다릅니다.")
+    
     candidate = execution["candidate_execution"]
+
     if (execution["oof_scope"] != "after_selection_only" or execution["inner_splits"] != 2
             or candidate["selection_fold"] != 2 or candidate["n_splits"] != 3
             or (candidate["classifier_max_depth"], candidate["classifier_reg_lambda"],
@@ -49,28 +53,40 @@ def reference_blocks(frame, config, reference_dir):
     fit_i, future_i = folds[2]
     initial = set(folds[1][0])
     post_i = [i for i in fit_i if i not in initial]
+
     actual = frame.iloc[post_i][[SOURCE_ROW_ID, config.dataset.label_column]].copy()
     actual.columns = ["source_row_id", "label"]
+
     previous = expected[["source_row_id", "label"]]
+
     if not actual.reset_index(drop=True).equals(previous.reset_index(drop=True)):
         raise ValueError("Train의 OOF 행·정답이 저장 V2 기록과 다릅니다.")
+    
     if expected.inner_fold.tolist() != sorted(expected.inner_fold.tolist()) or set(expected.inner_fold) != {1, 2}:
         raise ValueError("기존 OOF 블록 순서·개수가 잘못되어 있습니다.")
+    
     future = pd.read_csv(reference_dir / "experiment/future_predictions.csv")
+
     if frame.iloc[future_i][SOURCE_ROW_ID].tolist() != future.source_row_id.tolist():
         raise ValueError("마지막 개발 구간이 저장 V2와 다릅니다.")
+    
     times = pd.to_datetime(frame[config.dataset.timestamp_column], format=config.dataset.timestamp_format)
     past = list(folds[1][0])
     blocks = []
+
     for number, group in expected.groupby("inner_fold", sort=True):
         ids = set(group.source_row_id)
         eval_i = [i for i in post_i if frame[SOURCE_ROW_ID].iloc[i] in ids]
+
         if not eval_i or times.iloc[past].max() >= times.iloc[eval_i].min():
             raise ValueError("OOF 학습·평가의 시간 범위가 겹칩니다.")
+        
         blocks.append((int(number), past.copy(), eval_i))
         past.extend(eval_i)
+
     if past != list(fit_i):
         raise ValueError("OOF 확장 후 학습 범위가 저장 V2와 다릅니다.")
+    
     return blocks, fit_i, execution
 
 
@@ -79,12 +95,16 @@ def choose_scenarios(oof, config):
     table = compare_thresholds(oof, config, experiment_name="v2_all_matched_depth2")
     table["alarm_ratio"] = (table.true_positive + table.false_positive) / table.support
     choices = []
+
     for target in (0.8, 0.9):
         eligible = table.loc[table.recall >= target].sort_values(
             ["alarm_ratio", "precision", "threshold"], ascending=[True, False, False])
+        
         if eligible.empty:
             raise ValueError(f"OOF Recall {target:.0%}를 만족하는 문턱 후보가 없습니다.")
+        
         choices.append({"target_recall": target, **eligible.iloc[0].to_dict()})
+
     return table, pd.DataFrame(choices)
 
 
@@ -94,29 +114,40 @@ def prepare_reference(frame, config, reference_dir, n_jobs):
     features, labels, _ = split_frame_to_xy(frame, config.dataset)
     classifier = build_classifier(config, "xgboost", n_jobs=n_jobs,
                                   n_estimators=execution["candidate_execution"]["n_estimators"])
+    
     classifier.set_params(max_depth=2, reg_lambda=1, class_weight_mode="ratio")
+
     template = Pipeline([
         ("quality_filter", SensorQualityFilter(config.dataset.missing_ratio_threshold,
                                                 config.dataset.drop_zero_variance)),
         ("imputer", SimpleImputer(strategy="median", keep_empty_features=True).set_output(transform="pandas")),
         ("model", classifier),
     ])
+
     rows, quality = [], []
+
     for number, past_i, eval_i in blocks:
         # fit_pipeline이 매번 clone하므로 앞 블록의 전처리 통계가 섞이지 않는다.
         fitted = fit_pipeline(template, features.iloc[past_i], labels.iloc[past_i],
                               config, "v2_all_matched_depth2", n_jobs=n_jobs)
+        
         scores = positive_scores(fitted, features.iloc[eval_i], config.dataset)
+
         rows.extend({"inner_fold": number, "source_row_id": frame[SOURCE_ROW_ID].iloc[i],
                      "label": labels.iloc[i], "oof_positive_score": float(score)}
                     for i, score in zip(eval_i, scores))
+        
         quality.append({**quality_filter_record(fitted, fold=number), "train_samples": len(past_i)})
+
     oof = pd.DataFrame(rows)
     thresholds, scenarios = choose_scenarios(oof, config)
+
     # 문턱을 확정한 뒤 같은 과거 824행으로 한 번 학습한다. Test는 이후 별도 평가한다.
     final = fit_pipeline(template, features.iloc[fit_i], labels.iloc[fit_i],
                          config, "v2_all_matched_depth2", n_jobs=n_jobs)
+    
     quality.append({**quality_filter_record(final, fold="final"), "train_samples": len(fit_i)})
+
     return final, oof, thresholds, scenarios, quality, fit_i, execution
 
 
@@ -129,14 +160,20 @@ def main():
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--n-jobs", type=int, default=1)
     args = parser.parse_args()
+
     if args.output_dir.exists() and (not args.output_dir.is_dir() or any(args.output_dir.iterdir())):
         raise ValueError("비어 있는 새 출력 폴더를 지정하세요.")
+    
     if args.n_jobs == 0 or args.n_jobs < -1:
         raise ValueError("병렬 수는 -1 또는 양의 정수여야 합니다.")
+    
     config = load_modeling_config(args.config)
+
     frame = pd.read_csv(args.train)
+
     final, oof, thresholds, scenarios, quality, fit_i, execution = prepare_reference(
         frame, config, args.reference_bundle_dir, args.n_jobs)
+    
     record = {"status": "prepared", "model_name": "v2_all_matched_depth2",
               "config": asdict(config), "reference_execution": execution,
               "reference_bundle_dir": str(args.reference_bundle_dir.resolve()),
@@ -147,14 +184,20 @@ def main():
               "scenarios": scenarios.to_dict(orient="records"), "quality_filter": quality,
               "test_used": False, "is_final_model": False,
               "versions": {name: version(name) for name in ("scikit-learn", "xgboost", "joblib")}}
+    
     args.output_dir.mkdir(parents=True, exist_ok=True)
+
     oof.to_csv(args.output_dir / "oof_predictions.csv", index=False, encoding="utf-8-sig")
     thresholds.to_csv(args.output_dir / "threshold_compare.csv", index=False, encoding="utf-8-sig")
     scenarios.to_csv(args.output_dir / "scenario_thresholds.csv", index=False, encoding="utf-8-sig")
+
     frame.iloc[fit_i][[SOURCE_ROW_ID]].to_csv(args.output_dir / "fit_rows.csv", index=False)
+
     joblib.dump(final, args.output_dir / "pipeline.joblib")
+
     (args.output_dir / "execution.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    
     print(scenarios[["target_recall", "threshold", "recall", "alarm_ratio", "true_positive",
                      "false_positive", "false_negative"]].to_string(index=False))
     print(f"학습 행 수: {len(fit_i)}, 품질 필터 후 센서 수: {len(record['retained_sensors'])}")

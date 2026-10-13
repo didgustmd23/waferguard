@@ -68,24 +68,34 @@ class XGBoostClassifierAdapter(ClassifierMixin, BaseEstimator):
 
         if self.positive_label == self.negative_label:
             raise ValueError("XGBoost의 양성·음성 label은 서로 달라야 합니다.")
+        
         if pd.Series(y).isna().any():
             raise ValueError("XGBoost 학습 label에 결측값이 있습니다.")
+        
         observed_labels = set(pd.Series(y).unique())
+
         if observed_labels != {self.negative_label, self.positive_label}:
             raise ValueError("XGBoost 후보는 이진 분류 label 두 종류가 필요합니다.")
+        
         # SECOM처럼 -1/1을 쓰거나 다른 문자열 label을 써도 불량은 항상 1로 학습한다.
         encoded_y = np.asarray(pd.Series(y).eq(self.positive_label), dtype=np.int32)
+
         if self.class_weight_mode not in {"none", "sqrt_ratio", "ratio"}:
             raise ValueError("불량 가중치 방식은 none·sqrt_ratio·ratio 중 하나여야 합니다.")
+        
         # 현재 fit에 전달된 label만 사용하므로 바깥 평가 구간이나 미래 불량률이 섞이지 않는다.
         ratio = float((encoded_y == 0).sum() / (encoded_y == 1).sum())
+
         self.effective_scale_pos_weight_ = {
             "none": self.scale_pos_weight, "sqrt_ratio": np.sqrt(ratio), "ratio": ratio,
         }[self.class_weight_mode]
+
         self.classes_ = np.asarray([self.negative_label, self.positive_label])
         self.n_features_in_ = X.shape[1]
+
         if hasattr(X, "columns"):
             self.feature_names_in_ = np.asarray(X.columns, dtype=object)
+
         self.estimator_ = XGBClassifier(
             objective="binary:logistic",
             eval_metric="logloss",
@@ -101,6 +111,7 @@ class XGBoostClassifierAdapter(ClassifierMixin, BaseEstimator):
             n_jobs=self.n_jobs,
             importance_type=self.importance_type,
         )
+
         self.estimator_.fit(X, encoded_y)
         return self
 
@@ -153,6 +164,7 @@ def candidate_base_name(name):
 def build_classifier(config, name, *, n_jobs=1, n_estimators=300):
     """실험의 분류기를 만들되 아직 학습하지 않는다."""
     seed = config.experiment.cv.random_state
+
     if name in {"logistic_regression_l1", "logistic_regression_l1_balanced"}:
         return LogisticRegression(
             penalty="l1",
@@ -161,8 +173,10 @@ def build_classifier(config, name, *, n_jobs=1, n_estimators=300):
             random_state=seed,
             class_weight="balanced" if name.endswith("_balanced") else None,
         )
+    
     if name == "rbf_svm":
         return SVC(kernel="rbf", probability=True, random_state=seed)
+    
     if name in {"random_forest", "random_forest_balanced"} or name in RF_LEAF_VARIANTS:
         return RandomForestClassifier(
             n_estimators=n_estimators, random_state=seed, n_jobs=n_jobs,
@@ -171,16 +185,19 @@ def build_classifier(config, name, *, n_jobs=1, n_estimators=300):
             # 마지막 노드에 필요한 최소 표본 수만 바꿔 작은 표본에 대한 분할을 제한한다.
             min_samples_leaf=RF_LEAF_VARIANTS.get(name, 1),
         )
+    
     if name in {"lightgbm", "lightgbm_scale_pos_weight"}:
         return LGBMClassifier(
             n_estimators=n_estimators, random_state=seed, n_jobs=n_jobs, verbosity=-1,
         )
+    
     if name in {"xgboost", "xgboost_scale_pos_weight"}:
         return XGBoostClassifierAdapter(
             positive_label=config.dataset.positive_label,
             negative_label=config.dataset.negative_label,
             n_estimators=n_estimators, random_state=seed, n_jobs=n_jobs,
         )
+    
     raise ValueError(f"정의되지 않은 후보 모델입니다: {name}")
 
 
@@ -196,9 +213,12 @@ def configure_rf_selectors(pipelines, *, min_samples_leaf=1, max_depth=None, sta
             continue
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"RF 선택기의 {name}는 양의 정수여야 합니다.")
+        
     found = False
+
     if isinstance(stability_repeats, bool) or not isinstance(stability_repeats, int) or stability_repeats < 0 or stability_repeats == 1:
         raise ValueError("RF 반복 선택 횟수는 0(사용 안 함) 또는 2 이상의 정수여야 합니다.")
+    
     for pipeline in pipelines.values():
         selector = pipeline.named_steps.get("selector")
         if selector is not None and isinstance(getattr(selector, "estimator", None), RandomForestClassifier):
@@ -219,8 +239,10 @@ def configure_rf_selectors(pipelines, *, min_samples_leaf=1, max_depth=None, sta
                                       if name not in {"quality_filter", "selector", "model"}
                                   ] + [("model", pipeline.named_steps["model"])]
             found = True
+
     if not found and (min_samples_leaf != 1 or max_depth is not None or stability_repeats):
         raise ValueError("RF 선택기 설정을 적용할 RF 중요도 실험이 없습니다.")
+    
     return pipelines
 
 
@@ -233,26 +255,33 @@ def configure_rf_selectors(pipelines, *, min_samples_leaf=1, max_depth=None, sta
 def configure_topk_xgb(pipelines, *, max_depth=None, reg_lambda=None):
     if max_depth is None and reg_lambda is None:
         return pipelines
+    
     params = {}
+
     # bool도 int로 취급되므로 별도로 차단하고 학습 전에 오류를 전달한다.
     if max_depth is not None:
         if isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 1:
             raise ValueError("Top-K 최종 XGBoost의 최대 깊이는 양의 정수여야 합니다.")
         params["model__max_depth"] = max_depth
+
     # 정규화 0은 허용하지만 음수·NaN·무한대·문자열·bool은 학습 전에 차단한다.
     if reg_lambda is not None:
         if (isinstance(reg_lambda, bool) or not isinstance(reg_lambda, (int, float))
                 or not np.isfinite(reg_lambda) or reg_lambda < 0):
             raise ValueError("Top-K 최종 XGBoost의 reg_lambda는 유한한 0 이상의 숫자여야 합니다.")
         params["model__reg_lambda"] = reg_lambda
+
     targets = [pipeline for name, pipeline in pipelines.items()
                if name.startswith(("xgboost_rf_top_", "xgboost_top_"))
                and isinstance(pipeline.named_steps.get("model"), XGBoostClassifierAdapter)]
+    
     if not targets:
         raise ValueError("설정을 적용할 Top-K → XGBoost 실험이 없습니다.")
+    
     for pipeline in targets:
         # 선택기와 bootstrap 설정은 건드리지 않고 최종 분류기만 변경한다.
         pipeline.set_params(**params)
+
     return pipelines
 
 
@@ -261,6 +290,7 @@ def build_pipeline(config, name, *, n_jobs=1):
     # 분류기와 선택기를 구분한다. RF Top-K 실험도 최종 분류기는 XGBoost다.
     # K는 기존 설정 목록을 사용하므로 특정 데이터셋이나 센서 20개에 고정하지 않는다.
     top_k_specs = {}
+
     for prefix, final_model, importance_model in (
         ("lightgbm_top_", "lightgbm", "lightgbm"),
         ("xgboost_top_", "xgboost", "xgboost"),
@@ -268,6 +298,7 @@ def build_pipeline(config, name, *, n_jobs=1):
     ):
         for count in config.top_k_feature_counts:
             top_k_specs[f"{prefix}{count}"] = (final_model, importance_model, count)
+            
     selection = top_k_specs.get(name)
     model_name = EXPERIMENT_ALIASES.get(name, selection[0] if selection else name)
     classifier = build_classifier(config, model_name, n_jobs=n_jobs)
@@ -290,6 +321,7 @@ def build_pipeline(config, name, *, n_jobs=1):
             importance, threshold=-np.inf,
             max_features=partial(checked_top_k, count=selection[2]),
         )))
+
     return Pipeline(steps + [("model", classifier)])
 
 
@@ -299,8 +331,10 @@ def build_candidate_pipelines(config, n_jobs=1, *, names=None):
     names = CANDIDATE_VARIANTS if names is None else tuple(names)
     unknown = (set(names) - set(CANDIDATE_VARIANTS)
                - {"random_forest_balanced"} - set(RF_LEAF_VARIANTS))
+    
     if unknown:
         raise ValueError(f"지원하지 않는 후보 모델입니다: {sorted(unknown)}")
+    
     return {name: build_pipeline(config, name, n_jobs=n_jobs) for name in names}
 
 
@@ -321,21 +355,27 @@ def fit_pipeline(pipeline, features, labels, config, experiment_name, *, n_jobs=
     """새 Pipeline을 학습하고 원본 미학습 Pipeline은 변경하지 않는다."""
     label_series = pd.Series(labels)
     expected = {config.dataset.negative_label, config.dataset.positive_label}
+
     if label_series.isna().any() or set(label_series.unique()) != expected:
         raise ValueError("학습 구간에는 결측 없이 설정된 정상·Fail label이 모두 필요합니다.")
+    
     model = clone(pipeline)
+
     # 이름 접두어 대신 지원 파라미터를 확인해 사용자 정의 Pipeline도 처리한다.
     parallel_params = {
         key: n_jobs for key in model.get_params(deep=True)
         if key.endswith("__n_jobs")
     }
+
     if parallel_params:
         model.set_params(**parallel_params)
+
     if experiment_name in WEIGHTED_VARIANTS:
         positive_count = int(label_series.eq(config.dataset.positive_label).sum())
         negative_count = int(label_series.eq(config.dataset.negative_label).sum())
         model.set_params(model__scale_pos_weight=negative_count / positive_count)
     model.fit(features, labels)
+
     return model
 
 
@@ -344,6 +384,8 @@ def positive_scores(pipeline, features, dataset):
     # 문자열 label에서는 양성 class가 첫 번째일 수도 있으므로 [:, 1]을 가정하지 않는다.
     classes = pipeline.named_steps["model"].classes_
     positions = [index for index, label in enumerate(classes) if label == dataset.positive_label]
+
     if len(positions) != 1:
         raise ValueError("학습된 후보 모델에서 Profile의 Fail label을 찾을 수 없습니다.")
+        
     return pipeline.predict_proba(features)[:, positions[0]]

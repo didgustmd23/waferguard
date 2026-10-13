@@ -51,48 +51,63 @@ def compare_candidates(train_frame: pd.DataFrame, config: ModelingConfig) -> pd.
     결과에는 지표의 평균·표준편차와 학습 시간, 센서 제거 기록을 포함한다.
     """
     validate_train_role(train_frame)
+
     # 직접 생성한 설정도 파일 로더와 동일하게 후보 이름을 검사한다.
     supported = SUPPORTED_CANDIDATE_MODELS
     unknown = sorted(set(config.candidate_models) - supported)
+
     if unknown:
         raise ValueError(f"지원하지 않는 후보 모델입니다: {unknown}")
+    
     train_x, train_y, _ = split_frame_to_xy(train_frame, config.dataset)
+
     # 계층 CV와 모든 분류 모델은 정상·Fail label이 모두 있어야 학습할 수 있다.
     if train_y.nunique() < 2:
         raise ValueError("후보 모델 비교를 위해 Train split에는 정상과 Fail label이 모두 있어야 합니다.")
+    
     # 각 fold validation에 두 class가 포함되도록 가장 적은 class 수를 먼저 확인한다.
     smallest_class_count = int(train_y.value_counts().min())
+
     if smallest_class_count < config.experiment.cv.n_splits:
         raise ValueError(
             "가장 적은 class의 샘플 수가 CV fold 수보다 작습니다: "
             f"최소 class 샘플={smallest_class_count}, fold={config.experiment.cv.n_splits}"
         )
+    
     records: list[dict[str, object]] = []
 
     for model_name, pipeline in build_candidate_pipelines(config).items():
         base_model_name = candidate_base_name(model_name)
+
         if base_model_name not in config.candidate_models:
             continue
+
         fold_metrics: list[dict[str, float]] = []
         fit_times: list[float] = []
         quality_records = []
+
         for fit_index, valid_index in training_folds(train_x, train_y, train_frame, config):
             # 복제·불균형 가중치는 현재 학습 fold에서만 적용한다.
             started_at = perf_counter()
+
             model = fit_pipeline(
                 pipeline, train_x.iloc[fit_index], train_y.iloc[fit_index],
                 config, model_name,
             )
+
             fit_times.append(perf_counter() - started_at)
+            
             # 제거 개수와 센서명은 해당 fold 학습 결과에서 가져온다.
             quality_records.append(quality_filter_record(model, fold=len(quality_records) + 1))
             scores = positive_scores(model, train_x.iloc[valid_index], config.dataset)
+
             metrics = evaluate_binary_scores(
                 train_y.iloc[valid_index], scores,
                 positive_label=config.dataset.positive_label,
                 negative_label=config.dataset.negative_label,
                 threshold=config.experiment.default_threshold,
             )
+
             fold_metrics.append({key: float(value) for key, value in metrics.to_dict().items()
                                  if key in {"average_precision", "recall", "precision", "f1", "roc_auc"} and value is not None})
 
@@ -109,13 +124,17 @@ def compare_candidates(train_frame: pd.DataFrame, config: ModelingConfig) -> pd.
             "fit_time_std_seconds": float(np.std(fit_times)),
             "quality_filter_log": quality_filter_json(quality_records),
         }
+
         for metric_name in ("average_precision", "recall", "precision", "f1", "roc_auc"):
             values = [fold[metric_name] for fold in fold_metrics if metric_name in fold]
             record[f"{metric_name}_mean"] = float(np.mean(values)) if values else None
             record[f"{metric_name}_std"] = float(np.std(values)) if values else None
+
         records.append(record)
+
     if not records:
         raise ValueError("models.candidates에 지원하는 후보 모델이 없습니다.")
+    
     return pd.DataFrame(records).sort_values("average_precision_mean", ascending=False).reset_index(drop=True)
 
 

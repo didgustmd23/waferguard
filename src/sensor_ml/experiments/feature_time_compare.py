@@ -89,29 +89,38 @@ def build_feature_pipelines(config, *, n_jobs=1, n_estimators=300, experiment_na
                             topk_xgb_max_depth=None, topk_xgb_reg_lambda=None,
                             xgb_weight_mode="none", xgb_selector_weight_mode="none",
                             xgb_stability_repeats=0):
+    
     # V2 비교에서도 기존 기본값은 유지하고 요청한 가중치만 적용한다.
     if xgb_weight_mode not in {"none", "sqrt_ratio", "ratio"}:
         raise ValueError("XGBoost 가중치 방식은 none·sqrt_ratio·ratio 중 하나여야 합니다.")
+    
     if xgb_weight_mode != "none" and not experiment_names:
         raise ValueError("XGBoost 가중치를 적용할 특징 실험을 명시하세요.")
+    
     if xgb_selector_weight_mode not in {"none", "sqrt_ratio", "ratio"}:
         raise ValueError("XGBoost 선택기 가중치 방식은 none·sqrt_ratio·ratio 중 하나여야 합니다.")
+    
     if xgb_selector_weight_mode != "none" and not experiment_names:
         raise ValueError("XGBoost 선택기 가중치를 적용할 특징 실험을 명시하세요.")
+    
     if rf_stability_repeats and config.dataset.categorical_feature_columns:
         raise ValueError("S3 반복 RF 선택은 수치형 원본 센서 Profile만 지원합니다.")
+    
     if isinstance(n_estimators, bool) or not isinstance(n_estimators, int) or n_estimators < 1:
         raise ValueError("트리 수는 양의 정수여야 합니다.")
+    
     # 모든 최종 분류기의 설정이 같아야 센서 축소에 따른 차이를 해석할 수 있다.
     classifier = build_classifier(config, "lightgbm", n_jobs=n_jobs, n_estimators=n_estimators)
     steps = preprocessing_steps(config.dataset, pandas_output=True)
     pipelines = {"lightgbm_all": Pipeline(steps + [("model", clone(classifier))])}
+
     for method in ("lightgbm", "rf_importance"):
         for count in (50, 20):
             # 매 Pipeline마다 독립된 전처리기·선택기·분류기를 사용한다.
             importance = clone(classifier) if method == "lightgbm" else build_classifier(config, "random_forest", n_jobs=n_jobs, n_estimators=n_estimators)
             selector = SelectFromModel(importance, threshold=-np.inf,
                 max_features=partial(checked_top_k, count=count))
+            
             # -inf는 중요도 자체의 최소값 제한을 없애고 max_features로 정확히 K개 선택한다.
             # checked_top_k는 대치·One-Hot 후 해당 fold의 실제 특징 수를 검사한다.
             name = f"lightgbm_top_{count}" if method == "lightgbm" else f"lightgbm_rf_top_{count}"
@@ -123,38 +132,52 @@ def build_feature_pipelines(config, *, n_jobs=1, n_estimators=300, experiment_na
         configure_topk_xgb(pipelines, max_depth=topk_xgb_max_depth, reg_lambda=topk_xgb_reg_lambda)
         return configure_rf_selectors(pipelines, min_samples_leaf=rf_min_samples_leaf, max_depth=rf_max_depth,
                                       stability_repeats=rf_stability_repeats)
+    
     if not experiment_names or len(set(experiment_names)) != len(experiment_names):
         raise ValueError("시간순 특징 실험 이름은 중복 없이 하나 이상 지정해야 합니다.")
+    
     xgboost_names = {"xgboost_all"} | {
         f"{prefix}{count}" for prefix in ("xgboost_top_", "xgboost_rf_top_")
         for count in config.top_k_feature_counts
     }
+
     unknown = set(experiment_names) - set(pipelines) - xgboost_names
+
     if unknown:
         raise ValueError(f"지원하지 않는 시간순 특징 실험입니다: {sorted(unknown)}")
+    
     chosen = {}
+
     for name in experiment_names:
         pipeline = pipelines[name] if name in pipelines else build_pipeline(config, name, n_jobs=n_jobs)
+
         # 선택용 모델과 최종 분류기에 같은 트리 수를 적용해 CLI 설정을 일관되게 반영한다.
         params = {key: n_estimators for key in pipeline.get_params(deep=True)
                   if key.endswith("__n_estimators")}
+        
         pipeline.set_params(**params)
         chosen[name] = pipeline
+
     xgb_models = [pipeline.named_steps["model"] for pipeline in chosen.values()
                   if isinstance(pipeline.named_steps["model"], XGBoostClassifierAdapter)]
+    
     if xgb_weight_mode != "none" and not xgb_models:
         raise ValueError("가중치를 적용할 최종 XGBoost 분류기가 없습니다.")
+    
     for model in xgb_models:
         # 선택용 RF는 변경하지 않는다. 가중치는 각 실제 fit의 label에서 계산된다.
         model.set_params(class_weight_mode=xgb_weight_mode)
     xgb_selectors = [pipeline.named_steps["selector"].estimator for pipeline in chosen.values()
                      if isinstance(getattr(pipeline.named_steps.get("selector"), "estimator", None),
                                    XGBoostClassifierAdapter)]
+    
     if xgb_selector_weight_mode != "none" and not xgb_selectors:
         raise ValueError("가중치를 적용할 XGBoost gain 선택기가 없습니다.")
+    
     for selector in xgb_selectors:
         # 최종 분류기·RF 선택기는 건드리지 않고 gain 계산용 학습에만 적용한다.
         selector.set_params(class_weight_mode=xgb_selector_weight_mode)
+
     # 전체 센서 기준과 RF는 유지하고 축소 경로의 최종 분류기에만 M1~M3을 반영한다.
     configure_topk_xgb(chosen, max_depth=topk_xgb_max_depth, reg_lambda=topk_xgb_reg_lambda)
     _configure_gain_stability(chosen, config.dataset, xgb_stability_repeats)
@@ -169,9 +192,12 @@ def build_feature_pipelines(config, *, n_jobs=1, n_estimators=300, experiment_na
 # - 선택기의 get_support 순서는 모델 입력 순서이며 중요도 순위와 다름
 # ==========================================
 def selection_rows(pipeline, metadata):
+
     quality = pipeline.named_steps["quality_filter"]
+
     if hasattr(pipeline.named_steps.get("selector"), "selection_records"):
         return pipeline.named_steps["selector"].selection_records(metadata)
+    
     if "selector" in pipeline.named_steps:
         # 선택기 전까지의 특징명에 get_support 마스크를 적용해 실제 입력 특징을 찾는다.
         names = pipeline[:-2].get_feature_names_out()
@@ -179,6 +205,7 @@ def selection_rows(pipeline, metadata):
         mask = selector.get_support()
         selected = np.asarray(names)[mask]
         importance = selector.estimator_.feature_importances_[mask]
+
         if isinstance(selector.estimator_, RandomForestClassifier):
             method = "rf_importance"
         elif isinstance(selector.estimator_, XGBoostClassifierAdapter):
@@ -190,8 +217,10 @@ def selection_rows(pipeline, metadata):
         selected = pipeline[:-1].get_feature_names_out()
         importance = np.full(len(selected), np.nan)
         method = "all_after_quality_filter"
+
     # 중요도가 같으면 원래 특징 순서를 유지해 같은 결과를 재현한다.
     order = np.argsort(-importance, kind="stable") if method != "all_after_quality_filter" else np.arange(len(selected))
+
     return [{**metadata, "feature": str(selected[index]), "selection_method": method,
              "selection_rank": rank, "selection_importance": float(importance[index]),
              "feature_space": "raw_sensor" if str(selected[index]) in quality.retained_features_ else "transformed_feature"}
@@ -211,6 +240,7 @@ def feature_frequency(selected):
         selected_fit_count=("fit_id", "nunique"), mean_selection_rank=("selection_rank", "mean"))
     frequency["total_fit_count"] = [counts.loc[(name, role)] for name, role in zip(frequency.model_name, frequency.fit_role)]
     frequency["selection_frequency"] = frequency.selected_fit_count / frequency.total_fit_count
+
     return frequency.sort_values(["model_name", "fit_role", "selection_frequency", "mean_selection_rank", "feature"],
                                  ascending=[True, True, False, True, True]).reset_index(drop=True)
 
@@ -225,6 +255,7 @@ def compare_feature_time(frame, config, *, n_jobs=1, n_estimators=300, experimen
                          topk_xgb_max_depth=None, topk_xgb_reg_lambda=None,
                          xgb_weight_mode="none", xgb_selector_weight_mode="none",
                          xgb_stability_repeats=0):
+    
     pipelines = build_feature_pipelines(config, n_jobs=n_jobs, n_estimators=n_estimators,
                                        experiment_names=experiment_names,
                                        rf_min_samples_leaf=rf_min_samples_leaf, rf_max_depth=rf_max_depth,
@@ -233,9 +264,12 @@ def compare_feature_time(frame, config, *, n_jobs=1, n_estimators=300, experimen
                                        xgb_weight_mode=xgb_weight_mode,
                                        xgb_selector_weight_mode=xgb_selector_weight_mode,
                                        xgb_stability_repeats=xgb_stability_repeats)
+    
     selected, bootstrap_records, weights = [], [], []
+
     # 시간 검증 코어에 기록용 hook을 전달해 같은 학습을 중복 실행하지 않는다.
     def record_selection(model, train, evaluation, outer, name, mode, inner):
+
         # outer:mode:inner 조합으로 fit을 구분해 같은 특징이 중복 집계되지 않게 한다.
         # 평가 데이터는 hook에서 읽지 않아 선택 목록에 미래 정보가 섞이지 않는다.
         selected.extend(selection_rows(model, {"outer_fold": outer, "model_name": name,
@@ -243,6 +277,7 @@ def compare_feature_time(frame, config, *, n_jobs=1, n_estimators=300, experimen
             "fit_id": f"{outer}:{mode}:{inner}", "train_samples": len(train)}))
         selector = model.named_steps.get("selector")
         classifier = model.named_steps["model"]
+
         if isinstance(classifier, XGBoostClassifierAdapter):
             # 추정 설정이 아니라 학습된 모델의 실제 가중치를 과거 학습 건수와 함께 기록한다.
             labels = train[config.dataset.label_column]
@@ -254,35 +289,49 @@ def compare_feature_time(frame, config, *, n_jobs=1, n_estimators=300, experimen
                             "effective_scale_pos_weight": classifier.effective_scale_pos_weight_})
             # SelectFromModel이 실제 학습한 선택기를 조회해 최종 분류기와 따로 기록한다.
             fitted_selector = getattr(selector, "estimator_", None)
+
             if isinstance(fitted_selector, XGBoostClassifierAdapter):
                 weights[-1].update(
                     selector_class_weight_mode=fitted_selector.class_weight_mode,
                     selector_effective_scale_pos_weight=fitted_selector.effective_scale_pos_weight_)
+                
         bootstrap_records.extend({"outer_fold": outer, "model_name": name, "inner_fold": inner,
                                   "fit_role": "outer_fit" if inner is None else "inner_oof", **record}
                                  for record in getattr(selector, "bootstrap_log_", []))
+        
     results = compare_temporal(frame, config, model_names=tuple(pipelines), pipelines=pipelines,
                               oof_modes=("temporal_oof",), n_jobs=n_jobs, fit_observer=record_selection)
+    
     results["selected_features"] = pd.DataFrame(selected)
+
     if weights:
         results["fit_weights"] = pd.DataFrame(weights)
+
     results["feature_frequency"] = feature_frequency(results["selected_features"])
+
     # 시간 구간 AP는 threshold와 무관하므로 기본 문턱 결과에서 구간당 한 번만 읽는다.
     evaluated = results["fold_results"]
     mode = evaluated["mode"].iloc[0]
+
     reduction_folds = evaluated[evaluated["mode"].eq(mode)].rename(columns={
         "model_name": "experiment", "outer_fold": "fold", "average_precision": "ap",
     }).copy()
+
     outer = results["selected_features"].query("fit_role == 'outer_fit'")
+
     sensor_info = outer.groupby(["model_name", "outer_fold"]).agg(
         sensor_count=("feature", "nunique"),
         is_raw_sensor=("feature_space", lambda values: values.eq("raw_sensor").all()),
     ).reset_index().rename(columns={"model_name": "experiment", "outer_fold": "fold"})
+
     reduction_folds = reduction_folds.merge(sensor_info, on=["experiment", "fold"], validate="one_to_one")
+
     results["reduction_assessment"] = assess_reduction(reduction_folds, config.reduction_policy)
+
     # 전체 Train 후보 fit은 평가 fold가 아니다. 이 목록으로 과거 점수를 재계산하지 않는다.
     features, labels, _ = split_frame_to_xy(frame, config.dataset)
     candidates, quality = [], []
+
     for name, pipeline in pipelines.items():
         # clone으로 CV의 학습 상태를 버린 뒤 전체 Time Train에서 새로 fit한다.
         # 최종 모델·학습 범위를 아직 합의하지 않았으므로 is_final=False로 저장한다.
@@ -293,8 +342,10 @@ def compare_feature_time(frame, config, *, n_jobs=1, n_estimators=300, experimen
         candidates.extend(selection_rows(model, {"model_name": name, "fit_role": "candidate_full_train",
                            "train_samples": len(frame), "is_final": False}))
         quality.append({"model_name": name, **quality_filter_record(model)})
+
     results["candidate_features"] = pd.DataFrame(candidates)
     results["candidate_quality_filter"] = pd.DataFrame(quality)
+
     if bootstrap_records:
         results["bootstrap_records"] = pd.DataFrame(bootstrap_records)
     return results
@@ -343,11 +394,14 @@ def save_results(args, config, train, results):
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for name, table in results.items():
         # 센서 목록의 JSON 변환은 저장용 복사본에만 적용한다.
+
         if name in {"quality_filter", "candidate_quality_filter"}:
             table = table.copy()
+
             for column in ("high_missing_features", "constant_features"):
                 table[column] = table[column].map(quality_filter_json)
         table.to_csv(args.output_dir / f"{name}.csv", index=False, encoding="utf-8-sig")
+        
     record = {"config": asdict(config), "train_path": str(args.train.resolve()), "n_estimators": args.n_estimators,
               "xgb_weight_mode": args.xgb_weight_mode,
               "xgb_selector_weight_mode": args.xgb_selector_weight_mode,
@@ -366,9 +420,11 @@ def save_results(args, config, train, results):
                                          "stability_repeats": args.rf_stability_repeats,
                                          "resampling": "stratified_bootstrap" if args.rf_stability_repeats else None},
               "versions": {name: version(name) for name in ("scikit-learn", "lightgbm")}}
+    
     # 기존 LightGBM 실험만 실행할 때는 선택하지 않은 XGBoost 설치를 강제하지 않는다.
     if any(name.startswith("xgboost") for name in record["models"]):
         record["versions"]["xgboost"] = version("xgboost")
+        
     (args.output_dir / "feature_run.json").write_text(json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
 

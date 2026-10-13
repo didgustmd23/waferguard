@@ -74,36 +74,45 @@ DETECTORS = ("isolation_forest", "pca_reconstruction")
 def fit_detector(train, config, name, *, n_jobs=1, n_estimators=200):
     # Profile에 맞는 센서·label 구조를 검증한 뒤 모델 입력과 정답을 분리한다.
     features, labels, _ = split_frame_to_xy(train, config.dataset)
+
     # 정상 기준도 -1로 고정하지 않고 Dataset Profile의 negative_label을 사용한다.
     normal = features.loc[labels.eq(config.dataset.negative_label)]
+
     # PCA의 분산 계산과 정상 패턴 학습을 위해 정상 표본이 최소 두 개는 필요하다.
     if len(normal) < 2:
         raise ValueError("이상 탐지 학습에는 정상 표본이 두 개 이상 필요합니다.")
+    
     if name == "isolation_forest":
         # bool도 Python에서는 int이므로 True를 트리 1개로 해석하지 않도록 차단한다.
         if isinstance(n_estimators, bool) or not isinstance(n_estimators, int) or n_estimators < 1:
             raise ValueError("Isolation Forest 트리 수는 양의 정수여야 합니다.")
+        
         # 정상 패턴에서 쉽게 고립되는 관측값에 높은 이상 점수를 주는 트리 모델이다.
         # predict()의 기본 문턱은 사용하지 않고 score_samples의 원본 점수를 평가한다.
         # 따라서 contamination을 재검사 상한 20%와 같은 값으로 맞추지 않는다.
         estimator = IsolationForest(n_estimators=n_estimators, contamination="auto",
                                     random_state=config.experiment.cv.random_state, n_jobs=n_jobs)
+        
     elif name == "pca_reconstruction":
         # 0.9는 센서 90% 선택이 아니라 정상 데이터 설명분산 90% 보존을 뜻한다.
         # 실제 성분 수는 정상 표본·센서 수와 상관 구조에 따라 fit마다 달라진다.
         # 분산 비율로 성분 수를 정할 수 있도록 full SVD를 명시한다.
         estimator = PCA(n_components=config.experiment.pca_explained_variance, svd_solver="full",
                         random_state=config.experiment.cv.random_state)
+        
     else:
         raise ValueError(f"지원하지 않는 이상 탐지 모델입니다: {name}")
+    
     # 공통 전처리: 센서 품질 필터 → 대치 → scaling → 모델.
     # PCA에서 큰 단위의 센서가 복원오차를 독점하지 않도록 scaling을 적용한다.
     # 선언된 범주형 센서는 공통 코어가 대치·One-Hot Encoding으로 처리한다.
     pipeline = Pipeline(preprocessing_steps(config.dataset, scale=True) + [("model", estimator)])
+
     # 작은 표본의 PCA 과도한 BLAS 병렬화를 줄이고 트리 병렬화는 n_jobs로 관리한다.
     with threadpool_limits(limits=1):
         # normal만 전달하므로 품질 필터·대치값·scaler도 정상 데이터만 학습한다.
         pipeline.fit(normal)
+
     return pipeline
 
 
@@ -117,25 +126,32 @@ def fit_detector(train, config, name, *, n_jobs=1, n_estimators=200):
 def anomaly_scores(pipeline, frame, dataset, name):
     # 학습된 전처리만 적용한다. 평가 구간의 label은 점수 계산에 사용하지 않는다.
     features, _, _ = split_frame_to_xy(frame, dataset)
+
     # Pipeline의 마지막 모델을 제외한 전처리 부분만 평가 데이터에 적용한다.
     # transform은 과거 fit의 센서 목록·대치값·scaling을 그대로 사용한다.
     transformed = pipeline[:-1].transform(features)
     estimator = pipeline.named_steps["model"]
+
     if name == "isolation_forest":
         # 부호만 바꾸므로 순위 정보는 유지되고 클수록 이상이라는 방향을 통일한다.
         scores = -estimator.score_samples(transformed)
+
     elif name == "pca_reconstruction":
         # transform: 원본 센서 공간 → PCA 성분 공간.
         # inverse_transform: PCA 성분 공간 → 복원된 센서 공간.
         reconstructed = estimator.inverse_transform(estimator.transform(transformed))
+
         # 행 하나가 제품 하나다. axis=1로 각 제품의 센서별 제곱 오차를 평균한다.
         # 오차는 raw 단위가 아니라 전처리된 센서 공간의 값이다.
         scores = np.mean(np.square(transformed - reconstructed), axis=1)
+
     else:
         raise ValueError(f"지원하지 않는 이상 탐지 모델입니다: {name}")
+    
     # 이후 분위수·AP 계산에 NaN/무한대가 섞이지 않도록 즉시 중단한다.
     if not np.isfinite(scores).all():
         raise ValueError("이상 점수에 결측 또는 무한대가 발생했습니다.")
+    
     return scores
 
 
@@ -146,6 +162,7 @@ def anomaly_scores(pipeline, frame, dataset, name):
 # ==========================================
 def _period(frame, dataset):
     times = pd.to_datetime(frame[dataset.timestamp_column], format=dataset.timestamp_format)
+
     return str(times.min()), str(times.max())
 
 
@@ -160,6 +177,7 @@ def _fit_record(pipeline, train, config, metadata):
     # 실제 fit 대상인 정상 표본 수·ID·기간과 품질 제거 기록을 함께 남긴다.
     normal = train.loc[train[config.dataset.label_column].eq(config.dataset.negative_label)]
     model = pipeline.named_steps["model"]
+
     # 센서 제거 개수는 fit된 품질 필터에서 읽는다. 전체 데이터의 EDA 값이 아니다.
     # fail_fit_samples=0은 fit_detector가 정상만 전달하는 학습 계약의 기록이다.
     # 실제 포함 행은 normal_fit_source_ids와 함께 확인해야 한다.
@@ -194,19 +212,24 @@ def _prediction_rows(frame, config, scores, metadata):
 # - 다음 시간 구간의 점수·정답은 이 함수에 전달하지 않음
 # ==========================================
 def _thresholds(oof, config, metadata):
+
     # 원본 점수 분위수를 사용하며 0.5 확률 기준을 이상 점수에 적용하지 않는다.
     values = oof.anomaly_score.to_numpy()
+
     # 판정 조건이 score >= threshold이므로 최대값 자체는 최소 한 건을 선별한다.
     # nextafter(max, +inf)는 최대값보다 큰 가장 가까운 부동소수점 수를 만든다.
     candidates = np.unique(np.append(np.quantile(values, np.linspace(0, 1, 101)),
                                      np.nextafter(values.max(), np.inf)))
+    
     rows = []
     for threshold in candidates:
         # 같은 OOF 점수에 문턱만 바꾸므로 AP는 같고 Recall·오류 건수는 달라진다.
         metrics = evaluate_anomaly_scores(oof.label, values,
             positive_label=config.dataset.positive_label, negative_label=config.dataset.negative_label,
             threshold=float(threshold))
+        
         rows.append({**metadata, **asdict(metrics)})
+
     # 재검사 비율과 policy_feasible을 추가한다. 이 단계에서 문턱을 선택하지는 않는다.
     return policy_candidates(pd.DataFrame(rows), config.threshold_policy, score_kind="anomaly")
 
@@ -214,8 +237,11 @@ def _thresholds(oof, config, metadata):
 def _inner_anomaly_oof(train, config, name, inner, metadata, *, n_jobs, n_estimators):
     """과거 구간의 정상만 학습해 시간순 내부 OOF와 학습 근거를 생성한다."""
     parts, fit_records = [], []
+
     for inner_fold, (past_i, future_i) in enumerate(inner, 1):
+
         past, future = train.iloc[past_i], train.iloc[future_i]
+
         # 내부 past의 정상만 학습하고 아직 학습하지 않은 내부 future를 점수화한다.
         # 점수 계산 대상은 future의 정상·불량 전체이며 fit에는 사용하지 않는다.
         model = fit_detector(past, config, name, n_jobs=n_jobs, n_estimators=n_estimators)
@@ -223,11 +249,14 @@ def _inner_anomaly_oof(train, config, name, inner, metadata, *, n_jobs, n_estima
         parts.append(_prediction_rows(future, config, scores, {**metadata, "inner_fold": inner_fold}))
         fit_records.append({**_fit_record(model, past, config, {**metadata, "inner_fold": inner_fold}),
                      "evaluation_start": _period(future, config.dataset)[0]})
+        
     # 4. 내부 평가 부분만 연결한다. 최초 past는 예측 대상이 아니므로 제외된다.
     # 이 초기 행을 0점으로 채우면 OOF 결과와 threshold가 왜곡된다.
     oof = pd.concat(parts, ignore_index=True)
+
     if oof.source_row_index.duplicated().any():
         raise RuntimeError("시간순 OOF 행이 중복 예측됐습니다.")
+    
     return oof, fit_records
 
 
@@ -248,6 +277,7 @@ def _evaluate_threshold(evaluation, scores, config, threshold):
 def _summarize_anomalies(result):
     """시간 구간별 이상 탐지 결과를 AP 평균과 합산 오류량으로 요약한다."""
     summaries = []
+
     for name, group in result.groupby("model_name", sort=False):
         # 8. 외부 평가 행은 시간 구간별로 겹치지 않으므로 오류 건수를 합산한다.
         # AP는 구간별 평균이며 합산 Recall·Precision은 건수에서 다시 계산한다.
@@ -259,6 +289,7 @@ def _summarize_anomalies(result):
             "pooled_recall": tp / (tp + fn), "pooled_precision": tp / (tp + fp) if tp + fp else 0,
             "alarm_ratio": (tp + fp) / (tp + fp + fn + tn),
             "true_positive": tp, "false_positive": fp, "false_negative": fn, "true_negative": tn})
+        
     return pd.DataFrame(summaries)
 
 
@@ -288,11 +319,14 @@ def compare_anomalies(frame, config, *, outer_splits=3, inner_splits=2,
                            format=config.dataset.timestamp_format, errors="coerce")
     if times.isna().any():
         raise ValueError("timestamp 파싱 실패 또는 결측값이 있습니다.")
+    
     # 실제 날짜로 정렬하고 같은 timestamp의 원래 순서를 유지한다.
     # reset_index를 하지 않아 source_row_index가 원본 CSV 행 위치를 유지한다.
     frame = frame.iloc[np.argsort(times.to_numpy(), kind="stable")].copy()
+
     # 결과 종류마다 별도 목록을 사용해 학습 근거·OOF·미래 평가를 섞지 않는다.
     periods, fits, oofs, thresholds, predictions, results, policies, coverage = [], [], [], [], [], [], [], []
+
     for outer, (fit_i, eval_i) in enumerate(temporal_folds(frame, config.dataset, outer_splits), 1):
         # 2. 외부 구간: 과거 train으로만 모든 선택을 하고 이후 evaluation은 평가용이다.
         # temporal_folds는 동일 timestamp·선언된 그룹·ID가 경계를 넘는지 검사한다.
@@ -303,29 +337,37 @@ def compare_anomalies(frame, config, *, outer_splits=3, inner_splits=2,
             "evaluation_fail": int(evaluation[config.dataset.label_column].eq(config.dataset.positive_label).sum()),
             "train_start": _period(train, config.dataset)[0], "train_end": _period(train, config.dataset)[1],
             "evaluation_start": _period(evaluation, config.dataset)[0], "evaluation_end": _period(evaluation, config.dataset)[1]})
+        
         # 3. 문턱 선택용 구간은 외부 evaluation이 아니라 과거 train 안에서 생성한다.
         # 두 이상 탐지 모델은 이 같은 인덱스를 재사용해 공정하게 비교한다.
         inner = temporal_folds(train, config.dataset, inner_splits)
+
         for name in DETECTORS:
+
             metadata = {"dataset_id": config.dataset.dataset_id, "outer_fold": outer,
                         "model_name": name, "mode": "temporal_oof", "score_kind": "anomaly"}
+            
             # 초기 미예측 구간은 제외한 OOF와 정상 전용 fit 기록을 받는다.
             oof, inner_fits = _inner_anomaly_oof(
                 train, config, name, inner, metadata,
                 n_jobs=n_jobs, n_estimators=n_estimators,
             )
+
             fits.extend(inner_fits)
             oofs.append(oof)
             table = _thresholds(oof, config, metadata)
             thresholds.append(table)
+
             coverage.append({**metadata, "train_samples": len(train), "oof_samples": len(oof),
                              "excluded_initial_samples": len(train) - len(oof),
                              "oof_fail": int(oof.label.eq(config.dataset.positive_label).sum())})
+            
             # 5. 진단 후보와 정책 후보는 목적이 다르므로 따로 보관한다.
             # diagnostic: 목표 미충족이어도 모델 비교를 위해 계산하는 F1 최대 후보.
             # chosen: Recall·재검사 상한을 동시에 만족할 때만 값이 있고 아니면 None.
             diagnostic = float(table.loc[table.f1.idxmax(), "threshold"])
             chosen = select_policy_threshold(table, config.threshold_policy, score_kind="anomaly")
+
             # 문턱을 고른 다음 과거 정상 전체로 학습하고 이후 구간의 점수를 생성한다.
             # 6. 내부 OOF에서 사용한 모델을 재사용하지 않고 과거 정상 전체로 새로 fit한다.
             # fit 시간만 측정하며 점수 계산·내부 OOF 생성 시간은 포함하지 않는다.
@@ -336,19 +378,24 @@ def compare_anomalies(frame, config, *, outer_splits=3, inner_splits=2,
             fits.append({**_fit_record(model, train, config, {**metadata, "inner_fold": None}),
                          "evaluation_start": _period(evaluation, config.dataset)[0]})
             predictions.append(_prediction_rows(evaluation, config, scores, metadata))
+
             # 7. F1 진단 결과는 항상 기록하되 정책 통과 결과와 구분한다.
             results.append({**metadata, "threshold_rule": "oof_max_f1_diagnostic", "fit_seconds": elapsed,
                             **_evaluate_threshold(evaluation, scores, config, diagnostic)})
             policy = {**metadata, **asdict(config.threshold_policy), "threshold": chosen,
                       "policy_status": "feasible" if chosen is not None else "infeasible"}
+            
             if chosen is not None:
                 # OOF에서 조건을 충족해도 다음 구간에서는 미충족일 수 있으므로 재확인한다.
                 policy.update(_evaluate_threshold(evaluation, scores, config, chosen))
                 policy["evaluation_meets_policy"] = (policy["recall"] >= config.threshold_policy.min_recall and
                     policy["reinspection_ratio"] <= config.threshold_policy.max_reinspection_ratio)
+                
             # chosen=None이면 정책 미충족만 기록하고 미래 정책 지표는 만들지 않는다.
             policies.append(policy)
+
     result = pd.DataFrame(results)
+
     return {"folds": pd.DataFrame(periods), "fold_results": result, "summary": _summarize_anomalies(result),
             "predictions": pd.concat(predictions, ignore_index=True),
             "oof_predictions": pd.concat(oofs, ignore_index=True),
@@ -365,29 +412,39 @@ def compare_anomalies(frame, config, *, outer_splits=3, inner_splits=2,
 # - 내부 OOF 방식이 동일한 temporal_oof 행만 선택
 # ==========================================
 def supervised_comparison(results, directory, config):
+
     # 생성 계약·학습 설정·시간 경계가 맞는 과거 지도학습 진단만 비교에 사용한다.
     record = json.loads((directory / "temporal_run.json").read_text(encoding="utf-8"))
+
     # 현재 Path 객체도 문자열로 바꿔 JSON에 저장된 과거 설정과 같은 형식으로 비교한다.
     current = json.loads(json.dumps(asdict(config), default=str))
     original = dict(record["config"])
+
     # 여기서는 정책 threshold가 아니라 OOF 최대 F1 진단 결과끼리 비교한다.
     current.pop("threshold_policy", None)
     original.pop("threshold_policy", None)
+
     if current != original:
         raise ValueError("지도학습 비교 로그의 학습 설정이 다릅니다. 같은 조건으로 다시 생성하세요.")
+    
     # 평균 AP만 비슷한 로그를 연결하지 않도록 실제 평가 구간 자체를 확인한다.
     periods = pd.read_csv(directory / "folds.csv")
+
     try:
         pd.testing.assert_frame_equal(results["folds"], periods, check_dtype=False)
     except AssertionError as error:
         raise ValueError("지도학습과 이상 탐지의 시간 구간·표본 수가 일치하지 않습니다.") from error
+    
     previous = pd.read_csv(directory / "fold_results.csv")
     previous = previous.loc[previous["mode"].eq("temporal_oof")].copy()
+
     if previous.empty:
         raise ValueError("지도학습 비교 로그에 시간순 OOF 평가가 없습니다.")
+    
     # 노트북에서 학습 방식별로 구분할 수 있게 접근 종류를 명시한다.
     previous["model_family"] = "supervised"
     anomaly = results["fold_results"].assign(model_family="anomaly")
+
     return pd.concat([previous, anomaly], ignore_index=True).drop(columns="quality_filter_log", errors="ignore")
 
 
@@ -409,9 +466,11 @@ def parse_args(argv=None):
     parser.add_argument("--n-estimators", type=int, default=200)
     parser.add_argument("--n-jobs", type=int, default=1)
     args = parser.parse_args(argv)
+
     # 학습을 시작하기 전에 기존 산출물을 덮어쓰는 실행인지 확인한다.
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         raise ValueError("결과 폴더가 비어 있지 않습니다. 새 폴더를 지정하세요.")
+    
     return args
 
 
@@ -419,14 +478,18 @@ def save_results(args, config, train, results):
     """계산된 결과와 실행 설정을 기존 파일 이름·형식으로 저장한다."""
     # 저장 단계에서는 모델을 학습하거나 문턱을 다시 선택하지 않는다.
     args.output_dir.mkdir(parents=True, exist_ok=True)
+
     for name, table in results.items():
         if name == "quality_filter":
             # 센서 이름 목록은 CSV 셀 하나에 들어가도록 JSON 문자열로 변환한다.
             # copy를 사용해 계산 단계에서 만든 DataFrame 원본은 변경하지 않는다.
             table = table.copy()
+
             for column in ("high_missing_features", "constant_features"):
                 table[column] = table[column].map(quality_filter_json)
+
         table.to_csv(args.output_dir / f"{name}.csv", index=False, encoding="utf-8-sig")
+
     # CSV 수치와 함께 입력·정책·모델 옵션·환경·점수 정의를 보존한다.
     # 점수 정의가 달라지면 threshold 숫자의 의미도 달라지므로 함께 기록한다.
     record = {"config": asdict(config), "train_path": str(args.train.resolve()),
@@ -436,6 +499,7 @@ def save_results(args, config, train, results):
               "training_protocol_id": train[PROTOCOL_ID].iloc[0] if PROTOCOL_ID in train else None,
               "python": sys.version.split()[0], "sklearn": sklearn.__version__,
               "score_definition": {"isolation_forest": "negative_score_samples", "pca_reconstruction": "standardized_reconstruction_mse"}}
+    
     (args.output_dir / "anomaly_run.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
@@ -445,20 +509,27 @@ def main():
     args = parse_args()
     config = load_modeling_config(args.config)
     train = pd.read_csv(args.train)
+
     # 결과 계산 중에는 CSV를 쓰지 않는다. 비교 검증까지 통과한 뒤 저장한다.
     results = compare_anomalies(train, config, outer_splits=args.outer_splits,
                                inner_splits=args.inner_splits, n_jobs=args.n_jobs, n_estimators=args.n_estimators)
+    
     if args.supervised_dir:
         # 생성 계약과 내부 fold 수는 기간 비교만으로 확인할 수 없으므로 별도 검사한다.
         metadata = json.loads((args.supervised_dir / "temporal_run.json").read_text(encoding="utf-8"))
+        
         if (metadata.get("outer_splits") != args.outer_splits or
             metadata.get("inner_temporal_splits") != args.inner_splits):
             raise ValueError("지도학습과 이상 탐지의 시간 fold 설정이 다릅니다.")
+        
         if PROTOCOL_ID in train and metadata.get("training_protocol_id") != train[PROTOCOL_ID].iloc[0]:
             raise ValueError("지도학습 비교 로그의 Train 생성 계약이 다릅니다.")
+        
         results["anomaly_compare"] = supervised_comparison(results, args.supervised_dir, config)
+
     # 결과 dict의 각 항목을 같은 이름의 CSV로 저장해 노트북과 연결한다.
     save_results(args, config, train, results)
+    
     # 콘솔에는 요약만 표시하고 상세 근거는 생성된 CSV에서 확인한다.
     print(results["summary"].to_string(index=False))
     print(results["policy_selection"][["outer_fold", "model_name", "policy_status", "threshold"]].to_string(index=False))
