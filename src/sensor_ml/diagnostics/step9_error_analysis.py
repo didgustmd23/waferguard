@@ -54,6 +54,7 @@ def assign_error_groups(
 
     actual_fail = labels.to_numpy() == positive_label
     predicted_fail = np.asarray(positive_scores) >= threshold
+
     groups = np.select(
         [
             actual_fail & predicted_fail,
@@ -63,6 +64,7 @@ def assign_error_groups(
         ["TP", "FN", "FP"],
         default="TN",
     )
+
     return pd.Series(groups, index=labels.index, name="error_group")
 
 
@@ -76,12 +78,15 @@ def _standardized_mean_difference(left: pd.Series, right: pd.Series) -> float:
     # 결측값은 제외하고 두 그룹의 평균 차이를 공통 표준편차로 나눈다.
     left_values = left.dropna().to_numpy(dtype=float)
     right_values = right.dropna().to_numpy(dtype=float)
+    
     if len(left_values) < 2 or len(right_values) < 2:
         return float("nan")
 
     pooled_std = np.sqrt((left_values.var(ddof=1) + right_values.var(ddof=1)) / 2)
+    
     if pooled_std == 0.0 or not np.isfinite(pooled_std):
         return float("nan")
+    
     return float((left_values.mean() - right_values.mean()) / pooled_std)
 
 
@@ -95,6 +100,7 @@ def summarize_error_groups(
     features: pd.DataFrame,
 ) -> pd.DataFrame:
     """오류 그룹별 표본 수·예측 점수·행 단위 결측률을 요약한다."""
+    
     # 사례와 feature 행이 어긋나면 결측률 요약이 잘못되므로 먼저 차단한다.
     if len(cases) != len(features):
         raise ValueError("오류 사례와 feature 행 수가 일치해야 합니다.")
@@ -102,6 +108,7 @@ def summarize_error_groups(
     working = cases.copy()
     working["row_missing_ratio"] = features.isna().mean(axis=1).to_numpy()
     rows: list[dict[str, object]] = []
+    
     for group in ERROR_GROUP_ORDER:
         group_rows = working[working["error_group"] == group]
         rows.append(
@@ -114,6 +121,7 @@ def summarize_error_groups(
                 "row_missing_ratio_median": group_rows["row_missing_ratio"].median(),
             }
         )
+    
     return pd.DataFrame(rows)
 
 
@@ -137,14 +145,18 @@ def compare_error_features(
         raise ValueError("feature와 오류 그룹의 행 수가 일치해야 합니다.")
 
     rows: list[dict[str, object]] = []
+    
     for feature in features.columns:
         values = features[feature]
+    
         # 문자열 범주형에 수치형 median·SMD를 적용하지 않는다.
         if not pd.api.types.is_numeric_dtype(values):
             continue
+
         fn_values = values[error_groups == "FN"]
         fp_values = values[error_groups == "FP"]
         tn_values = values[error_groups == "TN"]
+        
         rows.append(
             {
                 "feature": feature,
@@ -162,6 +174,7 @@ def compare_error_features(
                 ),
             }
         )
+
     result = pd.DataFrame(rows, columns=[
         "feature", "fn_missing_ratio", "tn_missing_ratio", "fn_vs_tn_missing_ratio_delta",
         "fn_median", "tn_median", "fn_vs_tn_standardized_mean_difference",
@@ -171,8 +184,10 @@ def compare_error_features(
     if drift_report is not None:
         required_columns = {"feature", "drift_priority", "drift_priority_score"}
         missing_columns = sorted(required_columns - set(drift_report.columns))
+        
         if missing_columns:
             raise ValueError(f"drift report에 필수 column이 없습니다: {missing_columns}")
+        
         result = result.merge(
             drift_report.loc[:, list(required_columns)], on="feature", how="left"
         )
@@ -181,9 +196,12 @@ def compare_error_features(
     result["absolute_fn_vs_tn_smd"] = result[
         "fn_vs_tn_standardized_mean_difference"
     ].abs()
+
     sort_columns = ["absolute_fn_vs_tn_smd"]
+
     if "drift_priority_score" in result:
         sort_columns.insert(0, "drift_priority_score")
+
     return result.sort_values(sort_columns, ascending=False, na_position="last")
 
 
@@ -209,12 +227,15 @@ def analyze_time_validation_errors(
     특징 차이를 해석할 때 참고 정보로 결합한다.
     """
     validate_split_pair(train_frame, validation_frame, config.dataset, temporal=True)
+
     train_x, train_y, feature_columns = split_frame_to_xy(train_frame, config.dataset)
+    
     validation_x, validation_y, _ = split_frame_to_xy(
         validation_frame,
         config.dataset,
         expected_feature_columns=feature_columns,
     )
+
     if train_y.nunique() < 2:
         raise ValueError("Time Train split에는 정상과 Fail label이 모두 있어야 합니다.")
 
@@ -223,7 +244,9 @@ def analyze_time_validation_errors(
         build_pipeline(config, experiment_name, n_jobs=n_jobs),
         train_x, train_y, config, experiment_name, n_jobs=n_jobs,
     )
+
     scores = positive_scores(pipeline, validation_x, config.dataset)
+    
     error_groups = assign_error_groups(
         validation_y,
         scores,
@@ -242,11 +265,13 @@ def analyze_time_validation_errors(
             "error_group": error_groups.to_numpy(),
         }
     )
+    
     if config.dataset.timestamp_column is not None:
         cases.insert(1, "timestamp", validation_frame[config.dataset.timestamp_column].to_numpy())
 
     summary = summarize_error_groups(cases, validation_x)
     feature_comparison = compare_error_features(validation_x, error_groups, drift_report)
+    
     return cases, summary, feature_comparison
 
 
@@ -271,10 +296,13 @@ def analyze_time_validation_errors_from_files(
     """설정과 분할 파일을 읽어 시간 검증 오류 분석을 수행하고 저장한다."""
     # drift report는 선택 입력이며, 전달된 경우에만 feature 비교 결과와 결합한다.
     drift_report = None
+    
     if drift_report_path is not None:
         path = Path(drift_report_path)
+    
         if not path.exists():
             raise FileNotFoundError(f"drift report 파일을 찾을 수 없습니다: {path}")
+        
         drift_report = pd.read_csv(path)
 
     cases, summary, feature_comparison = analyze_time_validation_errors(
@@ -286,6 +314,7 @@ def analyze_time_validation_errors_from_files(
         n_jobs=n_jobs,
         experiment_name=experiment_name,
     )
+    
     for frame, output_path in (
         (cases, cases_output_path),
         (summary, summary_output_path),
@@ -294,6 +323,7 @@ def analyze_time_validation_errors_from_files(
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.to_csv(path, index=False, encoding="utf-8-sig")
+
     return cases, summary, feature_comparison
 
 
@@ -320,6 +350,7 @@ def _parse_arguments() -> argparse.Namespace:
     parser.add_argument("--n-jobs", type=int, default=1)
     parser.add_argument("--experiment", default=EXPERIMENT_NAME,
                         help="OOF에서 사전 선택한 실험 이름입니다.")
+    
     return parser.parse_args()
 
 
@@ -327,6 +358,7 @@ def main() -> None:
     """명령행 진입점으로 오류 분석을 실행하고 산출 경로를 안내한다."""
     # 사례·요약·feature 비교 로그를 저장하고 콘솔에는 검토용 요약만 표시한다.
     arguments = _parse_arguments()
+    
     _, summary, features = analyze_time_validation_errors_from_files(
         arguments.config,
         arguments.train,
@@ -339,6 +371,7 @@ def main() -> None:
         n_jobs=arguments.n_jobs,
         experiment_name=arguments.experiment,
     )
+    
     print("오류 그룹 요약")
     print(summary.to_string(index=False))
     print("FN/TN 차이와 drift 기준 상위 feature 10개")

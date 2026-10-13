@@ -47,26 +47,32 @@ def merge_feature_metadata_pair(
     feature_source_name = options.get("feature_source")
     metadata_source_name = options.get("metadata_source")
     metadata_columns = options.get("metadata_columns")
+
     if not isinstance(feature_source_name, str) or not feature_source_name:
         raise ValueError("feature_metadata_pair에는 adapter_options.feature_source 설정이 필요합니다")
+    
     if not isinstance(metadata_source_name, str) or not metadata_source_name:
         raise ValueError("feature_metadata_pair에는 adapter_options.metadata_source 설정이 필요합니다")
+    
     if not isinstance(metadata_columns, list) or not metadata_columns or not all(
         isinstance(column, str) and column for column in metadata_columns
     ):
         raise ValueError(
             "feature_metadata_pair에는 비어 있지 않은 adapter_options.metadata_columns 설정이 필요합니다"
         )
+    
     if len(metadata_columns) != len(set(metadata_columns)):
         raise ValueError("adapter_options.metadata_columns에 중복 column이 있으면 안 됩니다")
 
     # source마다 Profile이 선언한 pandas read_csv 옵션을 그대로 적용한다.
     feature_source = ingestion.get_source(feature_source_name)
     metadata_source = ingestion.get_source(metadata_source_name)
+
     feature_frame = pd.read_csv(
         feature_source.path,
         **feature_source.read_csv_options,
     )
+
     metadata_frame = pd.read_csv(
         metadata_source.path,
         **metadata_source.read_csv_options,
@@ -88,8 +94,10 @@ def merge_feature_metadata_pair(
 
     # Label과 timestamp 열의 의미가 Profile 정의와 일치하는지 먼저 확인한다.
     expected_metadata_columns = [dataset.label_column]
+
     if dataset.timestamp_column is not None:
         expected_metadata_columns.append(dataset.timestamp_column)
+
     if metadata_columns != expected_metadata_columns:
         raise ValueError(
             "adapter_options.metadata_columns는 Dataset Profile의 label/timestamp "
@@ -103,10 +111,12 @@ def merge_feature_metadata_pair(
     if dataset.feature_selection_mode == "prefix":
         if not dataset.feature_column_prefix:
             raise ValueError("prefix 방식에는 비어 있지 않은 feature column prefix가 필요합니다")
+        
         feature_frame.columns = [
             f"{dataset.feature_column_prefix}{index}"
             for index in range(feature_frame.shape[1])
         ]
+
     elif not all(isinstance(column, str) and column for column in feature_frame.columns):
         raise ValueError(
             "all_except_metadata 방식에는 source에 이름이 있는 feature column이 필요합니다"
@@ -148,6 +158,7 @@ def merge_dataset(config_path: Path | str, output_path: Path | None = None) -> P
     adapter = INGESTION_ADAPTERS.get(ingestion.adapter)
     if adapter is None:
         raise ValueError(f"지원하지 않는 ingestion adapter입니다: {ingestion.adapter}")
+    
     merged_frame = adapter(dataset, ingestion)
 
     # 호출자가 경로를 주지 않으면 Profile의 canonical input_path를 사용
@@ -174,6 +185,7 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Dataset Profile 기반 원본 데이터 병합")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--output", type=Path)
+    
     return parser.parse_args()
 
 

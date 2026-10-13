@@ -38,12 +38,15 @@ def resolve_feature_columns(
 
     # Label·Timestamp·ID·Group·명시적 제외 컬럼이 실제 입력에 존재하는지 확인
     required_columns = [dataset.label_column]
+
     if dataset.timestamp_column is not None:
         required_columns.append(dataset.timestamp_column)
+
     required_columns.extend(dataset.id_columns)
     required_columns.extend(dataset.group_columns)
     required_columns.extend(dataset.excluded_feature_columns)
     missing_columns = [column for column in required_columns if column not in columns]
+
     if missing_columns:
         raise ValueError(f"데이터셋에 필수 column이 없습니다: {missing_columns}")
 
@@ -90,6 +93,7 @@ def validate_dataset_frame(dataframe: pd.DataFrame, dataset: DatasetSpec) -> tup
     # Dataset Profile에 선언된 정상·불량 Label 외 값이 포함되었는지 확인
     allowed_labels = {dataset.negative_label, dataset.positive_label}
     invalid_labels = labels[~labels.isin(allowed_labels)].unique().tolist()
+    
     if invalid_labels:
         raise ValueError(
             f"데이터셋 column '{dataset.label_column}'에 지원하지 않는 label이 있습니다: "
@@ -99,17 +103,20 @@ def validate_dataset_frame(dataframe: pd.DataFrame, dataset: DatasetSpec) -> tup
     # Profile에 명시된 범주형 feature만 문자열·category dtype을 허용한다.
     categorical_columns = set(dataset.categorical_feature_columns)
     unknown_categorical_columns = sorted(categorical_columns - set(feature_columns))
+    
     if unknown_categorical_columns:
         raise ValueError(
             "Profile에 선언된 범주형 feature가 선택된 feature에 없습니다: "
             f"{unknown_categorical_columns}"
         )
+    
     non_numeric_columns = [
         column
         for column in feature_columns
         if column not in categorical_columns
         and not pd.api.types.is_numeric_dtype(dataframe[column])
     ]
+    
     if non_numeric_columns:
         raise ValueError(
             "범주형으로 선언되지 않은 feature는 숫자형 dtype이어야 합니다: "
@@ -135,6 +142,7 @@ def split_frame_to_xy(
     feature_columns = validate_dataset_frame(dataframe, dataset)
 
     if expected_feature_columns is not None:
+    
         # 순서 차이는 Train 기준으로 맞출 수 있지만, 누락 또는 추가 feature는 허용하지 않는다.
         if set(feature_columns) != set(expected_feature_columns):
             raise ValueError(
@@ -142,6 +150,7 @@ def split_frame_to_xy(
                 f"Train={list(expected_feature_columns)}, "
                 f"Validation={list(feature_columns)}"
             )
+        
         feature_columns = expected_feature_columns
 
     # 모델에는 검증된 feature만 전달하고 label은 원래 label 값으로 유지한다.

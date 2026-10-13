@@ -87,6 +87,7 @@ def build_baseline_pipeline(
 ) -> Pipeline:
     # Profile에 선언된 범주형 column이 현재 선택 feature에 모두 포함되는지 확인한다.
     unknown_categorical = sorted(set(dataset.categorical_feature_columns) - set(feature_columns))
+
     if unknown_categorical:
         raise ValueError(
             "Profile에 선언된 범주형 feature가 선택된 feature에 없습니다: "
@@ -110,6 +111,7 @@ def run_baseline(
     validation_frame: pd.DataFrame,
     config: ModelingConfig,
 ) -> BaselineResult:
+    
     # 현재 계획의 Baseline은 Logistic Regression 하나로 한정한다.
     if config.baseline_model != "logistic_regression":
         raise ValueError(
@@ -119,8 +121,10 @@ def run_baseline(
 
     # split의 역할·원본 행 중복을 모델 학습 전에 검사한다.
     validate_split_pair(train_frame, validation_frame, config.dataset)
+
     # Train feature를 기준으로 Validation feature의 구성과 순서를 검증한다.
     train_x, train_y, feature_columns = split_frame_to_xy(train_frame, config.dataset)
+
     validation_x, validation_y, _ = split_frame_to_xy(
         validation_frame,
         config.dataset,
@@ -137,17 +141,21 @@ def run_baseline(
         feature_columns,
         random_state=config.experiment.cv.random_state,
     )
+
     started_at = perf_counter()
     pipeline.fit(train_x, train_y)
     training_seconds = perf_counter() - started_at
 
     # class 순서를 가정하지 않고 Profile의 Fail label에 해당하는 확률 열을 찾는다.
     model = pipeline.named_steps["model"]
+
     class_positions = [
         index for index, label in enumerate(model.classes_) if label == config.dataset.positive_label
     ]
+
     if len(class_positions) != 1:
         raise ValueError("학습된 Baseline에 Profile의 Fail label이 없습니다")
+    
     positive_scores = pipeline.predict_proba(validation_x)[:, class_positions[0]]
 
     # 후보 Baseline 비교에서는 config.json에 둔 고정 threshold를 명시적으로 전달한다.
@@ -207,6 +215,7 @@ def run_baseline_from_files(
     config = load_modeling_config(config_path)
     train_frame = pd.read_csv(train_path)
     validation_frame = pd.read_csv(validation_path)
+
     if split_strategy == "time":
         validate_split_pair(train_frame, validation_frame, config.dataset, temporal=True)
 
@@ -237,6 +246,7 @@ def _parse_arguments() -> argparse.Namespace:
 def main() -> None:
     # 명령행에서 받은 Train/Validation split으로 Baseline을 실행하고 핵심 결과만 출력한다.
     arguments = _parse_arguments()
+    
     result = run_baseline_from_files(
         arguments.config,
         arguments.train,
@@ -244,6 +254,7 @@ def main() -> None:
         arguments.output,
         split_strategy=arguments.split_strategy,
     )
+
     print(f"데이터셋 ID: {result.dataset_id}")
     print(f"모델: {result.model_name}")
     print(f"Split 방식: {result.split_strategy}")

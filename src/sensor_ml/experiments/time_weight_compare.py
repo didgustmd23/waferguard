@@ -25,7 +25,9 @@ def build_weight_candidates(config, preset, *, n_jobs=1):
     """동일한 전처리를 사용하고 M0/M3와 가중치만 바꾼 6개 후보를 생성한다."""
     if set(preset["model_variants"]) != {"M0", "M3"} or preset["weight_modes"] != ["none", "sqrt_ratio", "ratio"]:
         raise ValueError("이 실험에는 M0·M3와 none·sqrt_ratio·ratio의 6개 조합이 필요합니다.")
+    
     pipelines = {}
+
     for variant, params in preset["model_variants"].items():
         for mode in preset["weight_modes"]:
             name = f"v2_{variant.lower()}_{mode}"
@@ -34,21 +36,27 @@ def build_weight_candidates(config, preset, *, n_jobs=1):
             parameters = {**preset["base_parameters"], **params, "class_weight_mode": mode}
             pipeline.named_steps["model"].set_params(**parameters)
             pipelines[name] = pipeline
+
     return pipelines
 
 
 def compare_time_weights(frame, config, preset, *, n_jobs=1):
+
     """시간순 OOF·미래 평가를 분리하고 실제 학습 가중치도 기록한다."""
     validate_train_role(frame)
+
     if PROTOCOL_ID not in frame or frame[PROTOCOL_ID].isna().any() or frame[PROTOCOL_ID].nunique() != 1:
         raise ValueError("새 실험에는 생성 계약을 포함한 Train split이 필요합니다.")
+    
     pipelines = build_weight_candidates(config, preset, n_jobs=n_jobs)
     weights = []
 
     def record_weight(model, train, evaluation, outer_fold, model_name, mode, inner_fold):
+    
         # 추정 설정이 아니라 실제 fit된 분류기의 가중치와 해당 학습 label 수를 저장한다.
         classifier = model.named_steps["model"]
         labels = train[config.dataset.label_column]
+
         weights.append({"model_name": model_name, "outer_fold": outer_fold,
                         "mode": mode, "inner_fold": inner_fold,
                         "train_samples": len(train),
@@ -62,7 +70,9 @@ def compare_time_weights(frame, config, preset, *, n_jobs=1):
                               model_names=tuple(pipelines), pipelines=pipelines,
                               oof_modes=("temporal_oof",), n_jobs=n_jobs,
                               fit_observer=record_weight)
+    
     tables["fit_weights"] = pd.DataFrame(weights)
+    
     return tables
 
 
@@ -75,24 +85,33 @@ def parse_args(argv=None):
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--n-jobs", type=int, default=1)
     args = parser.parse_args(argv)
+
     if args.n_jobs < 1:
         raise ValueError("병렬 수는 1 이상의 정수여야 합니다.")
+    
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         raise ValueError("출력 폴더가 비어 있지 않습니다. 새 폴더를 지정하세요.")
+    
     return args
 
 
 def save_results(args, config, preset, frame, tables):
     """계산된 결과와 실행 설정을 기존 파일 이름·형식으로 저장한다."""
+    
     # 저장 단계에서는 모델을 학습하거나 문턱을 다시 선택하지 않는다.
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    
     for name, table in tables.items():
+    
         # 리스트·사전형 품질 기록은 JSON으로 직렬화하여 CSV 안에서도 구조를 보존한다.
         stored = table.copy()
+    
         if name == "quality_filter":
             for column in ("high_missing_features", "constant_features"):
                 stored[column] = stored[column].map(lambda value: json.dumps(value, ensure_ascii=False))
+
         stored.to_csv(args.output_dir / f"{name}.csv", index=False, encoding="utf-8-sig")
+
     execution = {"config": asdict(config), "preset": preset,
                  "train_path": str(args.train.resolve()),
                  "training_protocol_id": frame[PROTOCOL_ID].iloc[0],
@@ -101,8 +120,10 @@ def save_results(args, config, preset, frame, tables):
                  "feature_scope": "all_after_fold_quality_filter",
                  "model_parameters": {name: pipe.named_steps["model"].get_params()
                                       for name, pipe in build_weight_candidates(config, preset, n_jobs=args.n_jobs).items()}}
+    
     (args.output_dir / "execution.json").write_text(
         json.dumps(execution, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    
     report = ["# V2 전체 센서 시간순 가중치 비교", "",
               "```text", tables["summary"].to_string(index=False), "```", "",
               "- temporal_oof 요약의 Recall은 F1 최대 진단 문턱 결과입니다. 운영 정책 달성을 뜻하지 않습니다.",
@@ -112,6 +133,7 @@ def save_results(args, config, preset, frame, tables):
               "- 3개 외부 fold는 학습 구간이 겹치며 독립 반복 실험이 아닙니다.",
               "- 원본 센서 20개 제한은 아직 적용하지 않았습니다. 선택기 없는 전체 센서 개선 실험입니다.",
               "- 기존 저장 모델·외부 Validation·Test는 사용하지 않았으며 최종 후보를 확정하지 않았습니다."]
+    
     (args.output_dir / "comparison.md").write_text("\n".join(report) + "\n", encoding="utf-8")
 
 

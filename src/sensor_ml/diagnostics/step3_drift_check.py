@@ -43,6 +43,7 @@ def calculate_population_stability_index(
     validation_numeric = pd.to_numeric(validation_values, errors="coerce").to_numpy(
         dtype=float
     )
+
     train_numeric = train_numeric[np.isfinite(train_numeric)]
     validation_numeric = validation_numeric[np.isfinite(validation_numeric)]
 
@@ -54,6 +55,7 @@ def calculate_population_stability_index(
     boundaries = np.unique(
         np.quantile(train_numeric, np.linspace(0.0, 1.0, bin_count + 1))
     )
+
     if boundaries.size < 3:
         return None
 
@@ -67,6 +69,7 @@ def calculate_population_stability_index(
     epsilon = 1e-6
     train_ratio = np.maximum(train_counts / train_counts.sum(), epsilon)
     validation_ratio = np.maximum(validation_counts / validation_counts.sum(), epsilon)
+
     return float(np.sum((validation_ratio - train_ratio) * np.log(validation_ratio / train_ratio)))
 
 
@@ -117,9 +120,11 @@ def summarize_numeric_feature(
     train_numeric = pd.to_numeric(train_values, errors="coerce").replace(
         [np.inf, -np.inf], np.nan
     )
+
     validation_numeric = pd.to_numeric(validation_values, errors="coerce").replace(
         [np.inf, -np.inf], np.nan
     )
+
     train_mean = train_numeric.mean()
     validation_mean = validation_numeric.mean()
     train_std = train_numeric.std(ddof=0)
@@ -127,6 +132,7 @@ def summarize_numeric_feature(
 
     # 두 split의 분산을 함께 사용해 평균 차이를 scale과 무관하게 비교한다.
     pooled_std = float(np.sqrt((train_std**2 + validation_std**2) / 2))
+
     if pd.isna(train_mean) or pd.isna(validation_mean) or pooled_std == 0.0:
         standardized_mean_difference: float | None = None
     else:
@@ -222,8 +228,10 @@ def build_temporal_drift_report(
     train_features, validation_features, feature_columns = align_split_features(
         train_frame, validation_frame, dataset
     )
+
     categorical_columns = set(dataset.categorical_feature_columns)
     records: list[dict[str, object]] = []
+
     for column in feature_columns:
         if column in categorical_columns:
             record = summarize_categorical_feature(
@@ -233,6 +241,7 @@ def build_temporal_drift_report(
             record = summarize_numeric_feature(
                 column, train_features[column], validation_features[column]
             )
+
         records.append(record)
 
     report = pd.DataFrame(records)
@@ -243,6 +252,7 @@ def build_temporal_drift_report(
     report["absolute_standardized_mean_difference"] = report[
         "standardized_mean_difference"
     ].abs()
+
     priority_components = pd.DataFrame(
         {
             "missing": report["absolute_missing_ratio_delta"] / 0.10,
@@ -252,7 +262,9 @@ def build_temporal_drift_report(
             "category_tvd": report["category_distribution_tvd"] / 0.20,
         }
     )
+
     report["drift_priority_score"] = priority_components.max(axis=1, skipna=True)
+
     report["drift_priority"] = np.select(
         [
             report["drift_priority_score"] >= 1.0,
@@ -261,6 +273,7 @@ def build_temporal_drift_report(
         ["높음", "중간"],
         default="낮음",
     )
+
     return report.sort_values(
         by=[
             "drift_priority_score",
@@ -287,6 +300,7 @@ def build_label_drift_summary(
     train_labels = train_frame[dataset.label_column]
     validation_labels = validation_frame[dataset.label_column]
     records: list[dict[str, object]] = []
+    
     for label in (dataset.negative_label, dataset.positive_label):
         train_ratio = float((train_labels == label).mean())
         validation_ratio = float((validation_labels == label).mean())
@@ -300,6 +314,7 @@ def build_label_drift_summary(
                 "ratio_delta": validation_ratio - train_ratio,
             }
         )
+
     return pd.DataFrame(records)
 
 
@@ -325,12 +340,14 @@ def run_temporal_drift_check(
     label_summary = build_label_drift_summary(
         train_frame, validation_frame, config.dataset
     )
+
     destination = Path(output_path)
     label_destination = Path(label_output_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     label_destination.parent.mkdir(parents=True, exist_ok=True)
     report.to_csv(destination, index=False, encoding="utf-8-sig")
     label_summary.to_csv(label_destination, index=False, encoding="utf-8-sig")
+
     return report, label_summary
 
 
@@ -348,6 +365,7 @@ def _parse_arguments() -> argparse.Namespace:
         type=Path,
         default=Path("logs/secom/exploratory/legacy/temporal_drift_label_summary.csv"),
     )
+
     return parser.parse_args()
 
 
@@ -355,6 +373,7 @@ def main() -> None:
     # 지정된 Time Train/Validation split의 feature·label 분포 차이를 기록한다.
     arguments = _parse_arguments()
     config = load_modeling_config(arguments.config)
+    
     report, label_summary = run_temporal_drift_check(
         arguments.config,
         arguments.train,
@@ -362,10 +381,13 @@ def main() -> None:
         arguments.output,
         arguments.label_output,
     )
+
     print(f"분석 feature 수: {len(report)}")
+
     positive_ratio_delta = label_summary.loc[
         label_summary["label"] == config.dataset.positive_label, "ratio_delta"
     ].iloc[0]
+    
     print(f"불량 label 비율 변화: {positive_ratio_delta:.4f}")
     print(f"분포 변화 보고서 저장 경로: {arguments.output}")
     print(f"label 요약 저장 경로: {arguments.label_output}")

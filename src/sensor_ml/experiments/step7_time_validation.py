@@ -75,11 +75,13 @@ def compare_time_validation(
 
     # Train의 feature 집합과 순서를 기준으로 Validation을 검증한다.
     train_x, train_y, feature_columns = split_frame_to_xy(train_frame, config.dataset)
+
     validation_x, validation_y, _ = split_frame_to_xy(
         validation_frame,
         config.dataset,
         expected_feature_columns=feature_columns,
     )
+
     if train_y.nunique() < 2:
         raise ValueError("Time Train split에는 정상과 Fail label이 모두 있어야 합니다.")
 
@@ -88,17 +90,21 @@ def compare_time_validation(
     evaluation_threshold = (
         config.experiment.default_threshold if threshold is None else threshold
     )
+
     if not 0.0 <= evaluation_threshold <= 1.0:
         raise ValueError("Time Validation threshold는 0.0 이상 1.0 이하여야 합니다.")
+    
     if threshold_report is not None:
         if threshold is None or len(experiment_names) != 1:
             raise ValueError("threshold 비교표를 적용할 때는 threshold와 후보 모델 하나를 명시하세요.")
+        
         validate_threshold_report(threshold_report, train_frame, config,
                                   experiment_names[0], evaluation_threshold)
 
     # 후보·특징 실험 모두 동일한 이름 해석 규칙으로 필요한 Pipeline만 만든다.
     if pipeline_templates is not None and set(pipeline_templates) != set(experiment_names):
         raise ValueError("주입한 Pipeline 이름과 평가 후보 이름이 일치해야 합니다.")
+    
     # OOF와 같은 설정의 후보를 전달받을 수 있으며 실제 fit은 공통 코어가 복제하여 수행한다.
     available_experiments = pipeline_templates if pipeline_templates is not None else {
         name: build_pipeline(config, name, n_jobs=n_jobs) for name in experiment_names
@@ -107,15 +113,19 @@ def compare_time_validation(
     rows: list[dict[str, object]] = []
     selected_features = []
     prediction_records = []
+
     for experiment_name in experiment_names:
         # 공통 fit은 전처리·선택·가중치를 Time Train에서만 학습한다.
         started_at = perf_counter()
+        
         pipeline = fit_pipeline(
             available_experiments[experiment_name], train_x, train_y,
             config, experiment_name, n_jobs=n_jobs,
         )
+
         fit_seconds = perf_counter() - started_at
         positive_scores_array = positive_scores(pipeline, validation_x, config.dataset)
+
         # 행별 확률을 남겨 문턱을 다시 탐색하지 않고 확률 분포와 미검출을 진단한다.
         prediction_records.extend({"experiment": experiment_name, "source_row_index": index,
                                    "source_row_id": validation_frame[SOURCE_ROW_ID].iloc[position]
@@ -124,6 +134,7 @@ def compare_time_validation(
                                    "predicted_positive": bool(score >= evaluation_threshold)}
                                   for position, (index, score) in enumerate(
                                       zip(validation_frame.index, positive_scores_array)))
+        
         # 전체 Train에서 다시 학습한 선택 결과를 남긴다. OOF fold별 센서와 같다고 가정하지 않는다.
         selector = pipeline.named_steps.get("selector")
         if selector is not None and hasattr(selector, "get_support"):
@@ -139,6 +150,7 @@ def compare_time_validation(
             negative_label=config.dataset.negative_label,
             threshold=evaluation_threshold,
         )
+
         rows.append(
             {
                 "dataset_id": config.dataset.dataset_id,
@@ -157,6 +169,7 @@ def compare_time_validation(
     result = pd.DataFrame(rows).sort_values("average_precision", ascending=False)
     result.attrs["selected_features"] = selected_features
     result.attrs["predictions"] = prediction_records
+
     return result
 
 
@@ -179,6 +192,7 @@ def compare_time_validation_from_files(
     """설정·분할 CSV를 읽어 시간 검증을 수행하고 결과 CSV를 저장한다."""
     # 파일을 읽는 경계에서만 I/O를 수행하고, 실제 평가는 순수 함수에 위임한다.
     config = load_modeling_config(config_path)
+
     result = compare_time_validation(
         pd.read_csv(train_path),
         pd.read_csv(validation_path),
@@ -192,6 +206,7 @@ def compare_time_validation_from_files(
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     result.to_csv(path, index=False, encoding="utf-8-sig")
+
     return result
 
 
@@ -229,6 +244,7 @@ def _parse_arguments() -> argparse.Namespace:
         default=list(PRESELECTED_EXPERIMENTS),
         help="Time Validation에 평가할 사전 선택 후보 이름입니다.",
     )
+    
     return parser.parse_args()
 
 

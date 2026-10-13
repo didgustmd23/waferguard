@@ -18,17 +18,22 @@ SPLIT_METADATA = (SOURCE_ROW_ID, SPLIT_ROLE, PROTOCOL_ID)
 def validate_train_role(frame):
     """학습 입력의 split 역할·행 식별자·생성 계약 metadata를 검증한다."""
     present = set(frame.columns) & set(SPLIT_METADATA)
+
     if present and present != set(SPLIT_METADATA):
         raise ValueError("split metadata는 원본 ID·역할·생성 계약을 모두 포함해야 합니다.")
+    
     # 새 계약의 Validation/Test를 학습 또는 OOF 입력으로 넘기면 즉시 차단한다.
     if SPLIT_ROLE in frame and (frame[SPLIT_ROLE].isna().any()
                                or set(frame[SPLIT_ROLE]) != {"train"}):
         raise ValueError("학습 입력에는 train 역할의 split만 사용할 수 있습니다.")
+    
     for column in (SOURCE_ROW_ID, PROTOCOL_ID):
         if column in frame and frame[column].isna().any():
             raise ValueError(f"split metadata에 결측값이 있습니다: {column}")
+        
     if SOURCE_ROW_ID in frame and frame[SOURCE_ROW_ID].duplicated().any():
         raise ValueError("학습 split의 원본 행 ID가 중복됩니다.")
+    
     if PROTOCOL_ID in frame and frame[PROTOCOL_ID].nunique() != 1:
         raise ValueError("학습 split에는 하나의 생성 계약만 있어야 합니다.")
 
@@ -42,20 +47,24 @@ def validate_split_pair(train, validation, dataset, *, temporal=False):
     """
     if train.empty or validation.empty:
         raise ValueError("Train과 Validation split은 비어 있으면 안 됩니다.")
+    
     # 같은 생성 계약의 Train과 Validation인지 먼저 확인한다.
     validate_train_role(train)
     if SPLIT_ROLE in validation and set(validation[SPLIT_ROLE]) != {"validation"}:
         raise ValueError("검증 입력에는 validation 역할의 split만 사용할 수 있습니다.")
+    
     for column in SPLIT_METADATA:
         if (column in train) != (column in validation):
             raise ValueError("Train과 Validation의 split metadata 구성이 다릅니다.")
         if column in validation and validation[column].isna().any():
             raise ValueError(f"split metadata에 결측값이 있습니다: {column}")
+        
     if PROTOCOL_ID in train:
         if train[PROTOCOL_ID].nunique() != 1 or validation[PROTOCOL_ID].nunique() != 1:
             raise ValueError("하나의 split에는 하나의 생성 계약만 있어야 합니다.")
         if train[PROTOCOL_ID].iloc[0] != validation[PROTOCOL_ID].iloc[0]:
             raise ValueError("Train과 Validation의 split 생성 계약이 다릅니다.")
+        
     if SOURCE_ROW_ID in train:
         if validation[SOURCE_ROW_ID].duplicated().any():
             raise ValueError("검증 split의 원본 행 ID가 중복됩니다.")
@@ -69,12 +78,14 @@ def validate_split_pair(train, validation, dataset, *, temporal=False):
             valid_hash = pd.util.hash_pandas_object(validation[columns], index=False)
             if set(train_hash) & set(valid_hash):
                 raise ValueError("Train과 Validation에 동일한 데이터 행이 포함됩니다.")
+            
     if dataset.group_columns:
         groups = list(dataset.group_columns)
         if train[groups].isna().any().any() or validation[groups].isna().any().any():
             raise ValueError("split 그룹 컬럼에 결측값이 있습니다.")
         if set(map(tuple, train[groups].to_numpy())) & set(map(tuple, validation[groups].to_numpy())):
             raise ValueError("Train과 Validation에 동일한 그룹이 포함됩니다.")
+        
     if temporal and dataset.timestamp_column is not None:
         # 같은 timestamp를 경계 양쪽에 두지 않으며 파싱 실패를 조용히 제거하지 않는다.
         train_time = pd.to_datetime(train[dataset.timestamp_column], format=dataset.timestamp_format, errors="coerce")
@@ -102,13 +113,18 @@ def training_folds(features, labels, frame, config):
     cv = config.experiment.cv
     if labels.nunique() < 2 or int(labels.value_counts().min()) < cv.n_splits:
         raise ValueError("정상·Fail label별 샘플 수가 CV fold 수 이상이어야 합니다.")
+    
     if not config.dataset.group_columns:
         return RepeatedStratifiedKFold(n_splits=cv.n_splits, n_repeats=cv.n_repeats,
                                       random_state=cv.random_state).split(features, labels)
+    
     group_frame = frame[list(config.dataset.group_columns)]
+
     if group_frame.isna().any().any():
         raise ValueError("CV 그룹 컬럼에 결측값이 있습니다.")
+    
     groups, _ = pd.factorize(pd.MultiIndex.from_frame(group_frame))
+
     for label in labels.unique():
         if len(set(groups[labels.to_numpy() == label])) < cv.n_splits:
             raise ValueError("각 label을 포함한 그룹 수가 CV fold 수보다 작습니다.")
@@ -122,6 +138,7 @@ def training_folds(features, labels, frame, config):
                 if labels.iloc[train_indices].nunique() < 2 or labels.iloc[valid_indices].nunique() < 2:
                     raise ValueError("그룹 CV fold에 두 label이 모두 없습니다. fold 수 또는 그룹 구성을 검토하세요.")
                 yield train_indices, valid_indices
+
     return grouped_folds()
 
 
@@ -145,21 +162,28 @@ def temporal_folds(frame, dataset, n_splits):
     unique_times = np.sort(times.unique())
     if n_splits < 2 or len(unique_times) <= n_splits:
         raise ValueError("시간 fold 수는 2 이상이며 고유 timestamp 수보다 작아야 합니다.")
+    
     folds = []
+
     for fit_times, eval_times in TimeSeriesSplit(n_splits=n_splits).split(unique_times):
         fit_i = np.flatnonzero(times.isin(unique_times[fit_times]).to_numpy())
         eval_i = np.flatnonzero(times.isin(unique_times[eval_times]).to_numpy())
         train = frame.iloc[fit_i]
         evaluation = frame.iloc[eval_i].copy()
+
         # 원본 Train의 부분집합을 내부 평가로 사용하므로 복사본의 역할만 변경한다.
         if SPLIT_ROLE in evaluation:
             evaluation[SPLIT_ROLE] = "validation"
+            
         validate_split_pair(train, evaluation, dataset, temporal=True)
+
         if dataset.id_columns:
             ids = list(dataset.id_columns)
             if train[ids].isna().any().any() or evaluation[ids].isna().any().any():
                 raise ValueError("시간 검증의 ID 컬럼에 결측값이 있습니다.")
             if set(map(tuple, train[ids].to_numpy())) & set(map(tuple, evaluation[ids].to_numpy())):
                 raise ValueError("시간 검증 학습·평가 구간에 동일한 복합 ID가 포함됩니다.")
+            
         folds.append((fit_i, eval_i))
+
     return folds

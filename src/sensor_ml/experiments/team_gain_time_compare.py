@@ -22,6 +22,7 @@ DEFAULT_PRESET = Path(__file__).resolve().parents[3] / "configs/experiments/team
 
 def build_candidates(config, preset, *, n_jobs=1):
     """기존 후보를 유지하고 같은 최종 분류기 조건의 LightGBM 선택 후보를 추가한다."""
+
     # 기존 V2의 반복 weighted gain과 전체 기준을 공통 생성기로 만든다.
     previous = build_feature_pipelines(
         config, n_jobs=n_jobs, n_estimators=preset["n_estimators"],
@@ -32,13 +33,16 @@ def build_candidates(config, preset, *, n_jobs=1):
         topk_xgb_max_depth=preset["topk_classifier_max_depth"],
         topk_xgb_reg_lambda=preset["topk_classifier_reg_lambda"],
     )
+
     team = build_gain_candidate(config, n_jobs=n_jobs, top_k=preset["top_k"])
+
     # 앞선 랜덤 OOF의 기본 깊이 3 대신 기존 V2 Top-20과 같은 깊이 2를 사용한다.
     team.set_params(model__n_estimators=preset["n_estimators"],
                     model__max_depth=preset["topk_classifier_max_depth"],
                     model__reg_lambda=preset["topk_classifier_reg_lambda"],
                     model__class_weight_mode=preset["class_weight_mode"],
                     selector__estimator__n_estimators=preset["lightgbm_selector_estimators"])
+    
     return {"v2_all": previous["xgboost_all"],
             "v2_stable_gain_top20": previous[f"xgboost_top_{preset['top_k']}"],
             "team_lgbm_gain_top20": team}
@@ -53,27 +57,34 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--n-jobs", type=int, default=1)
     args = parser.parse_args()
+
     if args.output_dir.exists() and (not args.output_dir.is_dir() or any(args.output_dir.iterdir())):
         raise ValueError("비어 있는 새 출력 폴더를 지정하세요.")
+    
     config = load_modeling_config(args.config)
     preset = json.loads(args.preset.read_text(encoding="utf-8"))
     pipelines = build_candidates(config, preset, n_jobs=args.n_jobs)
     frame = pd.read_csv(args.train)
+
     # temporal_oof 행의 Recall은 기존 실행기와 같은 F1 문턱 진단값이다.
     # Recall 목표 시나리오를 자동 확정하거나 저장 모델의 문턱을 변경하지 않는다.
     results = compare_temporal(frame, config, outer_splits=preset["outer_splits"],
                                inner_splits=preset["inner_splits"], model_names=tuple(pipelines),
                                pipelines=pipelines, oof_modes=("temporal_oof",), n_jobs=args.n_jobs)
+    
     args.outer_splits = preset["outer_splits"]
     args.inner_splits = preset["inner_splits"]
     args.models = list(pipelines)
     args.oof_modes = ["temporal_oof"]
+
     save_results(args, config, frame, results)
+
     # 절대 원본 경로는 그대로 보존하고 실제 Pipeline 파라미터도 함께 기록한다.
     record = {"preset": preset, "test_used": False, "saved_bundles_changed": False,
               "pipeline_parameters": {name: pipe.get_params(deep=True) for name, pipe in pipelines.items()}}
     (args.output_dir / "candidate_settings.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    
     print(results["summary"].to_string(index=False))
     print("temporal_oof Recall은 F1 문턱 진단값이며 80%·90% 목표 시나리오가 아닙니다.")
     print(f"시간순 비교 저장 경로: {args.output_dir}")
