@@ -1,3 +1,0 @@
-scenario,status,rows,selected_sensor_count,max_probability_difference,probability_match,decision_match,label_match,is_performance_evaluation,test_used
-recall90,passed,33,20,0,true,true,true,false,false
-recall80,passed,33,20,0,true,true,true,false,false

@@ -1,9 +1,0 @@
-{
-  "transform_version": "wm_resize_v1",
-  "target_size": [128, 128],
-  "resize_backend": "numpy_half_pixel_nearest_v1",
-  "preserve_aspect_ratio": true,
-  "padding_value": 0,
-  "channel_order": ["defect", "valid"],
-  "augmentation": "none"
-}

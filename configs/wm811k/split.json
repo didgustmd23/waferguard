@@ -1,8 +1,0 @@
-{
-  "protocol_version": "wm_group_split_v1",
-  "ratios": [0.7, 0.15, 0.15],
-  "seed": 42,
-  "max_candidates": 32,
-  "max_group_ratio": 0.2,
-  "rare_class_warning_count": 10
-}
