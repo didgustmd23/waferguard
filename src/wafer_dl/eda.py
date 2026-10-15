@@ -24,9 +24,13 @@ from .validate_canonical import (
 def load_eda_metadata(input_dir):
     root = Path(input_dir).resolve(strict=True)
     summary, version = validate_metadata(root)
+
     require(summary.get('label_normalization_version') == 'wm_label_v2', 'OUTDATED_LABEL_NORMALIZATION')
+
     manifest = root / 'manifest.jsonl'
+
     require(manifest.is_file() and manifest.resolve().is_relative_to(root), 'UNSAFE_OR_MISSING_MANIFEST')
+
     fields = ('source_row_position', 'pattern_label', 'class_index', 'label_status',
               'quality_status', 'lot_id', 'map_height', 'map_width',
               'valid_die_count', 'failed_die_count', 'failed_die_ratio', 'map_hash')
@@ -34,29 +38,40 @@ def load_eda_metadata(input_dir):
     def records():
         with manifest.open('rb') as stream:
             position = 0
+
             while True:
                 line = stream.readline(65_537)
+
                 if not line:
                     break
+
                 require(len(line) <= 65_536, 'OVERSIZED_MANIFEST_ROW')
                 row = decode_json(line)
+
                 require(row.get('source_row_position') == position and
                         row.get('sample_id') == f'{version}:{position}', 'INVALID_ROW_POSITION_OR_VERSION')
                 require(position < summary['row_count'], 'ROW_COUNT_MISMATCH')
+
                 yield tuple(row.get(field) for field in fields)
+
                 position += 1
 
     frame = pd.DataFrame.from_records(records(), columns=fields)
     require(len(frame) == summary['row_count'], 'ROW_COUNT_MISMATCH')
+
     # 반복 문자열을 category로 저장해 전체 metadata의 추가 메모리를 줄인다.
     for column in ('pattern_label', 'label_status', 'quality_status', 'lot_id', 'map_hash'):
         frame[column] = frame[column].astype('category')
+
     for column in ('map_height', 'map_width', 'valid_die_count', 'failed_die_count', 'failed_die_ratio'):
         frame[column] = pd.to_numeric(frame[column], errors='raise')
+
     quality_counts = frame['quality_status'].value_counts().to_dict()
     label_counts = frame['label_status'].value_counts().to_dict()
+
     require(all(summary['counts'].get(key, 0) == count for key, count in quality_counts.items()) and
             all(summary['counts'].get(key, 0) == count for key, count in label_counts.items()), 'SUMMARY_COUNT_MISMATCH')
+    
     return frame
 
 
@@ -71,17 +86,22 @@ def summarize_metadata(frame):
     accepted = labeled.loc[labeled['quality_status'].eq('accepted')]
     total = labeled.groupby('pattern_label', observed=True).size().reindex(CLASS_NAMES, fill_value=0)
     usable = accepted.groupby('pattern_label', observed=True).size().reindex(CLASS_NAMES, fill_value=0)
+
     class_table = pd.DataFrame({'labeled_samples': total, 'accepted_labeled_samples': usable})
     class_table['accepted_lot_count'] = accepted.groupby('pattern_label', observed=True)['lot_id'].nunique().reindex(CLASS_NAMES, fill_value=0)
     class_table.index.name = 'pattern_label'
+
     status_table = pd.DataFrame({
         'rows': frame.groupby(['label_status', 'quality_status'], observed=True).size()})
+    
     maps = frame.loc[frame['map_hash'].notna()]
     shape_table = maps.groupby(['map_height', 'map_width']).size().rename('rows').reset_index()
     shape_table = shape_table.sort_values(['rows', 'map_height', 'map_width'], ascending=[False, True, True])
+
     lot_sizes = frame.loc[frame['lot_id'].notna()].groupby('lot_id', observed=True).size()
     duplicate_sizes = maps.groupby('map_hash', observed=True).size()
     label_per_map = labeled.loc[labeled['map_hash'].notna()].groupby('map_hash', observed=True)['class_index'].nunique()
+
     statistics = {
         'row_count': int(len(frame)), 'rows_with_valid_map': int(len(maps)),
         'lot_count': int(len(lot_sizes)),
@@ -90,6 +110,7 @@ def summarize_metadata(frame):
         'map_label_conflict_groups': int((label_per_map > 1).sum()),
         'split_complete': False, 'training_ready': False,
     }
+
     # Lot별 분포는 크기만 반환하고 식별자를 결과에 남기지 않는다.
     return {'classes': class_table, 'statuses': status_table, 'shapes': shape_table,
             'lot_sizes': pd.Series(lot_sizes.to_numpy(), name='rows_per_lot'),
@@ -105,38 +126,55 @@ def summarize_metadata(frame):
 def load_example_maps(input_dir, positions):
     root = Path(input_dir).resolve(strict=True)
     wanted = set(positions)
+
     require(len(wanted) <= 27 and all(type(value) is int and value >= 0 for value in wanted), 'INVALID_EXAMPLE_SELECTION')
+
     references = []
     manifest = root / 'manifest.jsonl'
+
     require(manifest.resolve().is_relative_to(root), 'UNSAFE_MANIFEST')
+
     with manifest.open('rb') as stream:
         while wanted:
             line = stream.readline(65_537)
+
             if not line:
                 break
+
             require(len(line) <= 65_536, 'OVERSIZED_MANIFEST_ROW')
+
             row = decode_json(line)
             position = row.get('source_row_position')
+
             if position in wanted:
                 ref = row.get('map_ref')
+
                 require(type(ref) is dict and type(ref.get('shard')) is str and
                         re.fullmatch(r'maps/shard_[0-9]{6}\.npz', ref['shard']) and
                         ref.get('key') == f'map_{position:09d}', 'INVALID_MAP_REFERENCE')
+                
                 require(row.get('pattern_label') in CLASS_NAMES and row.get('quality_status') == 'accepted', 'INVALID_EXAMPLE_STATE')
+
                 references.append((row['pattern_label'], ref))
                 wanted.remove(position)
+
     require(not wanted, 'MISSING_EXAMPLE')
     examples = []
+
     for label, ref in references:
         path = root / ref['shard']
+
         require(path.is_file() and path.resolve().is_relative_to(root) and
                 path.stat().st_size <= 1_100_000_000, 'UNSAFE_EXAMPLE_SHARD')
+        
         with zipfile.ZipFile(path) as archive:
             members = archive.infolist()
             require(len(members) <= 1000 and len({member.filename for member in members}) == len(members), 'INVALID_SHARD_MEMBER_COUNT')
             array = read_numeric_member(archive, archive.getinfo(ref['key'] + '.npy'))
             require(np.isin(array, (0, 1, 2)).all() and np.any(array > 0), 'INVALID_MAP_VALUES')
+
         examples.append((label, array))
+
     return examples
 
 
@@ -170,6 +208,7 @@ def plot_distributions(frame, tables):
     axes[1, 2].hist(tables['lot_sizes'], bins=50, log=True)
     axes[1, 2].set(xlabel='Rows per lot', title='Lot size distribution')
     figure.tight_layout()
+
     return figure
 
 
@@ -181,13 +220,16 @@ def plot_examples(examples):
     lookup = dict(examples)
     cmap = ListedColormap(['#eeeeee', '#348a50', '#d94a45'])
     norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
+
     for index, (name, axis) in enumerate(zip(CLASS_NAMES, axes.flat)):
         axis.set_title(name + (' (not available)' if name not in lookup else ''))
         if name in lookup:
             axis.imshow(lookup[name], cmap=cmap, norm=norm, interpolation='nearest')
         axis.axis('off')
+
     figure.suptitle('First accepted example / class — original size; not representative')
     figure.tight_layout()
+
     return figure
 
 
@@ -202,9 +244,11 @@ def correlation_data(frame):
     selected = frame.loc[frame['map_hash'].notna() & frame['quality_status'].eq('accepted')]
     numeric = selected[['map_height', 'map_width', 'valid_die_count',
                         'failed_die_count', 'failed_die_ratio']].astype(float).copy()
+    
     # 높이가 0인 경우 나눗셈하지 않고 결측으로 처리한다.
     numeric['aspect_ratio'] = numeric['map_width'] / numeric['map_height'].where(numeric['map_height'] > 0)
     numeric = numeric.replace([np.inf, -np.inf], np.nan).dropna()
+
     return numeric, selected.loc[numeric.index, 'pattern_label']
 
 
@@ -219,8 +263,10 @@ def summarize_correlations(frame):
     result = matrices(numeric)
     result['support'] = pd.DataFrame({'rows': [len(numeric)]}, index=['all_accepted'])
     rows = []
+
     for name in CLASS_NAMES:
         values = numeric.loc[labels.eq(name)]
+
         # 같은 변수 쌍을 클래스별로 비교한다. 라벨 자체의 상관계수는 계산하지 않는다.
         for method, matrix in matrices(values).items():
             for first_index, first in enumerate(numeric.columns):
@@ -228,7 +274,9 @@ def summarize_correlations(frame):
                     rows.append({'pattern_label': name, 'method': method,
                                  'first': first, 'second': second, 'rows': len(values),
                                  'correlation': matrix.loc[first, second]})
+                    
     result['by_class'] = pd.DataFrame(rows)
+
     return result
 
 
@@ -237,18 +285,23 @@ def plot_correlations(tables):
     import matplotlib.pyplot as plt
 
     figure, axes = plt.subplots(1, 2, figsize=(17, 7))
+
     for method, axis in zip(('pearson', 'spearman'), axes):
         matrix = tables[method]
         artist = axis.imshow(np.ma.masked_invalid(matrix.to_numpy()), vmin=-1, vmax=1, cmap='coolwarm')
         axis.set_xticks(range(len(matrix)), matrix.columns, rotation=90)
         axis.set_yticks(range(len(matrix)), matrix.index)
         axis.set_title(f'{method.title()} / complete rows: {tables["support"].iloc[0, 0]}')
+
         for row in range(len(matrix)):
             for column in range(len(matrix)):
                 value = matrix.iloc[row, column]
                 axis.text(column, row, f'{value:.2f}' if np.isfinite(value) else 'N/A', ha='center', va='center')
+
         figure.colorbar(artist, ax=axis, fraction=0.046)
+
     figure.tight_layout()
+
     return figure
 
 
@@ -259,14 +312,17 @@ def plot_correlation_scatter(frame):
     numeric, _ = correlation_data(frame)
     sample = numeric.sample(n=min(len(numeric), 5000), random_state=42)
     figure, axes = plt.subplots(1, 3, figsize=(17, 5))
+
     for axis, (first, second) in zip(axes, (
             ('valid_die_count', 'failed_die_count'),
             ('valid_die_count', 'failed_die_ratio'),
             ('aspect_ratio', 'failed_die_ratio'))):
         axis.scatter(sample[first], sample[second], s=5, alpha=0.2)
         axis.set(xlabel=first, ylabel=second)
+
     figure.suptitle('Display sample: at most 5,000 accepted maps (not class-balanced)')
     figure.tight_layout()
+
     return figure
 
 
@@ -286,6 +342,7 @@ def plot_die_statistics(frame):
     axes[2].set_xticks(range(1, 10), CLASS_NAMES, rotation=90)
     axes[2].set(ylabel='Failed / valid dies', title='Ratio by class (outliers hidden)')
     figure.tight_layout()
+
     return figure
 
 
@@ -298,28 +355,35 @@ def plot_die_statistics(frame):
 def run_eda(input_dir, output_dir, include_examples=True):
     root, output = Path(input_dir).resolve(), Path(output_dir).resolve()
     require(not output.exists() and not output.is_relative_to(root), 'INVALID_REPORT_DIRECTORY')
+
     frame = load_eda_metadata(root)
     tables = summarize_metadata(frame)
     correlations = summarize_correlations(frame)
     output.mkdir(parents=True, exist_ok=False)
+
     import matplotlib.pyplot as plt
 
     figure = plot_distributions(frame, tables)
+
     try:
         figure.savefig(output / 'distributions.png', dpi=150)
     finally:
         plt.close(figure)
+
     figure = plot_die_statistics(frame)
+
     try:
         figure.savefig(output / 'die_statistics.png', dpi=150)
     finally:
         plt.close(figure)
+
     for name, figure in (('correlations', plot_correlations(correlations)),
                          ('correlation_scatter', plot_correlation_scatter(frame))):
         try:
             figure.savefig(output / f'{name}.png', dpi=150)
         finally:
             plt.close(figure)
+            
     for name, table in correlations.items():
         table.to_csv(output / f'correlation_{name}.csv', encoding='utf-8-sig', index=name != 'by_class')
     if include_examples:
