@@ -1,5 +1,7 @@
 # WaferGuard 소스 구성
 
+로컬 LLM 제안: `agents/llm_config.py`가 `configs/agents/llm/local_ollama.json`의 모델·문맥·생성량·타임아웃을 검증합니다. `agents/local_ollama.py`는 loopback HTTP 운송, `agents/llm_proposal.py`는 합성/직접 입력 문장 구성·응답 계약 연결, `agents/llm_proposal_cli.py`는 전송 미리보기·사용자 확인·제안 전용 명령입니다. 파일을 자동 첨부하거나 승인 DB·worker에 연결하지 않습니다. 직접 입력한 문장 자체는 모델에 전달됩니다. [설정과 명령](../docs/agents/GUIDE.md#로컬-qwen-연결--합성-제안-호출과-질문-지침-보완)을 참고하세요.
+
 WM 공통 승인·실행: `agents/wm_workflow_execution.py`와 `agents/wm_execution_cli.py`는 배정된 현재 작업의 `status`·`approve`·`next`를 제공합니다. 조회 전용 안내는 그대로 분리하고, 승인 화면은 기존 CLI를 재사용하며 실행기는 잠금 안에서도 선택 범위를 다시 확인합니다. 한 번에 한 단계만 처리하고 자동 승인·재시도는 하지 않습니다. [사용법](../docs/agents/design/METADATA_REGISTRY.md#공통-승인한-단계-실행)을 참고하세요.
 
 WM 작업 준비·배정: `agents/wm_run_creation.py`와 `agents/wm_creation_cli.py`는 첫 EDA부터 분할·변환·캐시·Dataset까지 정상 6단계의 범위 미리보기·사용자 확인·기존 생성 함수 호출·새 배정을 제공합니다. `agents/wm_eda_creation.py`는 canonical 바이트 선택·복사 예산을, `agents/wm_dataset_creation.py`는 완료 캐시·배치·런타임 확인을 담당합니다. worker 실행·검토/실행 승인 발급·기존 배정 덮어쓰기는 하지 않습니다. [첫 EDA 사용법](../docs/agents/design/METADATA_REGISTRY.md#첫-eda-작업-준비-통합)을 참고하세요.
