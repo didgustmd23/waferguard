@@ -1,6 +1,8 @@
 # WaferGuard 소스 구성
 
-로컬 LLM 제안: `agents/llm_config.py`가 `configs/agents/llm/local_ollama.json`의 모델·문맥·생성량·타임아웃을 검증합니다. `agents/local_ollama.py`는 loopback HTTP 운송, `agents/llm_proposal.py`는 합성/직접 입력 문장 구성·응답 계약 연결, `agents/llm_proposal_cli.py`는 전송 미리보기·사용자 확인·제안 전용 명령입니다. 파일을 자동 첨부하거나 승인 DB·worker에 연결하지 않습니다. 직접 입력한 문장 자체는 모델에 전달됩니다. [설정과 명령](../docs/agents/GUIDE.md#로컬-qwen-연결--합성-제안-호출과-질문-지침-보완)을 참고하세요.
+LLM 제안의 실행 후보 연결: `agents/llm_execution_candidate.py`는 저장 제안·snapshot·프로파일·자원을 기존 어댑터 바인더로 검증하고, 확인 후 기존 `pipeline_approval_cli.create`로 미승인 작업만 준비합니다. `agents/llm_execution_candidate_cli.py`는 로컬 미리보기·생성 확인 명령입니다. LLM 재호출·실행 승인 발급·worker 실행은 하지 않습니다. [입력 결합과 사용법](../docs/agents/GUIDE.md#제안과-입력을-결합한-기존-승인-작업-준비)을 참고하세요.
+
+로컬 LLM 제안: `agents/llm_config.py`가 `configs/agents/llm/local_ollama.json`의 모델·문맥·생성량·타임아웃을 검증합니다. `agents/local_ollama.py`는 loopback HTTP 운송, `agents/llm_proposal.py`는 합성/직접 입력 문장 구성·응답 계약 연결, `agents/llm_proposal_cli.py`는 전송 미리보기·사용자 확인·제안 명령입니다. `agents/llm_proposal_store.py`는 별도 확인 후 제안을 로컬에 보관하고 복원 시 현재 계약·지문을 재검사합니다. 데이터 파일을 자동 첨부하거나 승인 DB·worker에 연결하지 않습니다. 직접 입력한 문장 자체는 모델에 전달됩니다. [설정과 명령](../docs/agents/GUIDE.md#로컬-qwen-연결--합성-제안-호출과-질문-지침-보완)을 참고하세요.
 
 WM 공통 승인·실행: `agents/wm_workflow_execution.py`와 `agents/wm_execution_cli.py`는 배정된 현재 작업의 `status`·`approve`·`next`를 제공합니다. 조회 전용 안내는 그대로 분리하고, 승인 화면은 기존 CLI를 재사용하며 실행기는 잠금 안에서도 선택 범위를 다시 확인합니다. 한 번에 한 단계만 처리하고 자동 승인·재시도는 하지 않습니다. [사용법](../docs/agents/design/METADATA_REGISTRY.md#공통-승인한-단계-실행)을 참고하세요.
 
