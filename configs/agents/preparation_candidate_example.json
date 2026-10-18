@@ -1,0 +1,9 @@
+{
+  "missing_ratio_threshold": 0.5,
+  "drop_constant": true,
+  "numeric_imputation": "median",
+  "scaling": "none",
+  "outlier": "none",
+  "binning": "none",
+  "unknown_category": "error"
+}

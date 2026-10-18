@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 if ($env:USERNAME -ne 'WDAGUtilityAccount') { throw 'Sandbox 내부에서 실행하세요.' }
 if (-not $TrustedPickle) { throw '출처를 확인한 뒤 -TrustedPickle로 명시적으로 승인하세요.' }
 if (-not (Test-Path -LiteralPath 'C:\wm_output')) {
-    throw '출력 공유 폴더가 없습니다. 새 sandbox_inspect.wsb로 실행하세요.'
+    throw '출력 공유 폴더가 없습니다. 템플릿을 수정한 sandbox_inspect.local.wsb로 실행하세요.'
 }
 
 # 여러 원본 중 하나를 임의로 고르거나 압축 파일을 자동 실행하지 않는다.

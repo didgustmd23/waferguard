@@ -1,0 +1,21 @@
+{
+  "schema_version": "dataset_profile_v1",
+  "profile_id": "wm811k_metadata",
+  "adapter_id": "wm811k_metadata_v1",
+  "workflow_id": "eda_review_v1",
+  "roles": {
+    "numeric": ["map_height", "map_width", "valid_die_count", "failed_die_count", "failed_die_ratio"],
+    "categorical": [],
+    "target": "pattern_label",
+    "group": "lot_id",
+    "timestamp": null,
+    "identifiers": ["source_row_position", "map_hash"]
+  },
+  "max_plot_features": 12,
+  "quality_rules": {
+    "missing_ratio_threshold": 0.5,
+    "allowed_labels": ["None", "Center", "Donut", "Edge-Loc", "Edge-Ring", "Loc", "Near-Full", "Random", "Scratch"],
+    "target_missing": "ignore",
+    "duplicate_id": "block"
+  }
+}

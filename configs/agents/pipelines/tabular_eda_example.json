@@ -1,0 +1,32 @@
+{
+  "schema_version": "module_pipeline_v1",
+  "pipeline_id": "tabular_eda_example",
+  "input": {
+    "contract_id": "tabular_data",
+    "contract_version": 1,
+    "partition": "unsplit"
+  },
+  "steps": [
+    {
+      "step_id": "quality",
+      "module_id": "tabular_quality",
+      "version": "1.0.0",
+      "inputs": {"data": "source.data"},
+      "settings": {"missing_ratio_threshold": 0.5}
+    },
+    {
+      "step_id": "missing",
+      "module_id": "eda_missing",
+      "version": "1.0.0",
+      "inputs": {"data": "source.data"},
+      "depends_on": ["quality"]
+    },
+    {
+      "step_id": "correlations",
+      "module_id": "eda_correlations",
+      "version": "1.0.0",
+      "inputs": {"data": "source.data"},
+      "depends_on": ["quality", "missing"]
+    }
+  ]
+}

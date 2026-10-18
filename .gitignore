@@ -3,6 +3,31 @@ __pycache__/
 *.py[cod]
 *.pyo
 
+# 로컬 비밀정보와 인증 파일 (빈 설정 예제만 공유)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+.secrets/
+
+# 승인·상태 DB와 SQLite 부속 파일은 위치와 무관하게 로컬 보관
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+
 # Virtual Environment
 .venv/
 venv/
@@ -39,8 +64,14 @@ Thumbs.db
 # Temporary files
 .sandbox_offline/
 .sandbox_output/
+/tmp*/
 *.tmp
 *.log
+*.etl
+*.dmp
+
+# 개인 호스트 경로가 들어가는 Sandbox 실행 설정
+/configs/wm811k/sandbox_inspect.local.wsb
 
 # Data
 *.data
@@ -64,4 +95,14 @@ Thumbs.db
 # 로컬 후보 모델 묶음 (학습 모델·검증용 센서 입력 포함)
 /models/candidates/
 /models/retired/
+
+# 다운로드·학습·직렬화한 모델은 소스와 별도 관리
+*.gguf
+*.safetensors
+*.joblib
+*.pt
+*.pth
+*.ckpt
+*.onnx
+pytorch_model*.bin
 

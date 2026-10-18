@@ -5,15 +5,27 @@ WaferGuard는 전처리 에이전트, SECOM 머신러닝, WM-811K 딥러닝의 �
 | 영역 | 문서 | 상태 |
 | --- | --- | --- |
 | SECOM 머신러닝 | [SECOM 문서 목록](README.md#secom-문서), [실행 안내](secom/USAGE.md) | 개발 결과·후보 모델 계약·실행 방법 기록 |
-| 전처리 에이전트 | [기초 설계](agents/AGENT_BASIC_DESIGN.md), [상세 설계](agents/AGENT_DETAILED_DESIGN.md) | 최소 상태·제한적 도구 선택·승인·격리, OWASP 보안 검증 계획 |
+| 범용 전처리 에이전트 | [문서 안내·현재 상태](agents/GUIDE.md), [구성도](agents/ARCHITECTURE.md) | CSV 격리 처리·pickle 변환·WM canonical 품질/EDA 연결, 공통 실행 통합·LLM 연결은 후속 |
 | WM-811K 딥러닝 | [WM-811K 기초 설계 7절](WM811K/WM811K_BASIC_DESIGN.md#7-wm-딥러닝--이종수) | 작은 CNN·ResNet18 학습·평가 설계 |
 
 WM 전처리의 검증·분할·변환·캐시·Dataset 코드는 구현했으며, 사용자 실행 결과 기준 Train·Validation 캐시와 첫 배치 검사를 완료했다. Test 캐시와 WM 모델 학습·평가는 아직 진행하지 않았으며 두 데이터셋의 학습·평가는 독립적으로 수행한다. 예정 기능은 구현된 것으로 취급하지 않는다.
 
 전체 기한은 **2026-11-05**다. [프로젝트 마무리 일정](PROJECT_SCHEDULE.md)에 전처리(10/12~10/18), 에이전트(10/19~10/25), 테스트·보고서·발표자료 준비(10/26~11/05)의 완료 기준을 정리한다.
 
-## WM-811K 문서
+## 에이전트 문서
 
+에이전트의 현재 상태·읽는 순서·전체 문서 목록은 [문서 안내](agents/GUIDE.md) 한 곳에서 관리합니다. 처음에는 [구성도](agents/ARCHITECTURE.md)를, 구현 기준은 [기초 설계](agents/AGENT_BASIC_DESIGN.md)와 [상세 설계](agents/AGENT_DETAILED_DESIGN.md)를 참고합니다.
+
+| 분류 | 내용 |
+| --- | --- |
+| `agents/design/` | 범용 입력·모듈·설정·분할·변환 계약과 확장 계획 |
+| `agents/guides/` | 현재 CLI 실행·승인·결과 확인 방법 |
+| `agents/security/` | AppContainer·Job·자원 제한·WFP 증거 확인 |
+| `agents/history/` | 초기 합성 시연·단계별 구현·검증 이력 |
+
+CSV의 승인·격리 EDA와 분할·전처리 후보·적용·전달 경로는 구현되어 있습니다. pickle은 구조 판별 후 일반 표·숫자 배열·WM canonical 변환을 지원합니다. WM canonical은 별도 승인 CLI로 기존 품질 검사·통과 시 격리 EDA에 연결했습니다. 공통 모듈 조합 CLI 통합과 LLM 연결은 후속 범위입니다. 상세 상태는 위 안내를 따르며 이전 기록을 현재 완료 상태로 취급하지 않습니다.
+
+## WM-811K 문서
 - [입력 캐시·PyTorch Dataset](WM811K/CACHE_DATASET.md): 처리 흐름·분할 컬럼·학습 연결·실행 명령. 사용자 실행 기준 Train·Validation 첫 배치 통과 기록과 Test 별도 준비 방법을 포함합니다.
 - [입력 변환·패턴 보존 검사](WM811K/TRANSFORM_CHECK.md): 128 입력·2채널·Train/Validation 검사·노트북 결과 확인. Test 배열은 검사 대상에서 제외합니다.
 - [충돌 제외·그룹 분할 실행](WM811K/GROUP_SPLIT.md): 설정·명시적 승인·실행 명령·파생 manifest 계약. 코드와 합성 테스트 준비 완료, 실제 분할 실행은 별도입니다.

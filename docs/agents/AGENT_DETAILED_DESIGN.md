@@ -1,12 +1,116 @@
 # WaferGuard 전처리 에이전트 상세 설계
 
-작성일·참조 확인일: 2026-10-09. 담당: 양현승. 상태: **설계안, 미구현·미검증**.
+현재 구현 상태와 읽는 순서는 [문서 안내](GUIDE.md)를 기준으로 합니다. 아래의 날짜별 설계·검증 기록은 해당 시점의 범위와 구분해서 읽습니다.
+
+2026-10-18 현재: 표형 모듈 실행과 WM 정상 6단계의 공통 생성·배정·승인·실행을 검증했습니다. Qwen3.5 9B 로컬 합성 응답과 `llm_proposal_v1` 정적 계약까지 확인했으며 프로젝트 모델 호출·LangChain·LangGraph는 연결 전입니다. [기능별 정보 공개 검토](design/LLM_COMMENTARY_REVIEW.md)는 후속 범위로, 사용자 선택·payload 확인·승인 범위 강제 및 외부 추적 별도 선택을 계획합니다. 실제 데이터 전송 기능을 활성화한 것은 아닙니다.
+
+2026-10-17 후속 연결: [WM canonical 품질·EDA](guides/PICKLE_IMPORT.md#wm-canonical의-승인격리-품질-검사와-eda)는 별도 `preflight → run_eda` 승인 계획으로 연결했다. canonical 관리 파일과 모든 숫자 NPZ의 바이트 목록·크기·해시, 설정·코드·자원을 고정하고 새 AppContainer+Job에 복사본만 전달한다. 품질 검토 필요이면 EDA를 실행하지 않고 보고서로 중단한다. 부모는 요청·파일·형식·Job 종료·정리·승인 커밋 증거를 검사하며 원본 맵을 재분석하거나 pickle을 읽지 않는다. 검증용 SQLite는 권한을 추가하지 않고 기존 scratch의 빈 하위 폴더를 사용한다. 실제 합성 정상·중단 검사를 통과했으며 원본 WM 전체 실행·일반 모듈 조합 통합과는 구분한다.
+
+2026-10-17 구현 갱신: [구조 판별형 pickle 변환](guides/PICKLE_IMPORT.md)의 `preflight → ingest` 경로를 기존 승인 예약·AppContainer·Job·커밋 구현에 연결했다. 등록된 표·숫자 배열·WM 변환기를 구조로 선택하며 모호하면 `review_required`로 중단한다. 선택 규칙·경로·변환기·출력/자원 상한·코드가 승인에 결합된다. 실제 격리 토큰과 Job 소속을 확인한 진입점만 pickle을 읽으며, 부모는 pickle 없이 출처·파일·타입·해시·요청 결합을 검증한다. 원본 동등성·무해성 인증과 canonical의 전체 모듈형 EDA 연결은 포함하지 않는다.
+
+작성일·참조 확인일: 2026-10-09. 구현 현황 갱신일: 2026-10-16. 담당: 양현승. 상태: **범용 전처리 코어 합성 검증 및 snapshot CSV EDA 승인·격리 실행의 실제 합성 정상 경로 확인, 실데이터 검증·전체 도구 격리 연결·LLM 선택기 미완료**.
 
 구현 목표 기간은 2026-10-19~10-25이며, 10-26~11-05에는 통합·환경 보안 검증과 보고서·발표자료를 준비한다. 전처리 코어 완성이 선행하며 전체 완료 기준은 [프로젝트 일정](../PROJECT_SCHEDULE.md)을 따른다. 일정 도래만으로 보안 활성화 조건을 통과한 것으로 보지 않는다.
 
-[기초 설계](AGENT_BASIC_DESIGN.md)를 구현 가능한 계약으로 구체화한다. 데이터 규칙은 [WM 전처리 상세 설계](../WM811K/PREPROCESSING_DESIGN.md)를 따른다. 기존 SECOM 코드·실험·모델은 변경하지 않는다. 이 문서의 파일·설정·CLI·테스트는 구현 예정이며 실행 가능한 기능을 뜻하지 않는다.
+[기초 설계](AGENT_BASIC_DESIGN.md)를 구현 가능한 계약으로 구체화한다. 공통 책임·입력·EDA·프로파일 계획은 [범용 설계 정렬](design/GENERIC_PREPROCESSING_DESIGN.md)을 따른다. [WM 전처리 상세 설계](../WM811K/PREPROCESSING_DESIGN.md)는 WM 어댑터·도메인 확장 규칙이며 공통 코어에 강제하지 않는다. 기존 SECOM 코드·실험·모델은 변경하지 않는다. 구현된 범위는 아래 표를 기준으로 하며, 나머지 파일·설정·CLI는 계획이다.
 
 보안 기준은 [OWASP AI Agent Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/AI_Agent_Security_Cheat_Sheet.html)다. 이 문서는 해당 지침에 맞춘 프로젝트 통제·검증 계획이지 OWASP 인증이나 구현 준수 완료 선언이 아니다. 아래 수치·파일 구성은 프로젝트용 초기 설계값이며 OWASP가 지정한 값이 아니다.
+
+## 구현 현황
+
+2026-10-16 추가: [확정 분할 증거·구간 입력 계약](design/PARTITION_INPUT_CONTRACT.md)의 읽기 전용 검증을 구현했다. 기존 commit_split 결과 수용과 합성 내보내기 결과 결합을 테스트했다. 내보내기 worker·변환 실행이 구현된 것은 아니다.
+
+2026-10-16 추가: [선택 모듈의 승인·격리 worker 연결](guides/MODULE_PIPELINE_EXECUTION.md)을 별도 CLI로 구현했다. 전체 목록에 대해 승인 1회를 소비하고 내장 EDA·품질 검사를 순차 실행한다. 합성 연결 테스트는 통과했으며 새 진입점의 실제 AppContainer 실행·변환·사용자 코드 연결은 미확인/미구현이다.
+
+2026-10-16 추가: [사용자 파이프라인 설정·정적 검증](design/MODULE_PIPELINE.md)을 구현했다. 입출력 계약·순서·의존성·설정 검증까지이며, 이 결과만으로 원본을 읽거나 worker를 시작하지 않는다. 실제 승인·격리 실행 연결은 후속 단계다.
+
+2026-10-16 추가: [내장 모듈 등록부](design/MODULE_REGISTRY.md)의 계약 타입·고정 기능 6개·설정/메모리 결과 검증을 구현했다. 파이프라인 설정·의존성 검증·격리 실행 연결은 후속 단계다. 결과 검증에 LLM을 사용하지 않는다.
+
+모듈형 전처리의 [공통 모듈 계약](design/MODULE_CONTRACT.md)을 설계했다. 기존 코어를 재사용하며, 내장 등록부 이후의 사용자 조합 파이프라인·사용자 코드 등록·변환 모듈 연결은 아직 구현하지 않았다. 모델 학습은 에이전트 범위에서 제외한다.
+
+후속 제안: 사용자가 보안 모드와 승인된 집계 해설을 선택하는 LLM 확장은 [모듈 개발 이후 검토 안건](design/LLM_COMMENTARY_REVIEW.md)에 기록했다. 미구현이며 아래 현행 보안 정책·외부 정보 전달 금지는 변경하지 않는다.
+
+| 범위 | 현재 상태 |
+| --- | --- |
+| 고정 상태·단계·도구 결과 열거값 | 구현 및 합성 테스트 |
+| JSON 상태 저장, revision 검사, 원자적 파일 교체 | 구현 및 합성 테스트 |
+| 원문 없는 고정 스키마 로컬 감사 이벤트 | 구현 및 합성 테스트 |
+| 단계별 작업 제한·취소·보안 잠금·승인 대기 정책 | 구현 및 합성 테스트 |
+| SQLite 승인 검사·단일 소비·작업 예약 트랜잭션 | 구현 및 합성 테스트 |
+| 산출물 완료 표식·계약 일치·파일 목록·크기·해시 재사용 검사 | 구현 및 합성 테스트, 실제 OS 링크 검증 일부 미완료 |
+| 등록 도구 주입·단일 단계 실행·OS 실행 잠금·안전한 완료 결과 재개 | 구현 및 합성 테스트 |
+| 범용 컬럼 역할·TabularInput·프로파일 JSON·공통 EDA | 구현 및 독립 합성 표형 테스트 |
+| 프로파일 품질 기준·비파괴 검사·run_audit 연결 | 구현 및 합성 테스트, [품질 검사](history/QUALITY_CHECK.md) |
+| snapshot run_audit의 승인·격리 worker·부모 판정 | [구현·합성 검증 및 audit-demo01 실제 정상 실행](guides/SNAPSHOT_AUDIT.md) 확인. 실제 Train 품질 검사는 승인 대기. review/block 자동 해제·전체 workflow 연속 실행은 미구현 |
+| CSV·WM metadata 어댑터의 공통 EDA 연결 | 구현 및 합성 테스트, 실데이터 CLI 미연결 |
+| snapshot CSV EDA의 승인 CLI·AppContainer+Job·부모 결과 검사 | 구현·합성 테스트 및 [snapshot-demo03 실제 정상 실행·기록 대조](guides/SNAPSHOT_EDA.md) 완료. 실데이터는 별도 검증 대상 |
+| 첫 실제 CSV의 격리 EDA | [SECOM Train CSV](history/SECOM_TRAIN_EDA.md)의 사용자 승인·실제 실행·로컬 기록 재검증 완료. 해당 EDA 정상 경로 한정, 전체 전처리·학습·LLM 검증 아님 |
+| 사용자 지정 EDA의 분석 ID·도메인 확장 등록 | [후속 검토 방향](design/GENERIC_PREPROCESSING_DESIGN.md#41-사용자-지정-eda-추가--후속-검토-항목) 기록. 임의 코드 실행·분석 플러그인 등록 API는 미구현 |
+| 범용 분할·Train-only 표형 Pipeline·JSON 저장 및 복원 | 구현 및 합성 테스트, [학습 입력 준비](history/TRAIN_ONLY_PREPARATION.md). Test 변환·모델 학습 없음 |
+| 독립 최종 입력 계약 검사·결정적 한국어 로컬 보고서 | 구현 및 합성 테스트, [최종 계약·보고서](history/FINAL_CONTRACT_REPORT.md). fit 재호출·LLM 호출 없음 |
+| worker 요청·종료 결과·허용 경로 사전 계약 | 구현 및 합성 테스트. [고정 합성 EDA](history/ISOLATED_EDA.md)의 승인·예약·부모 검증 및 실제 OS 정상 실행 확인. 실데이터 연결은 미완료 |
+| worker 메모리·프로세스 수·시간 제한 | [Job Object 구현·검증](security/RESOURCE_LIMITS.md). 사용자 지정 값·취소·전체 종료, AppContainer+Job 합성 호환성 및 등록 EDA 정상 실행 실측 완료 |
+| AppContainer 합성 호환성 검사 도구 | [구현 및 실험](security/APPCONTAINER_PROBE.md). 후속 실행에서 런타임·합성 처리·파일 접근 제한 확인. 로컬 연결 timeout의 OS 차단 확인은 미완료. 전후 대조·서버 관찰·토큰·예외 조회 보완, 실제 재검증 필요 |
+| 프로파일별 검토된 workflow 생성·계획 조회 | 구현 및 합성 테스트, 학습 준비 도구 전체는 미구현 |
+| 합성 데모 CLI·현재 OS 계정 확인·대화형 승인·단계 재개·취소 | 구현 및 합성 테스트, [사용법](history/CLI_USAGE.md) |
+| 실데이터용 승인·제한 세션·실제 전처리 도구 연결 | 미구현 |
+| LangGraph 그래프·LangChain provider·LangSmith | 미구현 및 실제 데이터 경로에서 비활성 |
+
+상태·감사 모듈은 원본·canonical·캐시를 읽지 않으며 실제 전처리 실행도 하지 않는다. 현재 통과한 테스트는 독립 합성 입력만 사용한다.
+
+승인 대상·기록·검사 함수는 `src/agents/approvals.py`, 영속 저장소는 `src/agents/approval_store.py`에 둔다. `record_confirmed_approval()`은 상위 실행기가 사용자 확인을 마친 뒤 호출하는 내부 기록 API이며 자체적으로 사용자 인증을 수행하지 않는다. `pending`은 발급 후 미사용 상태다. `consume_and_reserve()`는 쓰기 잠금 획득 후 최신 시각·기록으로 검사하고 승인 소비와 예약을 함께 커밋한다. 예약이 실패하면 소비도 롤백하며, 이미 커밋한 예약은 자동 재실행하지 않는다. 동일 승인 동시 소비·새 승인으로 동일 작업 중복 예약·만료·취소·대상 변경·예약 저장 장애를 합성 DB로 검증했다. 실제 worker 연결은 후속 구현 범위다.
+
+### 산출물 완료·재사용 검사 구현
+
+`src/agents/artifacts.py`는 도구별 내용 검증이 끝난 attempt 폴더에 `AGENT_COMPLETE.json`을 기록한다. 기존 전처리 코어의 `SUCCESS.json`은 보존하며 이 파일도 정합성 검사 대상에 포함한다. `ArtifactContext`의 `source_id`, `config_id`, `plan_id`, `policy_version`, `tool_id`가 모두 같고 실제 파일 목록·크기·SHA-256이 일치할 때만 `ARTIFACT_REUSABLE`을 반환한다. 식별값은 상위 실행기가 실제 원본·설정·계획에 연결해야 하며 임의의 문자열 입력만으로 그 연결이 입증되지는 않는다.
+
+`complete_artifacts()`는 파일을 청크 단위로 해싱하고 완성된 임시 표식을 하드 링크로 게시하여 기존 표식을 덮어쓰지 않는다. `check_artifacts()`는 파일을 다시 읽어 검사하므로 대형 캐시는 검사 시간이 필요하다. 등록된 파일의 누락·추가·동일 크기 내용 변경·계약 변경·잘못된 표식·상위 경로 이동·JSON 중복 키를 거부한다. 빈 폴더와 파일만 남은 부분 결과는 완료로 인정하지 않는다. 상세 내용·파일 목록·해시는 로컬용이며 LLM 입력으로 전달하지 않는다.
+
+표식 작성 전 내용 검증은 등록 도구의 검증 함수로 호출하고, 동일 실행의 동시 쓰기는 OS 실행 잠금으로 차단한다. 임의 프로세스의 파일 쓰기·허용 루트와 OS 접근 권한·파일 검사와 사용 사이의 경로 바꿔치기 방어는 후속 격리 구현 범위다. SHA-256은 손상 검사이며 악의적인 표식 재작성이나 과거 정상 결과 교체를 인증하지 않는다. 승인 DB 변조 방어 후속 검토와 함께 인증 무결성을 재검토한다.
+
+테스트 실행 결과는 [범용 설계](design/GENERIC_PREPROCESSING_DESIGN.md)의 검증 범위와 최신 실행 기록을 따른다. 실제 심볼릭 링크 생성 검사는 Windows 권한 부족으로 건너뛸 수 있으며 실제 junction·경로 바꿔치기 OS 검증 완료를 뜻하지 않는다.
+
+### 규칙 기반 실행기 구현
+
+`src/agents/executor.py`의 `RulesExecutor`는 등록된 `RegisteredTool`의 실행·검증 함수만 호출한다. `ExecutionPlan`에 고정한 단계와 로컬 인자를 사용하며 동적 import·셸 명령·LLM 호출을 수행하지 않는다. 한 번의 `run_next()`는 현재 단계 하나만 처리한다. 현재 도구 함수는 실행기와 같은 프로세스에서 실행하므로 OS 격리 worker는 별도 구현해야 한다.
+
+- `ExecutionStep`: 단계·도구 ID·로컬 JSON 인자. 인자는 정규화하고 계획 ID에 포함한다.
+- `ExecutionPlan`: 원본·설정·정책 식별값과 단계 목록. 최초 계획·실행 주체를 `execution_plan.json`에 고정한다.
+- `RegisteredTool`: 신뢰하는 코드에서 주입하는 `execute(output_dir, arguments)` 및 `validate(output_dir, arguments)` 함수와 추가 승인 필요 여부.
+- `scope_for(stage)`: 사용자 승인 연결에 필요한 정확한 작업 범위를 반환한다. 승인 발급 기능은 아니다.
+- `run_next(approval_id=...)`: 정책·선행 작업·승인을 검사하고 한 단계를 수행한다. 승인 없이 민감 단계에 도달하면 `awaiting_approval`로 저장한다.
+
+`run_ingest`, `review_eda`, `commit_split`, `prepare_data` 및 호환용 `prepare_cache`는 등록 옵션과 무관하게 승인을 요구한다. 단계·작업·템플릿은 `src/preprocessing/workflows.py`에서 한 번 정의한다. 분할 계획에는 `run_eda → review_eda → propose_split`을 포함하고 프로파일 계획은 템플릿 단계 전체와 일치해야 한다. 합성 데모의 OS 계정 확인·대화형 승인을 연결했으며 실데이터용 제한 세션·승인은 후속 범위다.
+
+DB의 `task_runs`는 `reserved → running → verified → committed`를 기록하며 실행·내용 검증 실패는 `failed`로 남긴다. 기존 `reservations` 테이블을 덮어쓰지 않는다. `reserved/running/failed` 또는 이전 버전의 예약만 남은 작업은 `TASK_REQUIRES_REVIEW`로 차단한다. `verified/committed` 결과는 파일 정합성과 내용 검증을 다시 통과하면 실행 없이 재사용한다. 검증 후 DB 커밋 전 중단, DB 커밋 후 상태 저장 전 중단을 각각 합성 테스트로 확인했다. 부분 산출물은 삭제하지 않는다.
+
+실행 폴더의 `executor.lock`은 Windows 파일 잠금 또는 POSIX flock을 사용한다. DB 잠금은 승인·예약을 보호하고 OS 잠금은 같은 실행의 파일·상태 진행을 보호한다. 취소·revision·blocker를 도구 실행 전과 실행 후에 확인한다. 같은 프로세스에서 동작하는 장시간 도구는 중간 강제 취소하지 않으며 반환 후 완료 등록·후속 실행을 막는다. 감사 기록 실패·계획 불일치·잘못된 승인·산출물 손상은 후속 실행을 차단한다.
+
+실행기 회귀 검증 명령:
+
+~~~powershell
+python -m unittest tests.agents.test_executor -v
+~~~
+
+### 공통 품질 검사 연결
+
+`src/preprocessing/quality.py`는 구조·수치형·결측/상수 후보·target·복합 ID·group·timestamp를 검사한다. `QualityRules`는 프로파일의 선택 설정이며 기본값과 다른 기준을 프로파일/계획 서명에 포함한다. 판단은 `passed/review_required/blocked_input`이고 데이터 삭제·대치·라벨 변경을 수행하지 않는다. 각 검사 근거는 로컬 quality.json·quality.md에 남긴다.
+
+입력 어댑터의 `audit_tool()`은 같은 원본 식별·로더·프로파일을 `run_audit`에 연결한다. 구조 오류를 보고서로 남기기 위해 audit에서만 로더의 strict validate를 유예하고 품질 코어가 구조부터 검사한다. EDA 입력 검증은 기존 strict 방식을 유지한다. 데이터 읽기 계약 오류는 고정 코드로 보고서를 만들며 원문 오류를 반환하지 않는다.
+
+실행기는 `review_required`도 후속 EDA로 진행하지 않고 `TOOL_REVIEW_REQUIRED`로 중단한다. 차단 입력은 `TOOL_INPUT_BLOCKED`, 실행 오류는 `TOOL_RUNTIME_FAILED`로 구분한다. 부분 품질 보고서는 보존하고 통과하지 않은 단계에는 완료 표식을 만들지 않는다. 검토 결과를 자동 승인·해제하는 기능은 아직 없다. 상세 기준·설정·검증 범위는 [품질 검사](history/QUALITY_CHECK.md)를 따른다.
+
+### 공통 EDA와 WM 적용 사례
+
+`src/agents/adapters/tabular.py`는 CSV 로더 또는 다른 등록 로더의 `TabularInput`을 공통 `src/preprocessing/eda.py`로 전달한다. `wm811k_metadata.py`는 WM metadata 읽기·accepted 행 선택만 담당하고 동일한 공통 EDA를 사용한다. `wm_eda.py`는 이전 import 호환 wrapper다. 맵 예시·Lot 충돌·다이 공간 통계는 기존 `wafer_dl` 도메인 코어에 유지한다. 반환값은 일반 `ToolResult`이며 상세 집계·그림·경로는 로컬 보고서에만 저장한다.
+
+WM의 `source_id`는 관리 파일·manifest 해시를 결합하며 CSV는 로컬 파일 해시를 사용한다. WM metadata 식별값은 원본 pickle·NPZ 인증이 아니다. 공통 프로파일에 역할·분석 옵션·adapter/workflow ID를 정의하고 프로파일 서명을 `config_id`·도구 인자·계획 ID에 연결한다. 출력 검증은 공통 완료 계약·필수 파일·입력에서 계산한 요약을 검사하고 파일 해시는 실행기가 검사한다. timestamp·target·group·ID는 수치 상관분석에서 제외한다.
+
+공통 EDA도 `requires_approval=True`로 등록한다. 독립 CSV의 다중 클래스·미라벨·범주형 입력과 WM metadata를 검증했다. 실제 데이터 실행 CLI는 연결하지 않았고 합성 데모는 유지한다. `plan --profile`은 원본을 읽지 않는 계획 조회만 제공한다. 실데이터 활성화 전에는 승인 DB 변조 방어·원본 검증·OS 격리·사용자 승인 대상 표시를 검토한다. 범용 품질 규칙과 Random·Group·Time 분할 제안·승인 후 확정은 구현했다. 분할 확정 승인은 선행 제안의 완료 표식 해시까지 결합하며 [분할 검사](history/SPLIT_CHECK.md)의 제약을 따른다. Train-only fit·Train/Validation 변환·JSON 저장/복원과 승인 필수 prepare_data 연결도 합성 검증했다. 설정·Test 처리 경계·기존 코드 유지 범위는 [학습 입력 준비](history/TRAIN_ONLY_PREPARATION.md)를 따른다.
+
+~~~powershell
+python -m unittest tests.agents.test_wm_eda_adapter -v
+~~~
 
 ## 1. 확정 범위와 보안 불변식
 
@@ -211,29 +315,44 @@ LangGraph·LangChain·provider SDK는 에이전트용 의존성으로 분리하�
 
 사고 시 신규 요청·도구 예약 차단 → worker 정지 확인 → 선택기 네트워크 차단·키 폐기 → 로컬 증거 접근 제한 → 원인·영향 확인 → 새 승인·회귀 검사 후 재개 순서로 대응한다. 증거를 자동 삭제하거나 실제 데이터를 외부 지원 채널에 업로드하지 않는다. 원본을 변경하지 않으므로 이전 완료 버전을 보존한다.
 
-## 11. 예정 파일과 구현 경계
+## 11. 공통 구성과 구현 경계
 
 ```text
+src/preprocessing/
+  contracts.py              # 공통 컬럼 역할·TabularInput
+  profiles.py               # 프로파일 검증·서명
+  workflows.py              # 데이터셋 독립 단계·템플릿
+  eda.py                    # 독립 호출 가능한 공통 EDA
+  quality.py                # 프로파일별 비파괴 품질 검사
+  split.py                  # 범용 분할 제안·경계 검사
+  transform.py              # Train-only Pipeline·JSON 저장/복원
+  prepared_contract.py      # 독립 최종 입력 계약 검사
+  report.py                 # 결정적 한국어 로컬 보고서
 src/agents/
-  contracts.py              # 내부 결과·최소 DTO·선택 응답 타입
-  state.py                  # 로컬 상태·revision·예산
-  minimal_state.py          # 고정 매핑, 상세 결과 외부 전달 금지
-  policy.py                 # 도구·권한·선행 조건·blocker 검사
-  approvals.py              # 정확한 작업 승인·원자적 소비
-  executor.py               # 레지스트리·작업 예약·worker 제어
-  artifacts.py              # 단계 산출물·완료·재사용 검사
+  contracts.py              # 로컬 도구 결과
+  state.py                  # 로컬 상태·revision
+  policy.py                 # 작업·승인 대기·blocker 검사
+  approvals.py              # 승인 대상·기록·검사
+  approval_store.py         # DB 단일 소비·예약·작업 이력
+  executor.py               # 등록 도구·작업 진행·재개
+  workflow.py               # 프로파일 → 실행 계획
+  artifacts.py              # 완료·재사용 검사
   audit.py                  # 로컬 보안 이벤트
-  wm_preprocess_agent.py    # 고정 그래프·제한 선택 분기
-  cli.py                    # plan/run/status/approve/resume/cancel
-  selector/
-    gateway.py              # IPC·송신/수신 계약 검사
-    provider.py             # 단일 provider adapter, 직접 도구 실행 없음
-    prompt.py               # 검토한 정적 정책·동작 설명
-configs/agents/
-  wm_preprocess.json
-  llm_selector.json
-tests/agents/               # 합성 fixture 기반 단위·통합·보안 검증 예정
-logs/wm811k/<run_id>/agent/  # 로컬 checkpoint·승인·감사·검증 증거
+  adapters/
+    registry.py             # 코드 등록 ID만 허용
+    tabular.py              # 공통 EDA 연결·CSV 입력
+    quality.py              # 공통 품질 검사 연결
+    split.py                # 제안·승인 후 확정 연결
+    prepare.py              # 확정 분할 기반 Train/Validation 준비
+    finalize.py             # 독립 최종 검사·보고서 도구 연결
+    wm811k_metadata.py      # WM metadata → 공통 입력
+    wm_eda.py               # 이전 import 호환용
+  cli.py                    # 합성 데모·프로파일 계획 조회
+  minimal_state.py          # 예정: 상세 결과 → 최소 DTO
+  selector/                 # 예정: 격리 IPC·provider·정적 prompt
+configs/agents/profiles/    # 데이터 역할·adapter·workflow·EDA 옵션
+tests/agents/               # 독립 합성 입력 회귀 검증
+logs/agents/<run_id>/       # 로컬 상태·승인·감사·산출물
 ```
 
 각 모듈은 한 가지 경계를 담당하며 함수에 한국어 블록 설명과 주요 방어 분기의 상세 주석을 작성한다. Dataset·학습 코드는 agents를 import하지 않는다. 규칙·LLM 모드는 같은 executor를 사용해 검증 로직 복제를 피한다. 실제 격리 실행 설정과 OS 권한 검증 절차는 환경 선정 뒤 추가한다.
@@ -283,7 +402,7 @@ canary 검사·샘플 캡처만으로 모든 유출 부재를 증명하지 않�
 
 ### 구현 순서와 출시 게이트
 
-분할 제안 전 `run_eda → review_eda`를 필수 로컬 단계로 둔다. `run_eda`는 `src.wafer_dl.eda.run_eda()`를 호출하고 실제 집계·예시 그림은 로컬 보고서에만 보존한다. `review_eda`는 사용자의 구조·품질 확인 게이트이며 EDA 실행 성공을 라벨·제외·분할 정책 승인으로 간주하지 않는다. EDA 완료 여부와 승인 기록은 로컬에서 관리한다. 현재 공통 EDA 코어와 노트북만 구현되어 있고 그래프 노드·승인·도구 등록은 미구현이다.
+분할 제안 전 `run_eda → review_eda`를 필수 로컬 단계로 둔다. `run_eda`는 `src.wafer_dl.eda.run_eda()`를 호출하고 실제 집계·예시 그림은 로컬 보고서에만 보존한다. `review_eda`는 사용자의 구조·품질 확인 게이트이며 EDA 실행 성공을 라벨·제외·분할 정책 승인으로 간주하지 않는다. EDA 완료 여부와 승인 기록은 로컬에서 관리한다. 현재 metadata EDA 어댑터의 등록·승인·실행기 연결을 합성 입력으로 검증했다. 예시 맵을 포함한 실데이터 연결과 LangGraph 노드는 후속 범위다.
 
 `eda_complete` 반환은 로컬 상태일 뿐 provider DTO가 아니다. 현재 외부 상태·동작 열거값을 추가하지 않는다. EDA는 LLM 선택 없이 고정 순서로 실행하며, 집계·그림·경로를 LLM이나 LangSmith에 전송하지 않는다. 실패는 기존 로컬 중단·진단 정책을 따르고, 추후 외부 상태 매핑이 필요하면 별도 승인·전송 검증을 거친다.
 
@@ -295,6 +414,50 @@ canary 검사·샘플 캡처만으로 모든 유출 부재를 증명하지 않�
 6. 정확한 계획에 LLM 모드를 승인한 뒤 bounded_llm을 활성화한다.
 
 보안 증거에는 코드·정책·프롬프트·계약·provider/model 버전, OS 격리 구성, 실행한 사례·예상/실제 결과, 거부·예산·승인·네트워크 결과, 허용한 잔여 위험을 로컬에 보존한다. 실제 데이터 유래 증거는 자동 Git 업로드하지 않는다. CI에는 합성 fixture·기대 거부·정책 회귀 검사를 넣고 provider·프롬프트·도구·승인·메모리 정책 변경에 맞는 검증이 없으면 활성화 승인을 보류한다.
+
+### 범용 구조 정비 결과와 남은 검토
+
+기록일: 2026-10-15. 상태: **공통 입력·EDA·프로파일 계획 정비 및 합성 검증, 전체 범용 전처리는 진행 중**. 최초 목표와 기존 WM 중심 구현의 차이는 [설계 정렬 비교표](design/GENERIC_PREPROCESSING_DESIGN.md#1-최초-목표와-구현의-차이)에 기록했다. WM label·클래스·Lot·맵 저장 형식은 어댑터/도메인 코어에 두고, CSV와 WM metadata가 같은 공통 분석·실행기를 사용한다.
+
+검토 방향은 공통 실행기 → 코드에 등록된 데이터 어댑터 → 도메인 EDA·전처리 코어다. 프로파일에는 컬럼 역할·라벨·그룹 기준·분석 옵션을 정의하고, 읽기 방식과 도메인 계산은 어댑터가 담당한다. JSON으로 임의의 함수명·모듈 경로·셸 명령을 실행하게 하지 않는다. WM 전용 기능을 공통 코어에 강제로 편입하거나 모든 데이터 유형을 한 분석에 맞추지 않는다.
+
+- [x] 표형/metadata의 공통 컬럼 역할·입력 계약·지원 EDA 정의.
+- [x] 프로파일 JSON과 코드 등록 어댑터의 책임·식별 기준 정의.
+- [x] CSV·WM metadata 원본 식별 및 프로파일/계획 변경 감지 구현.
+- [x] WM 고정 필드·클래스 해석을 공통 코어 밖에 유지.
+- [x] EDA/학습 준비 템플릿·승인 게이트·미지원 도구 차단 정의.
+- [x] 독립 합성 CSV와 WM metadata로 공통 EDA·실행기 검증.
+- [x] 프로파일별 기본 품질 규칙·진단 보고서·run_audit 연결.
+- [x] 범용 Random·Group·Time 분할 및 제안 검증·승인 후 확정 연결을 합성 입력으로 검증.
+- [x] Train-only 표형 Pipeline·JSON 복원·승인 후 입력 준비를 합성 입력으로 검증.
+- [x] 독립 최종 계약 검사·로컬 보고서 도구 연결을 합성 입력으로 검증.
+- [ ] 전체 실데이터 실행·승인 화면·게시·보안 격리 연결.
+- [ ] 표형 이외 원본 배열 계약·도메인 확장 등록 기준 검증.
+- [ ] 어떤 어댑터에서도 원본·집계·그림·경로를 LLM/외부 추적으로 전달하지 않는지 검증.
+
+실데이터 CLI·권한 격리·LLM 정보 축소 게이트는 아직 활성화하지 않는다. 새로운 프로파일 지원이 기존 외부 정보 전달 정책의 완화를 뜻하지 않는다.
+
+### 후속 검토: 승인 DB 변조 방어
+
+기록일: 2026-10-15. 상태: **검토 보류·미구현**. 현재 SQLite 구현은 동시성·트랜잭션·이력 저장을 제공하며, 악의적인 DB 변조에 대한 인증 무결성을 제공하지 않는다. 이번에는 검토 사항만 기록하고 코드에는 적용하지 않는다.
+
+| 위험 | 가능한 영향 | 검토할 대처 |
+| --- | --- | --- |
+| 소비 상태 변경과 예약 삭제 | 동일 승인·작업 재사용 | 파일 ACL, 승인·예약 기록의 인증 무결성 |
+| 만료 시각·사용자·대상·설정 변경 | 승인 범위를 벗어난 작업 허용 | 관련 필드를 함께 인증하는 HMAC 또는 서명 |
+| 과거의 정상 DB로 교체 | 최근 소비·취소 이력이 사라져 재사용 가능 | DB 외부의 보호된 최신 버전 기록과 복구 정책 |
+| DB 삭제·손상 | 승인 조회·예약 실패, 실행 중단 | 접근 제한, 검증된 백업과 수동 복구 절차 |
+
+검토 우선순위는 Windows 계정·폴더 ACL 제한 → 인증 무결성 및 키 보관 방식 → 과거 버전 교체 탐지·복구 정책 순서다. HMAC 키는 DB와 분리하여 보호하고, 단순 SHA-256은 공격자가 재계산할 수 있으므로 변조 인증 수단으로 사용하지 않는다. 과거의 정상 DB는 HMAC 검사를 통과할 수 있어 HMAC만으로 되돌리기 공격을 탐지할 수 없다. 같은 실행 계정이나 관리자 권한이 장악된 경우의 한계도 함께 평가한다.
+
+- [ ] DB 폴더의 수정 가능 계정과 Windows ACL 적용·검증 방식 결정.
+- [ ] HMAC/서명 적용 범위, 키 생성·보관·교체·복구 방식 결정.
+- [ ] 승인 상태와 작업 예약의 인증 정보를 동일 트랜잭션에서 갱신하는 방식 검토.
+- [ ] 과거 DB 교체를 탐지할 외부 기준과 정상 백업 복구 절차 결정.
+- [ ] 상태·대상·만료 시각 변경, 예약 삭제, 과거 DB 교체를 합성 입력으로 검증.
+- [ ] 검증 실패 시 신규 예약 차단·보안 잠금·로컬 기록·사용자 확인 경로 연결.
+
+실제 전처리 실행을 연결하기 전에 이 항목을 다시 검토한다. 완료 판단은 SEC-13의 변조·기록 실패 검증과 연계한다.
 
 ### 구현 전 확정해야 할 사항
 

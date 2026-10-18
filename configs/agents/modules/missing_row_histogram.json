@@ -1,0 +1,42 @@
+{
+  "schema_version": "reviewed_module_descriptor_v1",
+  "hash_policy": "utf8_lf_sha256",
+  "contract": {
+    "module_id": "user_missing_row_histogram",
+    "version": "1.0.0",
+    "kind": "analysis",
+    "inputs": [
+      {"name": "data", "contract_id": "tabular_data", "contract_version": 1, "required": true}
+    ],
+    "outputs": [
+      {"name": "result", "contract_id": "missing_row_histogram_result", "contract_version": 1, "required": true}
+    ],
+    "implementation_id": "reviewed_missing_row_histogram_v1",
+    "result_validator_id": "missing_row_histogram_result_v1",
+    "settings_fields": ["include_complete"],
+    "preconditions": ["snapshot_verified", "tabular_roles_validated"],
+    "original_policy": "preserve",
+    "criteria_policy": "none",
+    "derivation_partition": null,
+    "approval": "explicit_execution",
+    "read_scope": "approved_staged_inputs",
+    "write_scope": "task_outputs_and_scratch",
+    "network": "deny_all",
+    "resources": "explicit_request_within_security_caps",
+    "schema_version": "module_contract_v1"
+  },
+  "source_files": {
+    "src/__init__.py": "56703a082367935373b440205e9ff65e27a23fd296cab3bf528b044858bae577",
+    "src/preprocessing/__init__.py": "136d7bd5192de20ec04dea394b962790898ecee27ade52f3f720d3789132f022",
+    "src/preprocessing/extensions/__init__.py": "95923912ded909a02ba3a2c4f8dc26405bdc16b67333c77c30baf953509fe655",
+    "src/preprocessing/extensions/missing_row_histogram.py": "adf2213b2190a5a600aec65ac856da664fe5af7d8a2065aaf9c8b0d683d58751",
+    "src/preprocessing/contracts.py": "76c4d893b560761e3b8979c4deb55be7dde5bcb0a319da7d20887f385bc97dfb",
+    "src/preprocessing/module_contracts.py": "bacf9068bb830f5fb8b5f44c793aa3fa675921fde87e5ff0cf7c80ddd902385e",
+    "src/preprocessing/module_registry.py": "51f2f3099e8c3fb7e33bbd634dad55001789cd4da7c7b6ca234f645099ab06d7"
+  },
+  "review": {
+    "kind": "reference_example",
+    "test_suite": "tests.agents.test_module_catalogue"
+  },
+  "execution_scope": "synthetic_local_only"
+}

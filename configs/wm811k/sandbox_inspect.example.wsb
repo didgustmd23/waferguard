@@ -1,4 +1,5 @@
 <Configuration>
+  <!-- 공유용 템플릿입니다. 직접 실행하지 말고 .local.wsb 복사본의 __PROJECT_ROOT__ 네 곳을 수정하세요. -->
   <Networking>Disable</Networking>
   <ClipboardRedirection>Disable</ClipboardRedirection>
   <vGPU>Disable</vGPU>
@@ -8,22 +9,22 @@
   <MemoryInMB>16384</MemoryInMB>
   <MappedFolders>
     <MappedFolder>
-      <HostFolder>D:\workspace\waferguard\data\raw\wm811k</HostFolder>
+      <HostFolder>__PROJECT_ROOT__\data\raw\wm811k</HostFolder>
       <SandboxFolder>C:\wm_input</SandboxFolder>
       <ReadOnly>true</ReadOnly>
     </MappedFolder>
     <MappedFolder>
-      <HostFolder>D:\workspace\waferguard\.sandbox_offline</HostFolder>
+      <HostFolder>__PROJECT_ROOT__\.sandbox_offline</HostFolder>
       <SandboxFolder>C:\wm_offline</SandboxFolder>
       <ReadOnly>true</ReadOnly>
     </MappedFolder>
     <MappedFolder>
-      <HostFolder>D:\workspace\waferguard\scripts\wm_sandbox</HostFolder>
+      <HostFolder>__PROJECT_ROOT__\scripts\wm_sandbox</HostFolder>
       <SandboxFolder>C:\wm_tools</SandboxFolder>
       <ReadOnly>true</ReadOnly>
     </MappedFolder>
     <MappedFolder>
-      <HostFolder>D:\workspace\waferguard\.sandbox_output</HostFolder>
+      <HostFolder>__PROJECT_ROOT__\.sandbox_output</HostFolder>
       <SandboxFolder>C:\wm_output</SandboxFolder>
       <ReadOnly>false</ReadOnly>
     </MappedFolder>

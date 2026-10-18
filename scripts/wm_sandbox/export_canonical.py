@@ -18,6 +18,75 @@ CLASS_NAMES = ("None", "Center", "Donut", "Edge-Loc", "Edge-Ring",
                "Loc", "Near-Full", "Random", "Scratch")
 LABEL_ALIASES = {"none": "None", "Near-full": "Near-Full"}
 NORMALIZATION_VERSION = "wm_label_v2"
+DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 ** 3
+
+
+class OutputBudget:
+    """manifest·NPZ·관리 JSON이 공유하는 실제 기록 바이트 상한."""
+
+    def __init__(self, maximum):
+        if type(maximum) is not int or maximum < 1:
+            raise ValueError("출력 크기 상한은 양의 정수 바이트여야 합니다.")
+
+        self.maximum = maximum
+        self.used = 0
+
+    def open(self, path):
+        """기존 파일을 덮어쓰지 않는 제한된 바이너리 writer를 만든다."""
+        return _BoundedWriter(Path(path).open("xb"), self)
+
+    def write_json(self, path, value):
+        """줄바꿈 변환 없이 UTF-8 바이트를 직접 기록한다."""
+        payload = json.dumps(value, ensure_ascii=True, indent=2, allow_nan=False).encode("utf-8")
+
+        if self.used + len(payload) > self.maximum:
+            raise ValueError("canonical 출력 크기 상한을 초과했습니다.")
+
+        with self.open(path) as stream:
+            stream.write(payload)
+
+
+class _BoundedWriter:
+    """ZIP 헤더의 seek·덮어쓰기를 지원하며 파일 크기 증가 전에 상한을 검사한다."""
+
+    def __init__(self, stream, budget):
+        self.stream = stream
+        self.budget = budget
+        self.size = 0
+
+    def write(self, payload):
+        # ZIP은 앞선 헤더를 다시 쓰므로 누적 write 길이 대신 파일 최대 길이를 센다.
+        end = self.stream.tell() + memoryview(payload).nbytes
+        growth = max(0, end - self.size)
+
+        if self.budget.used + growth > self.budget.maximum:
+            raise ValueError("canonical 출력 크기 상한을 초과했습니다.")
+
+        written = self.stream.write(payload)
+        actual_end = self.stream.tell()
+        self.budget.used += max(0, actual_end - self.size)
+        self.size = max(self.size, actual_end)
+
+        return written
+
+    def tell(self):
+        return self.stream.tell()
+
+    def read(self, size=-1):
+        # NumPy는 read 속성으로 파일 객체를 판별한다. 쓰기 전용 스트림의 읽기는 거부된다.
+        return self.stream.read(size)
+
+    def seek(self, offset, whence=0):
+        return self.stream.seek(offset, whence)
+
+    def flush(self):
+        self.stream.flush()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.stream.close()
 
 
 # ==========================================
@@ -114,7 +183,8 @@ def normalize_map(value):
 # - shard별로 flush해 전체 변환 배열의 추가 메모리 적재 방지
 # - 중복 그룹 검사·분할 승인 전 데이터는 학습 준비 완료가 아님
 # ==========================================
-def export_frame(frame, output, dataset_version, shard_rows=1000, progress=None):
+def export_frame(frame, output, dataset_version, shard_rows=1000, progress=None,
+                 max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES, *, budget=None):
     if type(frame) is not pd.DataFrame or frame.columns.has_duplicates:
         raise ValueError("최상위 객체 또는 컬럼 구조가 올바르지 않습니다.")
     
@@ -126,6 +196,11 @@ def export_frame(frame, output, dataset_version, shard_rows=1000, progress=None)
     if type(shard_rows) is not int or not 1 <= shard_rows <= 1000:
         raise ValueError("shard 행 수 범위를 벗어났습니다.")
     
+    if budget is None:
+        budget = OutputBudget(max_output_bytes)
+    elif not isinstance(budget, OutputBudget) or budget.maximum != max_output_bytes:
+        raise ValueError("출력 바이트 상한과 공유 기록 계약이 일치하지 않습니다.")
+
     output = Path(output)
     output.mkdir(exist_ok=False)
 
@@ -138,12 +213,18 @@ def export_frame(frame, output, dataset_version, shard_rows=1000, progress=None)
     def flush():
         # object 배열을 만들지 않으므로 복원 시 allow_pickle=False 사용 가능.
         nonlocal shard_index
+
         if pending:
-            np.savez(maps_dir / f"shard_{shard_index:06d}.npz", **pending)
+            shard_path = maps_dir / f"shard_{shard_index:06d}.npz"
+
+            # NPZ의 ZIP 헤더와 배열 본문도 같은 상한 안에서 실제 바이트로 기록한다.
+            with budget.open(shard_path) as stream:
+                np.savez(stream, **pending)
+
             pending.clear()
             shard_index += 1
 
-    with (output / "manifest.jsonl").open("x", encoding="utf-8") as stream:
+    with budget.open(output / "manifest.jsonl") as stream:
         for position, values in enumerate(frame.itertuples(index=False, name=None)):
             label, class_index, label_status = normalize_label(values[positions["failureType"]])
             lot = scalar_metadata(values[positions["lotName"]])
@@ -189,7 +270,8 @@ def export_frame(frame, output, dataset_version, shard_rows=1000, progress=None)
                 record["failed_die_ratio"] = record["failed_die_count"] / record["valid_die_count"]
                 pending[key] = map_value
 
-            stream.write(json.dumps(record, ensure_ascii=True, allow_nan=False) + "\n")
+            manifest_line = json.dumps(record, ensure_ascii=True, allow_nan=False) + "\n"
+            stream.write(manifest_line.encode("utf-8"))
             counts[record["quality_status"]] += 1
             counts[label_status] += 1
             reasons.update(row_reasons)
@@ -215,8 +297,44 @@ def export_frame(frame, output, dataset_version, shard_rows=1000, progress=None)
                "label_coverage_status": "complete" if all(classes[name] > 0 for name in CLASS_NAMES) else "incomplete",
                "class_mapping": dict(enumerate(CLASS_NAMES))}
     
-    with (output / "conversion.json").open("x", encoding="utf-8") as stream:
-        json.dump(summary, stream, ensure_ascii=True, indent=2, allow_nan=False)
+    budget.write_json(output / "conversion.json", summary)
+
+    return summary
+
+
+def export_bundle(frame, output, source_sha256, source_bytes, *, execution_mode,
+                  max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES, shard_rows=1000, progress=None,
+                  extra_provenance=None):
+    """출처 기록·마지막 성공 표식까지 동일한 바이트 상한으로 변환 묶음을 만든다."""
+    budget = OutputBudget(max_output_bytes)
+    output = Path(output)
+    summary = export_frame(
+        frame, output, "wm811k_" + source_sha256, shard_rows=shard_rows,
+        progress=progress, max_output_bytes=max_output_bytes, budget=budget,
+    )
+    provenance = {
+        "source_sha256": source_sha256, "source_bytes": source_bytes,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "python": sys.version.split()[0], "numpy": np.__version__, "pandas": pd.__version__,
+        "label_normalization_version": NORMALIZATION_VERSION, "execution_mode": execution_mode,
+    }
+
+    if extra_provenance is not None:
+        if type(extra_provenance) is not dict or set(extra_provenance).intersection(provenance):
+            raise ValueError("추가 출처 정보가 기존 필드와 충돌합니다.")
+
+        provenance.update(extra_provenance)
+
+    budget.write_json(output / "provenance.json", provenance)
+    # 성공 표식이 들어갈 공간까지 먼저 확인해 빈 성공 파일도 남기지 않는다.
+    success = {"status": "canonical_export_complete", "training_ready": False}
+    payload = json.dumps(success, ensure_ascii=True, indent=2, allow_nan=False).encode("utf-8")
+
+    if budget.used + len(payload) > budget.maximum:
+        raise ValueError("canonical 출력 크기 상한을 초과했습니다.")
+
+    with budget.open(output / "SUCCESS.json") as stream:
+        stream.write(payload)
 
     return summary
 
@@ -233,7 +351,10 @@ def main():
     parser.add_argument("--trusted-pickle", action="store_true")
     parser.add_argument("--allow-host", action="store_true", help="신뢰한 pickle의 로컬 실행을 명시적으로 허용")
     parser.add_argument("--output-root", help="새 canonical 묶음을 저장할 상위 폴더")
+    parser.add_argument("--max-output-bytes", type=int, default=DEFAULT_MAX_OUTPUT_BYTES,
+                        help="출처 기록과 성공 표식을 포함한 canonical 출력 바이트 상한")
     args = parser.parse_args()
+    OutputBudget(args.max_output_bytes)
 
     # 환경 변수 확인은 악성 파일을 차단하는 보안 경계가 아니라 오실행 방지다.
     if not args.trusted_pickle:
@@ -270,7 +391,6 @@ def main():
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
 
-    version = "wm811k_" + digest.hexdigest()
     output = output_root / ("canonical_" + uuid.uuid4().hex)
 
     print("원본 읽기 시작. pickle은 신뢰 승인 여부와 별개로 코드를 실행할 수 있습니다.", flush=True)
@@ -289,18 +409,11 @@ def main():
             print(f"변환 진행: {percent}%", flush=True)
             previous_percent = percent
 
-    summary = export_frame(frame, output, version, progress=show_progress)
-
-    with (output / "provenance.json").open("x", encoding="utf-8") as stream:
-        json.dump({"source_sha256": digest.hexdigest(), "source_bytes": source.stat().st_size,
-                   "created_at": datetime.now(timezone.utc).isoformat(),
-                   "python": sys.version.split()[0], "numpy": np.__version__, "pandas": pd.__version__,
-                   "label_normalization_version": NORMALIZATION_VERSION,
-                   "execution_mode": "trusted_host" if args.allow_host else "sandbox"}, stream)
-        
-    # 마지막 성공 표식을 완료 판단에 사용하여 부분 산출물의 오채택을 방지한다.
-    with (output / "SUCCESS.json").open("x", encoding="utf-8") as stream:
-        json.dump({"status": "canonical_export_complete", "training_ready": False}, stream)
+    summary = export_bundle(
+        frame, output, digest.hexdigest(), source.stat().st_size,
+        execution_mode="trusted_host" if args.allow_host else "sandbox",
+        progress=show_progress, max_output_bytes=args.max_output_bytes,
+    )
 
     print("canonical_export_complete: 변환 완료. 분할·중복 검증은 미완료입니다.")
     

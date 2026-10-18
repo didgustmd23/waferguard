@@ -1,0 +1,9 @@
+{
+  "schema_version": "wm_run_bindings_v1",
+  "pipeline_signature": "c414a79c2b6f26330f24a7981c76d401343b58b70bb7106baeb0e18dd69d4605",
+  "runs": {
+    "eda": "wm-canonical-eda02",
+    "proposal": "wm-group-proposal01",
+    "split": "wm-group-commit01"
+  }
+}

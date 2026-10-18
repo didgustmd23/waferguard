@@ -1,0 +1,21 @@
+{
+  "schema_version": "preparation_module_pipeline_v1",
+  "pipeline_id": "tabular_preparation_example",
+  "steps": [
+    {
+      "module_id": "tabular_prepare_propose",
+      "version": "1.0.0",
+      "approval": "new_explicit_approval",
+      "settings": {
+        "missing_ratio_threshold": 0.5,
+        "drop_constant": true,
+        "numeric_imputation": "median"
+      }
+    },
+    {
+      "module_id": "tabular_prepare_apply",
+      "version": "1.0.0",
+      "approval": "new_explicit_approval"
+    }
+  ]
+}

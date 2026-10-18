@@ -2,7 +2,7 @@
 
 import argparse
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import hashlib
 import io
 import json
@@ -398,7 +398,13 @@ def print_split_review(report):
 # - 임시 DB는 종료 시 정리하고 입력 데이터는 수정하지 않음
 # - 저장 정합성과 중복·분할 진단을 별도 상태로 반환
 # ==========================================
-def validate_bundle(input_dir, progress=None, max_group_ratio=0.2):
+def validate_bundle(input_dir, progress=None, max_group_ratio=0.2, *, workspace=None):
+    """canonical을 검사한다. 격리 실행은 권한이 상속된 빈 scratch 폴더를 전달할 수 있다.
+
+    workspace를 생략한 기존 CLI·노트북은 종전 임시 폴더 수명 관리를 유지한다.
+    명시한 workspace의 DB는 호출자 소유이며 자동 삭제하지 않는다.
+    에이전트·OS 권한을 이 코어에서 변경하지 않는다.
+    """
     require(0 < max_group_ratio <= 1, 'INVALID_GROUP_RATIO')
     with validation_stage('input_directory'):
         root = Path(input_dir).resolve(strict=True)
@@ -407,7 +413,16 @@ def validate_bundle(input_dir, progress=None, max_group_ratio=0.2):
         summary, version = validate_metadata(root)
     # 바깥 경계는 임시 폴더 생성·삭제 실패를 잡고 안쪽 실패 단계는 유지한다.
     with validation_stage('temporary_workspace'):
-        with tempfile.TemporaryDirectory(prefix='wm_validate_') as temporary:
+        if workspace is None:
+            temporary_context = tempfile.TemporaryDirectory(prefix='wm_validate_')
+        else:
+            directory = Path(workspace)
+            require(directory.is_dir() and not directory.is_symlink() and not any(directory.iterdir()),
+                    'INVALID_VALIDATION_WORKSPACE')
+            require(not directory.resolve().is_relative_to(root), 'INVALID_VALIDATION_WORKSPACE')
+            temporary_context = nullcontext(str(directory))
+
+        with temporary_context as temporary:
             with validation_stage('temporary_database'):
                 database = sqlite3.connect(str(Path(temporary) / 'manifest.sqlite'))
             try:

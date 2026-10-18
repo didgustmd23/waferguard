@@ -1,0 +1,12 @@
+{
+  "schema_version": "module_settings_schema_v1",
+  "module_id": "user_missing_row_histogram",
+  "module_version": "1.0.0",
+  "fields": {
+    "include_complete": {
+      "type": "boolean",
+      "required": false,
+      "default": true
+    }
+  }
+}

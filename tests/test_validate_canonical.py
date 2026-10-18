@@ -68,6 +68,24 @@ class CanonicalValidationTest(unittest.TestCase):
         self.assertEqual(progress[-1], (3, 3))
         self.assertEqual(before, (self.root / 'manifest.jsonl').read_bytes())
 
+    def test_caller_owned_validation_workspace(self):
+        """명시한 빈 scratch를 사용해도 기존 검증 결과와 입력 보존이 동일하다."""
+        expected = validate_bundle(self.root)
+        workspace = Path(self.temporary.name) / "scratch"
+        workspace.mkdir()
+        actual = validate_bundle(self.root, workspace=workspace)
+        self.assertEqual(actual, expected)
+        self.assertTrue((workspace / "manifest.sqlite").is_file())
+
+        with self.assertRaisesRegex(ValidationError, "INVALID_VALIDATION_WORKSPACE"):
+            validate_bundle(self.root, workspace=workspace)
+
+        inside = self.root / "scratch"
+        inside.mkdir()
+
+        with self.assertRaisesRegex(ValidationError, "INVALID_VALIDATION_WORKSPACE"):
+            validate_bundle(self.root, workspace=inside)
+
     def test_completion_and_row_count(self):
         """완료 표식 누락과 행 누락을 거부한다."""
         (self.root / 'SUCCESS.json').unlink()
