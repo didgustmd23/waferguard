@@ -1,8 +1,16 @@
 # WaferGuard 전처리 에이전트 기초 설계
 
-작성일: 2026-10-09. 상태: **설계 단계, 미구현**. 설치·API 연결·외부 전송·실제 데이터 실행은 하지 않았다.
+현재 구현 상태와 읽는 순서는 [문서 안내](GUIDE.md)를 기준으로 합니다. 아래의 날짜별 설계·검증 기록은 해당 시점의 범위와 구분해서 읽습니다.
 
-담당: 양현승. 최초 적용 대상은 WM-811K 맵 전처리다. 처리 규칙과 데이터 계약은 [WM 전처리 상세 설계](../WM811K/PREPROCESSING_DESIGN.md), 모델·학습 담당과 분석 범위는 [WM 기초 설계](../WM811K/WM811K_BASIC_DESIGN.md)를 따른다. 완료한 SECOM 실험·모델·설정은 변경하거나 자동 재실행하지 않는다.
+2026-10-18 현재: 표형 모듈 실행과 WM 정상 6단계의 공통 연결을 검증했고, 로컬 Qwen의 합성 응답 및 실행안 JSON 계약을 확인했습니다. 프로젝트 LLM 호출·LangChain·LangGraph 연결은 아직 미완료입니다. 기능별 정보 전달 항목을 사용자가 확인·허용하는 [후속 공개 정책](design/LLM_COMMENTARY_REVIEW.md)을 검토하며, 아래 초기 최소 상태 정책을 이미 완화한 구현으로 해석하지 않습니다.
+
+2026-10-17 후속 연결: [WM canonical 품질·EDA](guides/PICKLE_IMPORT.md#wm-canonical의-승인격리-품질-검사와-eda)를 별도 승인 CLI에 연결했다. 전체 파일 지문을 고정한 복사본만 전달하고 기존 WM 검증·EDA를 재사용한다. 품질 검토 필요는 자동 해제하지 않으며, 분할·캐시·모델 학습은 이어서 실행하지 않는다. 공통 모듈 조합 CLI 통합·일반 표/배열 canonical의 후속 EDA 연결·LLM 선택기는 별도 범위다.
+
+2026-10-17 구현 갱신: [구조 판별형 pickle 변환](guides/PICKLE_IMPORT.md)을 기존 승인 실행기·AppContainer·Job에 연결했다. 일반 표·숫자 배열의 공통 코어와 WM 도메인 변환기를 분리하고, 승인 후 단일 지원 객체만 자동 선택한다. 모호함·미지원 구조는 로컬 보고서와 함께 검토 중단하며 명시적 경로·변환기의 새 승인을 요구한다. 형식별 canonical의 모듈형 EDA 연결과 LLM 선택기는 별도 범위다.
+
+작성일: 2026-10-09. 갱신일: 2026-10-15. 상태: **범용 입력·EDA·프로파일 계획과 로컬 실행 관리 합성 검증, 실데이터 자율 실행·LLM 연결 미완료**.
+
+담당: 양현승. 목표는 **범용 전처리 에이전트**이며 WM-811K는 적용 사례다. 공통 입력 계약·EDA·프로파일 실행 구조와 최초 목표 대비 차이는 [범용 설계 정렬](design/GENERIC_PREPROCESSING_DESIGN.md)을 기준으로 한다. WM 도메인 규칙은 [WM 전처리 상세 설계](../WM811K/PREPROCESSING_DESIGN.md)를 따르며 이를 공통 코어의 규칙으로 고정하지 않는다. 완료한 SECOM 실험·모델·설정은 변경하거나 자동 재실행하지 않는다.
 
 구현 계약·최소 상태 매핑·승인 트랜잭션·OWASP 통제 및 검증 기준은 [에이전트 상세 설계](AGENT_DETAILED_DESIGN.md)를 따른다. 기본 방향은 이 문서에, 구현 상세는 해당 문서에 유지한다.
 
@@ -10,7 +18,7 @@
 
 ## 1. 목적과 에이전트의 의미
 
-전처리 에이전트는 원본 검사부터 학습용 데이터 전달까지 **최소 검사 상태를 보고 다음 안전한 도구를 선택하는 제한적 자율 에이전트**다. 맵을 직접 이해해 임의로 정제하는 LLM이나 불량 판정 모델이 아니다. 실제 계산·필수 차단·승인은 로컬 실행기가 강제한다.
+전처리 에이전트는 프로파일에 따라 구조·품질 검사, EDA, 필요한 학습 입력 준비를 관리하는 **제한적 자율 에이전트**다. 입력 형식은 등록 어댑터가 해석하고 분석은 독립적인 공통 코어가 수행한다. LLM의 역할은 승인된 최소 상태에서 안전한 진단 동작을 제안하는 범위이며 실제 계산·필수 차단·승인은 로컬 실행기가 강제한다. EDA 전용 요청에 분할·이미지 캐시 생성을 강제하지 않는다.
 
 이번 프로젝트에서 보여줄 가치는 전처리 자동 실행, 품질 실패 시 차단, 사람의 승인, 중단 후 안전한 재개, 데이터·산출물 추적이다. 처음부터 여러 에이전트의 자유로운 토론이나 자율 코드 생성을 도입하지 않는다.
 
@@ -57,19 +65,24 @@ LLM 선택기에는 원본·파일·로컬 상태 저장소 접근 권한 없음
 LangSmith: 실제 데이터 처리 경로에서는 외부 추적 금지
 ```
 
-코어는 `src/wafer_dl/`의 함수·CLI로 단독 실행할 수 있다. `src/agents/`가 코어를 호출하며 반대 방향 import는 금지한다. Dataset과 학습 코드가 LangGraph·LangChain·API 키에 의존해서는 안 된다.
+공통 코어는 `src/preprocessing/`이며 에이전트 없이 입력 검사·EDA를 호출할 수 있다. `src/agents/adapters/`가 CSV 또는 WM metadata를 공통 계약으로 변환한다. WM 맵 특화 기능은 `src/wafer_dl/`에 유지한다. 공통 코어가 agents·wafer_dl·sensor_ml을 import하지 않으며 Dataset과 학습 코드가 LangGraph·LangChain·API 키에 의존해서는 안 된다.
 
 | 도구 | 이번 설계의 역할 | 필수 여부와 제한 |
 | --- | --- | --- |
 | LangGraph | 노드 순서·조건 분기·승인 대기·체크포인트 | 에이전트 실행 모드의 기본 구성. 코어에는 불필요 |
 | LangChain | 선택한 LLM provider 호출·구조화 응답 adapter | 최소 상태 입력·동작 ID 출력에만 사용, 코어에는 불필요 |
 | LangSmith | 합성 데모의 추적·설명 품질 평가 후보 | 실제 데이터 실행 추적 금지, 로컬 기록을 대체하지 않음 |
-| 전처리 코어 | 맵 검사·분할·실제 변환 | 실제 결과의 유일한 계산 경로 |
+| 공통 전처리 코어 | 컬럼 역할 검사·분포·결측·상관·로컬 보고서 | 데이터셋 독립 계산 경로 |
+| 데이터 어댑터·도메인 확장 | 파일 읽기·공통 입력 변환, 필요시 맵/그룹 등 특화 처리 | 코드에 등록한 기능만 사용 |
 | 로컬 저장소 | 실행 상태·승인·산출물 연결 | 초기 필수. 외부 서비스 없이 재개 가능 |
 
 라이브러리 버전은 구현 때 환경과 기능을 확인해 별도 의존성 파일에 기록한다. 문서의 API 이름만 보고 최신 버전을 무조건 설치하거나 기존 ML 환경을 변경하지 않는다. 다중 사용자 서버·클라우드 배포·자동 학습 실행은 초기 범위 밖이다.
 
-## 3. 기본 작업 그래프
+## 3. 프로파일별 작업 그래프
+
+프로파일은 코드에 등록한 `eda_review_v1` 또는 `training_preparation_v1`을 선택한다. 전자는 `preflight → audit → run_eda → review_eda → validate_contract → render_report`이며 분할·캐시를 생성하지 않는다. 후자는 학습 입력 준비 템플릿으로 `prepare_data`를 사용한다. 템플릿 정의는 모든 처리 도구의 구현 완료를 뜻하지 않는다. 상세 단계와 실행 계약은 [범용 설계 5절](design/GENERIC_PREPROCESSING_DESIGN.md#5-프로파일-설정과-실행-계획)을 따른다.
+
+아래 그래프와 노드 표는 WM 맵 전처리 적용 예시다. Lot·해상도·채널·캐시는 도메인 조건이며 모든 데이터에 강제하지 않는다. 승인 UI 노드는 공통 실행기의 민감 작업 승인 게이트로도 표현할 수 있다.
 
 ```text
 preflight
@@ -154,7 +167,7 @@ LLM은 위 노드를 자유롭게 추가하거나 순서를 바꾸지 않는다.
 | 필드 | 의미 |
 | --- | --- |
 | run_id, thread_id | 로컬 실행·체크포인트 식별자. 가명 ID로 바꿔도 외부 전송 금지 |
-| adapter_id | 초기 `wm811k_map`; 향후 다른 데이터는 adapter 추가 |
+| adapter_id, profile_id, workflow_id | 등록된 입력 로더·검증 프로파일·검토된 실행 템플릿 |
 | status, current_stage | 실행 상태와 현재 단계 |
 | config_ref, config_id | 검증한 설정 사본과 식별자 |
 | source_id, dataset_version | 승인된 원본 식별과 정규화 버전 |
@@ -339,48 +352,32 @@ LangSmith의 [조건부 추적](https://docs.langchain.com/langsmith/conditional
 
 ## 10. 설정·파일 구성 제안
 
-아래 파일은 아직 구현하지 않았다. 데이터 규칙은 WM 전처리 설정에, 에이전트 실행 정책만 별도 설정에 둔다. 두 곳에 split seed나 해상도를 중복 정의하지 않는다.
+현재 공통 코어는 `src/preprocessing/`, 프로파일은 `configs/agents/profiles/`, 프로파일 계획 생성은 `src/agents/workflow.py`에 구현했다. 파일별 현황은 [범용 설계 6절](design/GENERIC_PREPROCESSING_DESIGN.md#6-파일-구성과-호환)을 따른다. 데이터 규칙과 에이전트 실행 정책을 분리하고 split seed나 해상도를 중복 정의하지 않는다.
 
 ```text
-configs/agents/wm_preprocess.json
+configs/agents/profiles/  # 컬럼 역할·등록 adapter·workflow·EDA 옵션
+src/preprocessing/       # 공통 계약·프로파일·EDA·workflow 정의
 src/agents/
-  state.py                 # 상태·도구 결과·승인 스키마
-  policy.py                # 허용 도구·경로·승인·재시도 검사
-  artifacts.py             # 완료 산출물·부분 결과·재사용 검사
-  minimal_state.py         # 내부 결과 → 승인 상태 DTO, 원문 전달 금지
-  wm_preprocess_agent.py   # LangGraph 그래프·WM 코어 연결
-  cli.py                   # plan / run / status / approve / resume / cancel
-configs/agents/llm_selector.json  # 별도 선택기 프로세스의 provider·예산 설정
-src/agents/selector/       # 별도 권한·프로세스로 실행, 원본·전체 상태 접근 금지
-  gateway.py              # 최소 DTO·응답·전송 대상 허용목록 검사
-  provider.py             # provider adapter, 데이터 도구 직접 연결 없음
-logs/wm811k/<run_id>/agent/
-  plan.json
-  events.jsonl             # 로컬 단계·시도·결정 기록
-  approvals.jsonl
-  checkpoint.sqlite        # 초기 로컬 영속 저장 후보
+  state.py               # 로컬 상태·revision
+  policy.py              # 작업 허용·차단
+  approvals.py           # 승인 계약
+  approval_store.py      # 승인·작업 이력 SQLite
+  artifacts.py           # 완료·재사용 검사
+  workflow.py            # 프로파일별 실행 계획
+  executor.py            # 등록 도구 실행·재개
+  adapters/              # CSV·WM metadata → 공통 입력
+  cli.py                 # 합성 데모·프로파일 계획 조회
+  minimal_state.py       # 예정: 최소 DTO 변환
+  selector/              # 예정: 격리 IPC·provider
+logs/agents/<run_id>/
+  execution_plan.json
+  state.json
+  events.jsonl
+  approvals.sqlite3
+  attempts/
 ```
 
-초기 설정 예시(문서용):
-
-```json
-{
-  "agent_version": "wm_preprocess_agent_v1",
-  "adapter_id": "wm811k_map",
-  "data_config": "configs/wm811k/dataset.json",
-  "preprocess_config": "configs/wm811k/preprocessing.json",
-  "execution": {
-    "mode": "rules_only",
-    "max_concurrent_runs": 1,
-    "max_decisions_per_checkpoint": 3,
-    "transient_retry_limit": 2,
-    "require_source_approval": true,
-    "require_split_approval": true,
-    "require_prepare_approval": true
-  },
-  "tracing": {"backend": "local"}
-}
-```
+프로파일 JSON의 실제 설정 방법과 예시는 [범용 설계 5절](design/GENERIC_PREPROCESSING_DESIGN.md#5-프로파일-설정과-실행-계획)에 유지한다. 실행 정책과 LLM 선택기 설정은 데이터 프로파일과 분리한다.
 
 LLM 선택기 설정 예시(별도 프로세스에서만 읽음):
 
@@ -440,4 +437,4 @@ LLM 선택기 설정 예시(별도 프로세스에서만 읽음):
 
 유보 사항은 실제 provider·모델·비용 한도, 환경별 패키지 버전, 로컬 checkpointer 구현, 단계별 timeout, 데이터 규모에 맞춘 캐시 작업 분리다. 원본 검사와 코어 구현 전에 이 모든 외부 의존성을 먼저 붙이지 않는다.
 
-이번 문서는 기초 설계이며 코드·의존성 설치·실행·API 호출은 하지 않았다. 다음 작업은 WM 데이터·환경 확인과 ingest/audit 코어이며 에이전트 구현은 해당 도구 계약을 기준으로 진행한다.
+현재 공통 입력·EDA·품질 검사·프로파일 실행 계획, 승인·상태·산출물·규칙 기반 실행기와 합성 CLI를 구현·합성 검증했다. 품질 기준·run_audit 연결과 중단 의미는 [품질 검사](history/QUALITY_CHECK.md)를 따른다. 다음 구현은 범용 분할·Train-only fit 처리 계약이며 WM 전용 단계 추가를 공통 코어 확장으로 간주하지 않는다. 실데이터 CLI·격리·LLM 선택기는 아직 활성화하지 않았다.

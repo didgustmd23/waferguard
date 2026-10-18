@@ -2,7 +2,7 @@
 
 > 전처리 에이전트·센서 기반 머신러닝·웨이퍼맵 딥러닝으로 구성하는 반도체 품질 분석 프로토타입
 
-[프로젝트 문서](docs/README.md) · [에이전트·WM-811K 설계](docs/WM811K/WM811K_BASIC_DESIGN.md) · [SECOM 결과](reports/README.md#secom-공개-결과-요약) · [SECOM Model Card](docs/secom/model_card_v2.md)
+[프로젝트 문서](docs/README.md) · [에이전트 문서](docs/agents/GUIDE.md) · [WM-811K 설계](docs/WM811K/WM811K_BASIC_DESIGN.md) · [SECOM 결과](reports/README.md#secom-공개-결과-요약) · [SECOM Model Card](docs/secom/model_card_v2.md)
 
 ## 프로젝트 소개
 

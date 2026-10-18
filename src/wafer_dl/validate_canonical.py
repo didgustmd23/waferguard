@@ -2,7 +2,7 @@
 
 import argparse
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import hashlib
 import io
 import json
@@ -134,6 +134,7 @@ def validate_metadata(root):
         require(type(summary.get(field)) is dict and all(type(value) is int and value >= 0
                 for value in summary[field].values()), 'INVALID_SUMMARY_COUNTS')
     return summary, 'wm811k_' + provenance['source_sha256']
+
 # ==========================================
 # manifest를 한 행씩 검사하고 임시 SQLite에 색인화
 # - 전체 행의 Python 객체를 한꺼번에 메모리에 보관하지 않음
@@ -148,37 +149,52 @@ def validate_manifest(root, summary, version, database):
     require(path.is_file() and path.resolve().is_relative_to(root), 'MISSING_OR_UNSAFE_MANIFEST')
     count = 0
     checked_shards = set()
+
     with path.open('rb') as stream:
         while True:
             line = stream.readline(65_537)
+
             if not line:
                 break
+
             require(len(line) <= 65_536, 'OVERSIZED_MANIFEST_ROW')
+
             row = decode_json(line)
+
             require(type(row.get('source_row_position')) is int and
                     row['source_row_position'] == count, 'INVALID_ROW_POSITION')
+            
             require(row.get('dataset_version') == version and
                     row.get('sample_id') == f'{version}:{count}', 'INVALID_SAMPLE_ID')
+            
             status, label, index = row.get('label_status'), row.get('pattern_label'), row.get('class_index')
+
             require(status in ('labeled', 'unlabeled', 'invalid'), 'INVALID_LABEL_STATUS')
+
             if status == 'labeled':
                 require(type(index) is int and 0 <= index < len(CLASS_NAMES) and
                         label == CLASS_NAMES[index], 'LABEL_MAPPING_MISMATCH')
                 classes[label] += 1
             else:
                 require(label is None and index is None, 'INVALID_EMPTY_LABEL')
+
             lot = row.get('lot_id')
             require(lot is None or (type(lot) is str and lot.strip() == lot and bool(lot)), 'INVALID_LOT')
+
             why = row.get('reason_codes')
             require(type(why) is list and all(type(code) is str for code in why) and
                     len(why) == len(set(why)) and
                     set(why) <= MAP_ERRORS | {'MISSING_OR_INVALID_LOT', 'INVALID_LABEL'}, 'INVALID_REASONS')
+            
             require(('MISSING_OR_INVALID_LOT' in why) == (lot is None) and
                     ('INVALID_LABEL' in why) == (status == 'invalid'), 'REASON_STATE_MISMATCH')
+            
             quality = 'quarantined' if why else 'accepted'
             split = 'quarantined' if why else ('unlabeled' if status == 'unlabeled' else 'pending')
             require(row.get('quality_status') == quality and row.get('split') == split, 'INVALID_ROW_STATE')
+
             ref, shard, key = row.get('map_ref'), None, None
+
             if ref is None:
                 require(bool(set(why) & MAP_ERRORS) and row.get('map_hash') is None, 'MISSING_MAP_REFERENCE')
             else:
@@ -186,33 +202,42 @@ def validate_manifest(root, summary, version, database):
                 shard, key = ref['shard'], ref['key']
                 require(type(shard) is str and re.fullmatch(r'maps/shard_[0-9]{6}\.npz', shard) and
                         key == f'map_{count:09d}', 'INVALID_MAP_REFERENCE')
+            
                 # 같은 shard의 경로를 행마다 파일 시스템에서 다시 확인하지 않는다.
                 if shard not in checked_shards:
                     target = root / shard
                     require(target.is_file() and target.resolve().is_relative_to(root), 'UNSAFE_OR_MISSING_SHARD')
                     checked_shards.add(shard)
+
                 require(not set(why) & MAP_ERRORS, 'UNEXPECTED_MAP_REFERENCE')
                 require(type(row.get('map_hash')) is str and
                         re.fullmatch('[0-9a-f]{64}', row['map_hash']), 'INVALID_MAP_HASH')
+                
             wafer = row.get('wafer_index')
             require(wafer is None or type(wafer) in (str, int, float), 'INVALID_WAFER_ID')
+
             try:
                 database.execute('INSERT INTO rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
                                  (count, shard, key, lot, json.dumps(wafer) if wafer is not None else None,
                                   row.get('map_hash'), index, int(quality == 'accepted'), json.dumps(row)))
             except (sqlite3.Error, OverflowError):
                 raise ValidationError('INVALID_MANIFEST_INDEX') from None
+            
             counts[quality] += 1
             counts[status] += 1
             reasons.update(why)
             count += 1
             require(count <= summary['row_count'], 'ROW_COUNT_MISMATCH')
+
     require(count == summary['row_count'], 'ROW_COUNT_MISMATCH')
+
     for expected, actual in ((summary['counts'], counts), (summary['reason_counts'], reasons),
                              (summary['class_counts'], classes)):
         require(expected == dict(actual), 'SUMMARY_COUNT_MISMATCH')
+
     database.execute('CREATE INDEX shard_index ON rows(shard)')
     database.commit()
+
 # ==========================================
 # 배열 헤더를 검사한 뒤 숫자 배열만 복원
 # - 거대한 shape·object dtype을 메모리 할당 전에 거부
@@ -230,6 +255,7 @@ def read_numeric_member(archive, member):
             'INVALID_ARRAY_SHAPE')
     require(shape[0] * shape[1] <= 1_000_000 and dtype == np.dtype('uint8'), 'INVALID_ARRAY_DTYPE_OR_SIZE')
     require(len(payload) - buffer.tell() == shape[0] * shape[1], 'INVALID_ARRAY_BYTES')
+    
     return np.load(io.BytesIO(payload), allow_pickle=False, max_header_size=10_000)
 
 
@@ -244,6 +270,7 @@ def validate_shards(root, summary, database, progress=None):
     require((root / 'maps').is_dir() and (root / 'maps').resolve().is_relative_to(root), 'UNSAFE_MAP_DIRECTORY')
     actual = {path.relative_to(root).as_posix() for path in (root / 'maps').glob('*.npz')}
     require(actual == set(expected), 'UNREFERENCED_OR_MISSING_SHARD')
+    
     for number, shard in enumerate(expected, 1):
         path = root / shard
         require(path.stat().st_size <= 1_100_000_000, 'OVERSIZED_SHARD')
@@ -371,7 +398,13 @@ def print_split_review(report):
 # - 임시 DB는 종료 시 정리하고 입력 데이터는 수정하지 않음
 # - 저장 정합성과 중복·분할 진단을 별도 상태로 반환
 # ==========================================
-def validate_bundle(input_dir, progress=None, max_group_ratio=0.2):
+def validate_bundle(input_dir, progress=None, max_group_ratio=0.2, *, workspace=None):
+    """canonical을 검사한다. 격리 실행은 권한이 상속된 빈 scratch 폴더를 전달할 수 있다.
+
+    workspace를 생략한 기존 CLI·노트북은 종전 임시 폴더 수명 관리를 유지한다.
+    명시한 workspace의 DB는 호출자 소유이며 자동 삭제하지 않는다.
+    에이전트·OS 권한을 이 코어에서 변경하지 않는다.
+    """
     require(0 < max_group_ratio <= 1, 'INVALID_GROUP_RATIO')
     with validation_stage('input_directory'):
         root = Path(input_dir).resolve(strict=True)
@@ -380,7 +413,16 @@ def validate_bundle(input_dir, progress=None, max_group_ratio=0.2):
         summary, version = validate_metadata(root)
     # 바깥 경계는 임시 폴더 생성·삭제 실패를 잡고 안쪽 실패 단계는 유지한다.
     with validation_stage('temporary_workspace'):
-        with tempfile.TemporaryDirectory(prefix='wm_validate_') as temporary:
+        if workspace is None:
+            temporary_context = tempfile.TemporaryDirectory(prefix='wm_validate_')
+        else:
+            directory = Path(workspace)
+            require(directory.is_dir() and not directory.is_symlink() and not any(directory.iterdir()),
+                    'INVALID_VALIDATION_WORKSPACE')
+            require(not directory.resolve().is_relative_to(root), 'INVALID_VALIDATION_WORKSPACE')
+            temporary_context = nullcontext(str(directory))
+
+        with temporary_context as temporary:
             with validation_stage('temporary_database'):
                 database = sqlite3.connect(str(Path(temporary) / 'manifest.sqlite'))
             try:

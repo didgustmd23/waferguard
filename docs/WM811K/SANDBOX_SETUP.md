@@ -37,7 +37,9 @@ wheel 확보 방식은 [pip download 공식 문서](https://pip.pypa.io/en/stabl
 
 ## 2. 새 설정으로 실행
 
-전용 호스트 출력 폴더 `.sandbox_output`을 준비한 뒤 현재 Sandbox를 닫고 `configs/wm811k/sandbox_inspect.wsb`를 더블클릭한다. 네 HostFolder는 실행 전에 존재해야 한다. 경로는 이 PC의 프로젝트 루트 예시이며 다른 PC에서는 수정한다. 입력·설치 파일·스크립트는 읽기 전용이고, 출력 폴더 하나만 `C:\wm_output`에 쓰기 가능으로 연결한다.
+공유 설정은 `configs/wm811k/sandbox_inspect.example.wsb` 템플릿이다. 직접 실행하지 않고 같은 폴더의 `sandbox_inspect.local.wsb`로 복사한다. 복사본에서 `__PROJECT_ROOT__` 네 곳을 현재 프로젝트의 절대 경로로 바꾸고 저장한다. XML 특수문자가 있는 경로는 XML 형식에 맞게 이스케이프한다. `.local.wsb`는 Git에서 제외하며 개인 경로가 들어간 복사본은 공유하지 않는다.
+
+전용 호스트 출력 폴더 `.sandbox_output`을 준비한 뒤 현재 Sandbox를 닫고 수정한 `sandbox_inspect.local.wsb`를 더블클릭한다. 네 HostFolder는 실행 전에 존재해야 한다. 입력·설치 파일·스크립트는 읽기 전용이고, 출력 폴더 하나만 `C:\wm_output`에 쓰기 가능으로 연결한다. 이전 `sandbox_inspect.wsb`를 사용했다면 새 로컬 복사본을 준비한다. 입력 데이터나 기존 Sandbox 출력은 이 변경으로 삭제하지 않는다.
 
 이미 위 네 폴더가 연결된 Sandbox가 실행 중이면 닫지 않는다. 공유 폴더에 추가한 ZIP과 스크립트를 현재 세션에서 사용한다. 새 `.wsb`에서는 설치 프로그램 자동 실행을 제거했다. 이 변경은 이미 실행 중인 설치 프로세스를 종료하지 않는다.
 

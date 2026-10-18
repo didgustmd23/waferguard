@@ -1,0 +1,21 @@
+{
+  "schema_version": "module_pipeline_v1",
+  "pipeline_id": "reviewed_user_module_example",
+  "input": {"contract_id": "tabular_data", "contract_version": 1, "partition": "unsplit"},
+  "steps": [
+    {
+      "step_id": "quality",
+      "module_id": "tabular_quality",
+      "version": "1.0.0",
+      "inputs": {"data": "source.data"}
+    },
+    {
+      "step_id": "row_missing",
+      "module_id": "user_missing_row_histogram",
+      "version": "1.0.0",
+      "inputs": {"data": "source.data"},
+      "settings": {"include_complete": true},
+      "depends_on": ["quality"]
+    }
+  ]
+}

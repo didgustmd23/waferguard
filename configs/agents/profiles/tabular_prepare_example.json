@@ -1,0 +1,42 @@
+{
+  "schema_version": "dataset_profile_v1",
+  "profile_id": "tabular_prepare_example",
+  "adapter_id": "tabular_csv_v1",
+  "workflow_id": "tabular_preparation_v1",
+  "roles": {
+    "numeric": ["measurement_a", "measurement_b"],
+    "categorical": ["process_type"],
+    "target": "quality_label",
+    "group": "batch_id",
+    "timestamp": null,
+    "identifiers": ["sample_id"]
+  },
+  "max_plot_features": 12,
+  "quality_rules": {
+    "missing_ratio_threshold": 0.5,
+    "allowed_labels": ["normal", "review", "reject"],
+    "duplicate_id": "block"
+  },
+  "split_rules": {
+    "strategy": "group",
+    "train_ratio": 0.70,
+    "validation_ratio": 0.15,
+    "test_ratio": 0.15,
+    "random_state": 42,
+    "stratify": false,
+    "require_all_classes": true
+  },
+  "preparation_rules": {
+    "missing_ratio_threshold": 0.5,
+    "drop_constant": true,
+    "numeric_imputation": "median",
+    "scaling": "standard",
+    "outlier": "none",
+    "binning": "none",
+    "categorical_imputation": "missing_category",
+    "unknown_category": "error",
+    "max_categories": 256,
+    "max_output_features": 4096,
+    "max_output_cells": 10000000
+  }
+}

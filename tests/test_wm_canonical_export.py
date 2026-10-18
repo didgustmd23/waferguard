@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 import numpy as np
 import pandas as pd
-from scripts.wm_sandbox.export_canonical import export_frame, normalize_label, normalize_map, main
+from scripts.wm_sandbox.export_canonical import export_bundle, export_frame, normalize_label, normalize_map, main
 
 
 # ==========================================
@@ -88,6 +88,77 @@ class CanonicalExportTest(unittest.TestCase):
             self.assertTrue((bundles[0] / 'SUCCESS.json').is_file())
             provenance = json.loads((bundles[0] / 'provenance.json').read_text())
             self.assertEqual(provenance['execution_mode'], 'trusted_host')
+
+    def test_exact_frame_budget_and_one_byte_overflow(self):
+        """Windows 줄바꿈과 ZIP 헤더 재기록까지 실제 파일 바이트로 제한한다."""
+        frame = pd.DataFrame({
+            "waferMap": [np.array([[1, 2]], dtype=np.uint8)],
+            "failureType": ["Center"],
+            "lotName": ["synthetic_lot"],
+        })
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline = root / "baseline"
+            export_frame(frame, baseline, "synthetic")
+            size = sum(path.stat().st_size for path in baseline.rglob("*") if path.is_file())
+            exact = root / "exact"
+            export_frame(frame, exact, "synthetic", max_output_bytes=size)
+            self.assertEqual(sum(path.stat().st_size for path in exact.rglob("*") if path.is_file()), size)
+            self.assertNotIn(b"\r\n", (exact / "manifest.jsonl").read_bytes())
+
+            limited = root / "limited"
+
+            with self.assertRaisesRegex(ValueError, "출력 크기 상한"):
+                export_frame(frame, limited, "synthetic", max_output_bytes=size - 1)
+
+            self.assertLessEqual(sum(path.stat().st_size for path in limited.rglob("*") if path.is_file()), size - 1)
+
+    def test_bundle_budget_includes_provenance_and_success(self):
+        """정상 성공 표식을 만드는 경로에서 마지막 한 바이트 부족도 미완료로 남긴다."""
+        frame = pd.DataFrame({"waferMap": [np.array([[1, 2]])],
+                              "failureType": ["Center"], "lotName": ["fixture_lot"]})
+
+        with tempfile.TemporaryDirectory() as temporary, patch("scripts.wm_sandbox.export_canonical.datetime") as clock:
+            clock.now.return_value.isoformat.return_value = "2026-10-17T00:00:00+00:00"
+            root = Path(temporary)
+
+            def bundle(name, maximum):
+                export_bundle(frame, root / name, "a" * 64, 100,
+                              execution_mode="appcontainer", max_output_bytes=maximum)
+
+            bundle("baseline", 1024 * 1024)
+            size = sum(path.stat().st_size for path in (root / "baseline").rglob("*") if path.is_file())
+            bundle("exact", size)
+            self.assertTrue((root / "exact/SUCCESS.json").is_file())
+            self.assertEqual(sum(path.stat().st_size for path in (root / "exact").rglob("*") if path.is_file()), size)
+
+            with self.assertRaisesRegex(ValueError, "출력 크기 상한"):
+                bundle("limited", size - 1)
+
+            self.assertTrue((root / "limited/provenance.json").is_file())
+            self.assertFalse((root / "limited/SUCCESS.json").exists())
+            self.assertLessEqual(sum(path.stat().st_size for path in (root / "limited").rglob("*") if path.is_file()), size - 1)
+
+    def test_cli_output_budget_is_applied(self):
+        """명령행 출력 상한이 실제 변환 경로에 전달된다."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = root / "raw"
+            raw.mkdir()
+            source = raw / "fixture.pkl"
+            source.write_bytes(b"synthetic placeholder")
+            frame = pd.DataFrame({"waferMap": [np.array([[1, 2]])],
+                                  "failureType": ["Center"], "lotName": ["fixture_lot"]})
+
+            with patch("sys.argv", ["exporter", "--input", str(source), "--output-root", str(root / "output"),
+                                    "--trusted-pickle", "--allow-host", "--max-output-bytes", "1"]), \
+                    patch("scripts.wm_sandbox.export_canonical.pd.read_pickle", return_value=frame), \
+                    redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(ValueError, "출력 크기 상한"):
+                    main()
+
+            self.assertFalse(list((root / "output").rglob("SUCCESS.json")))
 
     def test_label_contract(self):
         # 단일 중첩 라벨, 빈 배열, 복수·미지 라벨을 각각 검사한다.

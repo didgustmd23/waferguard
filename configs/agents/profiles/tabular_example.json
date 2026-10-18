@@ -1,0 +1,21 @@
+{
+  "schema_version": "dataset_profile_v1",
+  "profile_id": "tabular_example",
+  "adapter_id": "tabular_csv_v1",
+  "workflow_id": "eda_review_v1",
+  "roles": {
+    "numeric": ["measurement_a", "measurement_b"],
+    "categorical": ["process_type"],
+    "target": "quality_label",
+    "group": "batch_id",
+    "timestamp": null,
+    "identifiers": ["sample_id"]
+  },
+  "max_plot_features": 12,
+  "quality_rules": {
+    "missing_ratio_threshold": 0.5,
+    "allowed_labels": ["normal", "review", "reject"],
+    "target_missing": "review",
+    "duplicate_id": "block"
+  }
+}

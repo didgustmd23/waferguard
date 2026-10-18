@@ -1,0 +1,17 @@
+{
+  "schema_version": "wm_module_pipeline_v1",
+  "pipeline_id": "wm_common_native_example",
+  "input": {
+    "contract_id": "wm_canonical",
+    "contract_version": 1,
+    "partition": "unsplit"
+  },
+  "steps": [
+    {
+      "step_id": "eda",
+      "module_id": "wm_canonical_eda",
+      "version": "1.0.0",
+      "inputs": {"evidence": "source.evidence"}
+    }
+  ]
+}

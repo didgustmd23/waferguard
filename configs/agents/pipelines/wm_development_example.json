@@ -1,0 +1,13 @@
+{
+  "schema_version": "wm_module_pipeline_v1",
+  "pipeline_id": "wm_development_example",
+  "input": {"contract_id": "wm_canonical", "contract_version": 1, "partition": "unsplit"},
+  "steps": [
+    {"step_id": "eda", "module_id": "wm_canonical_eda", "version": "1.0.0", "inputs": {"evidence": "source.evidence"}},
+    {"step_id": "proposal", "module_id": "wm_split_propose", "version": "1.0.0", "inputs": {"evidence": "eda.result"}},
+    {"step_id": "split", "module_id": "wm_split_commit", "version": "1.0.0", "inputs": {"evidence": "proposal.result"}},
+    {"step_id": "transform", "module_id": "wm_transform_check", "version": "1.0.0", "inputs": {"evidence": "split.result"}},
+    {"step_id": "cache", "module_id": "wm_cache_prepare", "version": "1.0.0", "inputs": {"evidence": "transform.result"}},
+    {"step_id": "dataset", "module_id": "wm_dataset_check", "version": "1.0.0", "inputs": {"evidence": "cache.result"}}
+  ]
+}

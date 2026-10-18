@@ -1,6 +1,16 @@
 # WaferGuard 소스 구성
 
-프로젝트 영역은 SECOM 머신러닝, 전처리 에이전트, WM-811K 딥러닝으로 나눕니다. SECOM·재사용 코어와 WM canonical 산출물 검증기가 구현되어 있으며, 에이전트와 WM 모델 학습은 구현 전입니다. 설계 안내는 이 문서에 통합합니다.
+WM 공통 승인·실행: `agents/wm_workflow_execution.py`와 `agents/wm_execution_cli.py`는 배정된 현재 작업의 `status`·`approve`·`next`를 제공합니다. 조회 전용 안내는 그대로 분리하고, 승인 화면은 기존 CLI를 재사용하며 실행기는 잠금 안에서도 선택 범위를 다시 확인합니다. 한 번에 한 단계만 처리하고 자동 승인·재시도는 하지 않습니다. [사용법](../docs/agents/design/METADATA_REGISTRY.md#공통-승인한-단계-실행)을 참고하세요.
+
+WM 작업 준비·배정: `agents/wm_run_creation.py`와 `agents/wm_creation_cli.py`는 첫 EDA부터 분할·변환·캐시·Dataset까지 정상 6단계의 범위 미리보기·사용자 확인·기존 생성 함수 호출·새 배정을 제공합니다. `agents/wm_eda_creation.py`는 canonical 바이트 선택·복사 예산을, `agents/wm_dataset_creation.py`는 완료 캐시·배치·런타임 확인을 담당합니다. worker 실행·검토/실행 승인 발급·기존 배정 덮어쓰기는 하지 않습니다. [첫 EDA 사용법](../docs/agents/design/METADATA_REGISTRY.md#첫-eda-작업-준비-통합)을 참고하세요.
+
+WM 다음 작업 안내: `agents/wm_workflow_guidance.py`는 현재 상태·부모 연결·승인 만료·예약을 확인해 행동만 추천하고, `agents/wm_guidance_cli.py`는 안내 전용 CLI입니다. 생성·승인·실행은 호출하지 않습니다. [상태별 안내와 확인 명령](../docs/agents/design/METADATA_REGISTRY.md#다음-작업-안내)을 참고하세요.
+
+WM 실제 작업 연결 조회: `agents/wm_run_evidence.py`는 승인 DB의 읽기 전용 완료 증거, `agents/wm_run_bindings.py`는 단계별 작업 배정·부모 연결, `agents/wm_run_binding_cli.py`는 정상 개발 6단계의 조회를 담당합니다. 승인·worker 실행은 하지 않습니다. [배정 형식과 사용법](../docs/agents/design/METADATA_REGISTRY.md#실제-wm-작업-배정과-읽기-전용-연결-조회)을 참고하세요.
+
+최신 WM 모듈 연결(2026-10-17): `agents/agent_module_registry.py`는 표형 8개·WM 8개 통합 목록, `agents/wm_module_catalogue.py`는 기존 승인 실행기 연결, `agents/wm_module_plan.py`는 증거 포트·순서·버전 검사, `agents/wm_module_cli.py`는 정적 계획 확인을 제공합니다. 기존 worker·완료 승인 코드는 변경하지 않습니다. [현재 계약과 사용법](../docs/agents/design/METADATA_REGISTRY.md#wm-작업의-공통-등록계획-연결)을 참고하세요. 아래 초기 구성 설명과 달리 WM 실데이터의 개발 캐시·Dataset 첫 배치 검사까지 사용자 실행으로 완료했으며, 전체 실행 동선 통합·LLM 연결은 아직 남아 있습니다.
+
+프로젝트 영역은 SECOM 머신러닝, 범용 전처리 에이전트, WM-811K 딥러닝으로 나눕니다. 공통 전처리 입력·EDA·프로파일 계획과 에이전트 실행 관리까지 합성 검증했으며, 실데이터 에이전트 활성화와 WM 모델 학습은 진행 전입니다.
 
 ```text
 src/
@@ -12,13 +22,34 @@ src/
 │   ├── inference/
 │   ├── evaluation/
 │   └── verification/
-├── agents/           # 전처리 작업 관리 예정 영역
+├── preprocessing/    # 공통 입력·프로파일·품질 검사·EDA·workflow
+├── agents/           # 승인·실행·상태·산출물 및 데이터 어댑터
 └── wafer_dl/         # canonical 검증기·맵 처리·딥러닝 영역
 ```
 
-맵 처리 함수와 딥러닝은 [wm811k](README.md#wm-811k-맵-처리와-딥러닝), 작업 실행·상태·재시도 관리는 [agents](README.md#전처리-에이전트)에서 분리합니다. SECOM 코드는 이 두 영역에 의존하지 않습니다. 현재 코어는 표 형태·이진 분류 계약이며 WM 다중 분류의 지표·맵 변환을 그대로 처리한다고 가정하지 않습니다.
+맵 처리 함수와 딥러닝은 [wm811k](README.md#wm-811k-맵-처리와-딥러닝), 작업 실행·상태·재개 관리는 [agents](README.md#전처리-에이전트)에서 분리합니다. SECOM 코드는 이 두 영역에 의존하지 않습니다. 기존 modeling 코어는 표형 이진 분류 계약이며, 새 preprocessing 코어는 label 개수에 독립적인 입력 검사·EDA를 제공합니다. WM 맵 변환·학습 지표는 도메인 계약을 따릅니다.
 
 ## 공통 코어 — src 바로 아래
+
+pickle 변환은 `agents/pickle_import_cli.py`·`pickle_import.py`에서 승인·실행을 관리합니다. `pickle_contract.py`가 선택 계약을, `pickle_converters.py`가 구조 판별과 표·숫자 배열·WM 변환기 연결을 담당합니다. 공통 데이터 코어는 `preprocessing/canonical_data.py`입니다. 격리 실행은 `pickle_import_transport.py`·`pickle_import_worker.py`, 부모 검증은 `pickle_results.py`에 있습니다. 기존 `wm_pickle_*` 파일은 호환 진입점입니다. [실행 방법과 지원 범위](../docs/agents/guides/PICKLE_IMPORT.md)를 참고하세요.
+
+저장 기준 적용은 `agents/preparation_apply_cli.py`·`preparation_apply.py`가 관리합니다. 완료 후보 증거·두 구간 계약은 `preparation_apply_contract.py`, 격리 복원/변환과 운송은 `preparation_apply_worker.py`·`preparation_apply_transport.py`, 부모 검증은 `preparation_apply_results.py`가 담당합니다. [출력 파일·승인·실행 안내](../docs/agents/guides/PREPARATION_APPLY.md)를 참고하세요. fit·Test 적용·모델 학습은 수행하지 않습니다.
+
+Train 후보 기준 산출은 `agents/preparation_candidate_cli.py`·`preparation_candidate.py`가 관리합니다. 입력 증거는 `preparation_candidate_contract.py`, 격리 계산·운송은 `preparation_candidate_worker.py`·`preparation_candidate_transport.py`, 부모 파일 검증은 `preparation_candidate_results.py`가 담당합니다. 기존 `preprocessing/transform.py`를 재사용하며 변환 적용·모델 학습은 하지 않습니다. [구현 범위·사용법](../docs/agents/guides/PREPARATION_CANDIDATE.md)을 참고하세요.
+
+분할 준비는 `agents/snapshot_split_cli.py`·`snapshot_split.py`가 관리하며, `snapshot_split_worker.py`·`snapshot_split_transport.py`가 격리 품질·EDA·제안·확정을 수행합니다. [SECOM Train 기능 검증 절차](../docs/agents/guides/SNAPSHOT_SPLIT.md)를 참고하세요. 기존 `preprocessing/split.py`를 재사용하며 ML 실험 분할·모델은 변경하지 않습니다. 합성 테스트는 통과했고 실제 Windows 실행은 별도 확인 대상입니다.
+
+구간 추출은 `agents/partition_export_contract.py`·`partition_export_worker.py`, 부모 파일 검증은 `partition_export_results.py`, 제한된 CSV 파서는 `partition_csv.py`에 있습니다. 승인·커밋 연결은 `partition_export.py`, AppContainer+Job 운송은 `partition_export_transport.py`, 사용자 명령은 `partition_export_cli.py`가 담당합니다. [구간 내보내기 구현 범위·사용법](../docs/agents/guides/PARTITION_EXPORT.md)을 참고하세요. 합성 연결 테스트는 통과했으며 실제 Windows 격리 실행은 별도 확인이 필요합니다.
+
+변환 준비의 실행 증거는 `agents/split_evidence.py`, 구간 입력 결합은 `agents/partition_input_contract.py`가 검사합니다. [확정 분할·구간 입력 계약](../docs/agents/design/PARTITION_INPUT_CONTRACT.md)을 참고하세요. 기존 분할 결과를 읽기 전용으로 확인하며 실제 내보내기·변환은 실행하지 않습니다.
+
+선택 모듈 실행은 `agents/module_pipeline_cli.py`·`module_pipeline.py`가 관리하며, worker·운송·파일 검증은 각각 `module_pipeline_worker.py`·`module_pipeline_transport.py`·`module_pipeline_results.py`에서 담당합니다. [합성 예제 실행·검증 범위](../docs/agents/guides/MODULE_PIPELINE_EXECUTION.md)를 참고하세요. 기존 고정 EDA·audit CLI는 유지합니다.
+
+`preprocessing/pipeline.py`는 모듈 선택 JSON의 순서·포트·계약·설정을 검증합니다. 예제는 `configs/agents/pipelines/tabular_eda_example.json`이며 실제 실행 명령이나 데이터 경로를 받지 않습니다. [설정 방법·검증 범위](../docs/agents/design/MODULE_PIPELINE.md)를 참고하세요.
+
+모듈형 전처리의 등록 계약은 `preprocessing/module_contracts.py`, 목록 관리·정확한 버전 조회는 `module_registry.py`, 내장 EDA 5개·품질 검사 연결은 `builtin_modules.py`에서 관리합니다. [등록부 사용·경계](../docs/agents/design/MODULE_REGISTRY.md)를 참고하세요. 새 모듈 CLI·worker의 합성 연결을 확인했으며 실제 OS 실행은 별도 검증 대상입니다.
+
+범용 EDA는 `preprocessing/eda.py`의 기능별 계산과 `preprocessing/eda_report.py`의 그림·파일 생성으로 분리합니다. `collect_eda(..., analyses=("missing",))`처럼 필요한 계산만 호출할 수 있습니다. 기존 고정 EDA CLI는 전체 보고서를, 새 모듈 CLI는 선택한 계산의 CSV·품질 보고서를 생성합니다. `quality.py`는 검사/저장 분리를 유지합니다. 과거 보고서·노트북은 재작성하지 않습니다.
 
 여러 실행기가 재사용하는 설정·데이터 구조·전처리·모델·평가·센서 선택·추론 코어만 유지합니다. 실행기는 아래 기능별 폴더에서 관리합니다.
 
@@ -109,24 +140,62 @@ from src.sensor_ml.experiments.time_weight_compare import build_weight_candidate
 
 ## 전처리 에이전트
 
-담당은 양현승이며 아직 실행 가능한 에이전트를 구현하지 않았습니다. `src/agents/`는 작업 실행·상태·실패·재시도·산출물 관리 코드를 둘 영역입니다.
+이미 변환된 WM 입력은 `agents/wm_canonical_cli.py`가 승인하고 `wm_canonical.py`가 실행을 관리합니다. `wm_canonical_contract.py`는 전체 묶음의 파일·크기·해시 복사본 계약, `wm_canonical_worker.py`·`wm_canonical_transport.py`는 기존 AppContainer+Job 연결, `wm_canonical_results.py`는 부모 검증을 담당합니다. 기존 `wafer_dl/validate_canonical.py`·`eda.py`를 재사용하며 pickle을 다시 읽지 않습니다. [실행 방법](../docs/agents/guides/PICKLE_IMPORT.md#wm-canonical의-승인격리-품질-검사와-eda)을 참고하세요.
 
-초기 대상은 WM-811K 맵 전처리의 `ingest → audit → split → prepare → validate_contract`입니다. 실제 맵 읽기·검사·분할·변환 함수는 `src/wafer_dl/`에 구현하고 에이전트는 그 함수를 호출합니다. SECOM 학습이나 문턱 선택을 자동 변경하는 역할은 포함하지 않습니다.
+맵 라벨 충돌로 중단한 품질 결과에는 `agents/wm_conflict_cli.py`로 별도 승인 가상 제외 후보를 연결합니다. `wm_conflict_evidence.py`는 이전 승인·품질 증거를 결합하고, `wm_conflict.py`·`wm_conflict_worker.py`·`wm_conflict_transport.py`는 기존 격리 실행을 재사용합니다. `wm_conflict_results.py`가 후보 출력 계약을 검사합니다. 실제 제외·라벨 변경·분할·EDA·학습은 하지 않습니다. [후보 진단 방법](../docs/agents/guides/PICKLE_IMPORT.md#wm-맵-라벨-충돌의-가상-제외-후보)을 참고하세요.
+
+후보 검토 후 실제 제외는 별도 `agents/wm_exclusion_cli.py`에서 승인합니다. `wm_exclusion_evidence.py`로 완료 후보를 결합하고 `wm_exclusion.py`·`wm_exclusion_transport.py`·`wm_exclusion_worker.py`로 기존 AppContainer·Job에서 실행합니다. `wafer_dl/exclude_conflicts.py`는 새 canonical 생성 코어이며 `wm_exclusion_results.py`는 부모 결과 검증입니다. 원본·이전 결과는 보존하고 새 배열 전체를 재검증합니다. [적용 방법](../docs/agents/guides/PICKLE_IMPORT.md#승인한-충돌-후보로-새-canonical-생성)을 참고하세요.
+
+완료된 WM EDA의 그룹 분할 제안은 `agents/wm_split_cli.py`·`wm_split.py`가 관리합니다. `wm_split_evidence.py`는 기존 EDA 완료 증거를 결합하고, `wm_split_worker.py`·`wm_split_transport.py`는 기존 `wafer_dl/split.py`의 그룹 구성·후보 비교·중복 검사를 격리 실행합니다. `wm_split_results.py`는 제안의 파일·집계·그룹 배정 계약을 검사합니다. 분할안을 만들 뿐 확정 manifest는 생성하지 않습니다. [분할안 생성 방법](../docs/agents/guides/PICKLE_IMPORT.md#완료-eda에-연결한-wm-그룹-분할-제안)을 참고하세요.
+
+검토한 그룹 배정의 확정은 `agents/wm_split_commit_cli.py`·`wm_split_commit.py`가 별도 검토·확정 승인으로 관리합니다. `wm_split_commit_evidence.py`는 완료 제안을 결합하고 `wm_split_commit_worker.py`·`wm_split_commit_transport.py`가 고정 배정을 격리 적용합니다. `wafer_dl/commit_split.py`는 기존 `check_transform.index_split`으로 모든 원본 행의 대응을 재검증하며 `wm_split_commit_results.py`는 부모 결과 계약을 검사합니다. 후보 재탐색·배열 파싱·이미지 변환·학습은 하지 않습니다. [확정 방법](../docs/agents/guides/PICKLE_IMPORT.md#검토한-wm-그룹-분할안-확정)을 참고하세요.
+
+확정 Train·Validation의 변환 검사는 `agents/wm_transform_cli.py`·`wm_transform.py`가 승인·검토 중단을 관리합니다. `wm_transform_evidence.py`로 확정 분할을 결합하고 `wm_transform_worker.py`·`wm_transform_transport.py`로 격리 실행하며 `wm_transform_results.py`로 결과를 검사합니다. `wafer_dl/isolated_transform_check.py`는 기존 변환·패턴 지표·그림 함수를 명시적 scratch와 출력 한도에 연결합니다. Test 배열 복원·학습 캐시는 하지 않으며 통과 후에도 사람의 그림 검토가 필요합니다. [검사 방법](../docs/agents/guides/PICKLE_IMPORT.md#확정-분할의-trainvalidation-변환패턴-보존-검사)을 참고하세요.
+
+`agents/reviewed_module_cli.py`는 등록된 참조 모듈 하나를 고정 합성 CSV에 승인·격리 실행합니다. 계약·운송·worker·부모 검증은 `reviewed_module_contract.py`, `reviewed_module_transport.py`, `reviewed_module_worker.py`, `reviewed_module_results.py`로 분리했습니다. [합성 실행 명령과 범위](../docs/agents/guides/REVIEWED_MODULE_EXECUTION.md)를 참고하세요. 실데이터 입력 옵션은 제공하지 않습니다.
+
+`agents/module_catalogue.py`와 `module_catalogue_cli.py`는 사용자 모듈의 고정 명세·코드 목록을 검사합니다. `preprocessing/extensions/missing_row_histogram.py`는 합성 참조 예제이며 실제 worker에는 아직 연결하지 않았습니다. [등록 절차·검증 범위](../docs/agents/design/USER_MODULE_REGISTRATION.md)를 참고하세요.
+
+`agents/csv_handoff_cli.py`는 완료된 CSV 전처리의 전달 묶음을 생성하며, `agents/csv_handoff_contract.py`는 파일·특징 순서·행 연결을 검사합니다. 출력은 `data/processed/agents/handoffs/<name>`에 저장하고 기존 실행·Test·모델은 변경하지 않습니다. [전달 묶음 안내](../docs/agents/guides/CSV_HANDOFF.md)를 참고하세요.
+
+`agents/preparation_pipeline_cli.py`는 변환 모듈 계획을 기존 후보 산출·적용 실행기에 연결합니다. `preprocessing/preparation_modules.py`는 고정 변환 등록부, `agents/preparation_module_plan.py`는 정적 계획 검증을 담당합니다. 후보 완료 후 사용자 검토와 별도 적용 승인을 유지하며, 기존 worker·알고리즘은 재사용합니다. [통합 CLI 사용법](../docs/agents/guides/PREPARATION_PIPELINE_EXECUTION.md)을 참고하세요.
+
+`src/agents/`는 데이터셋 독립 실행·상태·승인·산출물 관리 영역입니다. `src/preprocessing/`에는 에이전트 없이 호출 가능한 공통 입력 검사·EDA·프로파일·실행 템플릿을 둡니다.
+
+프로파일은 코드에 등록한 CSV 또는 WM metadata 어댑터와 EDA/학습 준비 템플릿을 선택합니다. `adapters/tabular.py`가 공통 EDA를 연결하고 `adapters/wm811k_metadata.py`는 WM 읽기·적격 행 선택을 담당합니다. WM 맵·Lot·이미지 변환 특화 기능은 `wafer_dl`에 유지하며 모든 입력에 강제하지 않습니다. 기존 SECOM 학습·문턱·설정은 변경하지 않습니다.
 
 - 라벨·제외 기준·split·변환은 고정 설정을 따릅니다.
 - 실패한 부분 산출물을 완료 결과로 등록하지 않습니다.
 - 에이전트 없이도 전처리 함수를 실행·검증할 수 있도록 분리합니다.
-- 아직 프레임워크 의존성·실행 명령·LLM 호출을 추가하지 않았습니다.
+- 합성 데모 CLI·프로파일 계획 조회를 제공하며 LLM 호출·실데이터 실행은 활성화하지 않았습니다.
 
-예정 진입 모듈은 `src/agents/wm_preprocess_agent.py`입니다. 이름만 정리한 계획이며 파일은 아직 없습니다. 자세한 책임과 입력 계약은 [WM-811K 기초 설계](../docs/WM811K/WM811K_BASIC_DESIGN.md)를 따릅니다.
+구성·프로파일·최초 목표와 구현 차이는 [범용 전처리 설계](../docs/agents/design/GENERIC_PREPROCESSING_DESIGN.md), 품질 기준과 run_audit는 [품질 검사](../docs/agents/history/QUALITY_CHECK.md), Random·Group·Time 제안과 승인 후 확정은 [분할 검사](../docs/agents/history/SPLIT_CHECK.md), 설정형 Pipeline·JSON 저장/복원은 [Train-only 준비](../docs/agents/history/TRAIN_ONLY_PREPARATION.md), 독립 최종 검사와 로컬 보고서는 [최종 계약·보고서](../docs/agents/history/FINAL_CONTRACT_REPORT.md)를 따릅니다. 실행 방법은 [CLI 사용법](../docs/agents/history/CLI_USAGE.md)을 참고하세요. CSV 어댑터의 준비·최종 검사·보고서 연결까지 합성 검증했으며, Test 변환·전체 실데이터 CLI·게시·OS 격리는 후속 범위입니다.
+
+전처리 worker의 로컬 요청·결과·경로 사전 계약은 `agents/worker_contract.py`·`worker_paths.py`에 있습니다. [worker 실행 안내](../docs/agents/security/WORKER_EXECUTION.md)를 참고하세요. 계약 검사와 별도 자원 제한 모듈을 구현했으며 기존 실행기를 격리 worker로 자동 전환하거나 시스템 권한·방화벽을 변경하지 않습니다.
+
+`agents/appcontainer_probe.py`는 합성 격리 호환성 검사이며, `agents/wfp_capture.py`는 별도 동의를 요구하는 선택적 OS 이벤트 진단입니다. [WFP 수집 범위·사용법](../docs/agents/security/WFP_DIAGNOSTIC.md)을 확인하세요. 실제 수집·차단 판정·실데이터 worker 활성화는 서로 다른 단계입니다.
+
+`agents/job_object.py`는 사용자 지정 메모리·프로세스 수·경과 시간 제한과 취소·전체 종료를 제공합니다. `agents/resource_probe.py`로 고정 합성 worker를 검증할 수 있습니다. [자원 제한 사용법·검증 범위](../docs/agents/security/RESOURCE_LIMITS.md)를 참고하세요. 실데이터 실행기로 자동 전환하지 않습니다.
+
+고정 합성 CSV EDA의 승인·예약 → AppContainer+Job → 부모 검증·완료 등록 연결과 실제 정상 실행 확인은 [격리 EDA 사용법](../docs/agents/history/ISOLATED_EDA.md)에 정리했습니다. 실데이터 실행은 비활성 상태입니다.
+
+`agents/input_snapshot.py`는 사용자 지정 파일 크기 상한으로 형식 독립적인 로컬 파일 복사본을 준비합니다. [입력 snapshot 사용법](../docs/agents/design/INPUT_SNAPSHOT.md)을 참고하세요. 내용 해석은 별도 등록 어댑터의 역할이며, 이 준비 명령은 EDA·승인·worker를 실행하지 않습니다.
+
+`agents/eda_input_contract.py`는 snapshot·등록 CSV 프로파일·컬럼 역할·EDA 설정·자원 요청을 실행 계획에 묶습니다. [EDA 입력 계약](../docs/agents/design/EDA_INPUT_CONTRACT.md)을 참고하세요. `snapshot_eda_cli.py`·`snapshot_eda.py`·`snapshot_eda_worker.py`·`snapshot_eda_transport.py`가 승인·예약·AppContainer+Job·부모 결과 검증을 연결합니다. 원본 재파싱 없는 검증은 `eda_result_validation.py`가 담당합니다. [합성 데모의 실제 실행·기록 확인](../docs/agents/guides/SNAPSHOT_EDA.md)은 완료했으며 실데이터 EDA는 별도 검증 대상입니다.
+
+`snapshot_audit_cli.py`·`snapshot_audit.py`·`snapshot_audit_worker.py`·`snapshot_audit_transport.py`는 기존 비파괴 품질 코어를 별도 승인·격리 실행에 연결합니다. `quality_result_validation.py`가 부모의 제한된 결과 검사를 담당합니다. [품질 검사 사용법](../docs/agents/guides/SNAPSHOT_AUDIT.md)을 참고하세요. 검토·차단 보고서는 완료 커밋하지 않으며 EDA로 자동 진행하지 않습니다. 새 audit 경로의 실제 OS 실행 확인은 아직 남아 있습니다.
 
 ## WM-811K 맵 처리와 딥러닝
+
+`agents/wm_dataset_cli.py`·`wm_dataset.py`·`wm_dataset_contract.py`는 완료된 개발 캐시의 Dataset·첫 배치 검사를 별도 승인으로 관리합니다. `wm_dataset_runtime.py`는 설치된 PyTorch의 제한 복사 명세를, `wm_dataset_transport.py`·`wm_dataset_worker.py`는 AppContainer·Job의 CPU 검사를, `wm_dataset_results.py`는 부모의 결과 계약 검사를 담당합니다. 기존 `wafer_dl/dataset.py`를 재사용하며 Test·모델 학습·Tensor 외부 전달은 처리하지 않습니다. [Dataset 검사 사용법](../docs/agents/guides/PICKLE_IMPORT.md#완료-캐시의-dataset첫-배치-검사)을 참고하세요.
+
+`agents/wm_cache_cli.py`·`wm_cache.py`·`wm_cache_evidence.py`는 완료된 변환 검사와 확정 분할에 연결해 그림 확인·분할 재확인·캐시 실행 승인을 관리합니다. `wm_cache_worker.py`·`wm_cache_transport.py`는 기존 AppContainer·Job을, `wm_cache_results.py`는 숫자 전용 NPY·색인 행 연결 검증을 담당합니다. `wafer_dl/isolated_cache.py`는 기존 캐시 writer와 변환 함수를 재사용하며 명시적 scratch·출력 예산을 연결합니다. [Train·Validation 캐시 생성](../docs/agents/guides/PICKLE_IMPORT.md#확인한-변환-설정으로-trainvalidation-캐시-생성)을 참고하세요. Test 배열·모델 학습은 처리하지 않습니다.
 
 `src/wafer_dl/validate_canonical.py`는 변환된 NPZ·manifest 정합성, 중복·Lot 연결 그룹의 분할 필요조건을 검사합니다. 원본 pickle을 읽거나 데이터를 수정하지 않습니다. 실행 안내는 [Sandbox 준비·산출물 검증](../docs/WM811K/SANDBOX_SETUP.md#6-호스트에서-변환-산출물-검증)에 있습니다.
 
 `split.py`는 충돌 맵 전체 격리와 Lot·동일 맵 그룹 분할을 담당합니다. [그룹 분할 실행](../docs/WM811K/GROUP_SPLIT.md)을 참고하세요. `transform.py`는 NumPy 기반 결정적 resize·padding·2채널 생성을, `check_transform.py`는 Train/Validation의 패턴 보존 검사를 담당합니다. [변환 검사 실행](../docs/WM811K/TRANSFORM_CHECK.md)을 참고하세요. `cache.py`와 `dataset.py`는 숫자 전용 입력 캐시와 PyTorch 첫 배치 검사를 담당합니다. [캐시·Dataset 실행](../docs/WM811K/CACHE_DATASET.md)은 실제 데이터에서 별도로 수행하며, 딥러닝 학습 모듈은 아직 미구현입니다.
 
-`src/wafer_dl/eda.py`는 노트북·CLI·향후 에이전트가 공유하는 EDA 코어입니다. `reports/wm811k/analysis.ipynb`에서 분포·클래스·Lot·중복 집계와 원본 크기 예시를 로컬로 확인합니다. 에이전트는 나중에 `run_eda(input_dir, output_dir)`를 호출할 수 있으며 반환값은 로컬 실행 상태뿐입니다. 기존 LLM DTO·허용 동작에 자동 등록하지 않았고, 실제 에이전트 실행기는 아직 미구현입니다. 집계·그림·경로는 외부 LLM·추적에 전달하지 않습니다.
+`src/wafer_dl/eda.py`는 기존 WM 노트북·CLI용 도메인 분석입니다. `reports/wm811k/analysis.ipynb`의 결과와 사용법을 유지합니다. 새 에이전트의 기본 분석은 `preprocessing/eda.py`이며 WM metadata 어댑터가 공통 입력을 전달합니다. 맵 예시 등 특화 분석은 별도 확장으로 연결합니다. 집계·그림·경로는 외부 LLM·추적에 전달하지 않습니다.
 
 | 영역 | 예정 모듈 | 담당 |
 | --- | --- | --- |
