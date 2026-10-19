@@ -43,7 +43,9 @@ def _directory(name, *, create_parent=False):
 
 
 def _preflight(output, arguments):
-    if arguments or os.name != 'nt' or sys.version_info[:2] != (3, 10):
+    from .wm_runtime import runtime_status
+
+    if arguments or not runtime_status("wm_dataset_check")["supported"]:
         return ToolResult('blocked_input')
 
     (output / 'preflight.json').write_text(json.dumps({'version': POLICY_VERSION}), encoding='utf-8')
@@ -121,47 +123,48 @@ def open_run(name):
     return tool
 
 
+def approval_summary(tool):
+    """현재 단계의 로컬 승인 설명. 표시와 실제 승인 저장을 분리한다."""
+    return {
+        'cache_run': tool.cache_run, 'source_id': tool.contract.source_id,
+        'batch_size': tool.contract.batch_size, 'partitions': ['train', 'validation'],
+        'device': 'cpu', 'num_workers': 0, 'torch_version': tool.contract.torch_version,
+        'limits': asdict(tool.limits), 'max_input_bytes': tool.contract.max_input_bytes,
+        'max_runtime_bytes': tool.contract.max_runtime_bytes,
+        'runtime_bytes': sum(item['size'] for item in tool._runtime().values()),
+        'max_output_bytes': tool.contract.max_output_bytes, 'lifetime_minutes': 30,
+        'effect': '캐시·고정 PyTorch 의존성 복사 후 새 AppContainer+Job에서 두 개발 구간의 첫 배치 검사',
+        'notice': '원본 canonical·Test 배열·승인 DB 전달·GPU 연산·모델 학습·LLM 전송 없음'
+    }
+
+
+def preview_approval(tool):
+    """현재 범위의 데이터 전용 승인 미리보기를 반환한다."""
+    from .workflow_approval import preview_approval as build_preview
+
+    return build_preview(tool, executor(tool), approval_summary)
+
+
+def record_approval(tool, preview, *, confirmed=False):
+    """CLI·공통 서비스가 같은 잠금·범위 재검사·저장 함수를 사용한다."""
+    from .workflow_approval import record_approval as save_approval
+
+    return save_approval(tool, executor(tool), approval_summary, preview, confirmed=confirmed)
+
+
 def approve(tool):
+    """기존 터미널 확인 문구를 유지하고 공통 승인 서비스에 저장을 위임한다."""
     if not os.isatty(0):
-        raise ValueError('승인은 대화형 터미널에서 직접 진행하세요.')
+        raise ValueError("승인은 대화형 터미널에서 직접 진행하세요.")
 
-    state = tool.states.load()
-    manager = executor(tool)
-
-    if state.status != 'awaiting_approval' or state.current_stage != 'validate_contract' or tool.cancel.is_set():
-        raise ValueError('취소되지 않은 Dataset 검사 승인 대기 작업이 필요합니다.')
-
-    tool._check_arguments(tool.arguments)
-    scope = manager.scope_for('validate_contract')
+    preview = preview_approval(tool)
     token = 'WM-DATASET-' + secrets.token_hex(4).upper()
-    print(json.dumps({'cache_run': tool.cache_run, 'source_id': tool.contract.source_id,
-                      'batch_size': tool.contract.batch_size, 'partitions': ['train', 'validation'],
-                      'device': 'cpu', 'num_workers': 0, 'torch_version': tool.contract.torch_version,
-                      'limits': asdict(tool.limits), 'max_input_bytes': tool.contract.max_input_bytes,
-                      'max_runtime_bytes': tool.contract.max_runtime_bytes,
-                      'runtime_bytes': sum(item['size'] for item in tool._runtime().values()),
-                      'max_output_bytes': tool.contract.max_output_bytes, 'lifetime_minutes': 30,
-                      'effect': '캐시·고정 PyTorch 의존성 복사 후 새 AppContainer+Job에서 두 개발 구간의 첫 배치 검사',
-                      'notice': '원본 canonical·Test 배열·승인 DB 전달·GPU 연산·모델 학습·LLM 전송 없음'},
-                     ensure_ascii=False, indent=2))
+    print(json.dumps(preview.to_dict()["summary"], ensure_ascii=False, indent=2))
 
     if input(f'Dataset 첫 배치 검사를 승인하려면 {token} 을 입력하세요: ') != token:
-        return {'code': 'APPROVAL_DECLINED'}
+        return {"code": "APPROVAL_DECLINED"}
 
-    with _run_lock(tool.states.directory) as acquired:
-        if not acquired or tool.states.load() != state or tool.cancel.is_set():
-            raise ValueError('승인 중 작업 상태가 변경되었습니다.')
-
-        tool._check_arguments(tool.arguments)
-
-        if manager.scope_for('validate_contract') != scope:
-            raise ValueError('Dataset 검사 승인 범위가 변경되었습니다.')
-
-        append_event(tool.states.directory / 'events.jsonl', 'approval_requested', 'LOCAL_REVIEW_CONFIRMED',
-                     stage=state.current_stage, revision=state.revision)
-        record = manager.approvals.record_confirmed_approval(scope)
-
-    return {'approval_id': record.approval_id, 'expires_at': record.expires_at.isoformat()}
+    return record_approval(tool, preview, confirmed=True)
 
 
 def status(tool):

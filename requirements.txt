@@ -1,3 +1,9 @@
+# 통합 환경: Windows x64 / Python 3.12 / NVIDIA CUDA 13.0.
+# ML·DL·에이전트·UI·노트북 공통 설치: python -m pip install -r requirements.txt
+# 일반 패키지는 PyPI, PyTorch만 공식 CUDA wheel을 직접 지정한다.
+# 다른 OS/Python에서는 CUDA wheel 설치가 실패하도록 플랫폼을 명시적으로 고정한다.
+
+# 센서 ML·전처리·그래프
 numpy>=1.24,<3
 pandas>=2.0,<3
 scikit-learn>=1.3,<2
@@ -5,3 +11,17 @@ matplotlib>=3.7,<4
 joblib>=1.3,<2
 lightgbm>=4.0,<5
 xgboost>=2.0,<4
+
+# WM 딥러닝. CPU 빌드로 대체되지 않도록 CUDA 빌드까지 고정한다.
+torch @ https://download-r2.pytorch.org/whl/cu130/torch-2.14.1%2Bcu130-cp312-cp312-win_amd64.whl
+torchvision @ https://download-r2.pytorch.org/whl/cu130/torchvision-0.29.1%2Bcu130-cp312-cp312-win_amd64.whl
+
+# 로컬 에이전트. 설치만으로 외부 API·LangSmith 추적을 활성화하지 않는다.
+langchain-core==1.6.12
+langchain-ollama==1.1.0
+langgraph==1.2.16
+langsmith==0.14.11
+
+# 공통 UI·결과 확인 노트북
+streamlit==1.66.0
+ipykernel

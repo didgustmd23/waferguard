@@ -4,12 +4,36 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from src.agents.wm_canonical_contract import file_hash
-from src.agents.wm_dataset_runtime import copy_runtime_file, decode_manifest, runtime_manifest, runtime_relative
+from src.agents.wm_dataset_runtime import copy_runtime_file, decode_manifest, runtime_manifest, runtime_relative, pinned_torch_version
 
 
 class DatasetRuntimeTest(unittest.TestCase):
+    def test_runtime_manifest_pins_actual_build_for_creation_and_probe(self):
+        """배포 버전이 local 표기를 생략해도 생성 계약에는 해시로 고정한 빌드를 담는다."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            torch = root / 'Lib/site-packages/torch'
+            torch.mkdir(parents=True)
+            (torch / '__init__.py').write_bytes(b'# synthetic')
+            executable = root / 'python.exe'
+            executable.write_bytes(b'synthetic')
+            for build in ('cpu', 'cu130'):
+                (torch / 'version.py').write_bytes(f"__version__ = '2.14.1+{build}'\n".encode())
+                with patch('src.agents.appcontainer_probe.runtime_files', return_value=[executable]), \
+                        patch('src.agents.wm_dataset_runtime.distribution', return_value=SimpleNamespace(version='2.14.1')):
+                    records, version = runtime_manifest(root, 1024 * 1024)
+                self.assertEqual(version, f'2.14.1+{build}')
+                self.assertIn('Lib/site-packages/torch/version.py', records)
+
+    def test_probe_and_dataset_share_one_version_validator(self):
+        from src.agents.wm_cpu_probe import pinned_torch_version as probe_validator
+
+        self.assertIs(probe_validator, pinned_torch_version)
+
     def test_library_names_and_unsafe_paths(self):
         for name in ('Lib/site-packages/torch/include/C++17.h', 'Lib/site-packages/setuptools/script (dev).tmpl'):
             runtime_relative(name)

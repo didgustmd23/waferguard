@@ -1,0 +1,18 @@
+# 로컬 화면 뼈대의 기본 실행 설정. 외부 공개나 클라우드 배포용이 아닙니다.
+[server]
+address = "127.0.0.1"
+headless = true
+enableCORS = true
+enableXsrfProtection = true
+runOnSave = false
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#2563EB"
+backgroundColor = "#F8FAFC"
+secondaryBackgroundColor = "#EFF3F8"
+textColor = "#172B4D"

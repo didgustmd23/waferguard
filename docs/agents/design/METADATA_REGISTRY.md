@@ -1,5 +1,203 @@
 # 메타데이터 전용 모듈 등록기
 
+## Dataset 버전 공통화·3.12 CPU 정책·공통 UI 통합 — 2026-10-19
+
+이 절이 아래의 과거 ‘3.12 미지원/실행 제한 유지’ 기록보다 최신입니다.
+
+### 1. 실제 Dataset 경로의 빌드 버전 검사
+
+합성 검사기에 있던 버전 판독을 `wm_dataset_runtime.pinned_torch_version`으로 공통화했습니다. `runtime_manifest`는 배포 메타데이터 문자열이 아니라 해시로 고정한 `torch/version.py`의 전체 빌드 버전을 반환합니다. 따라서 실제 Dataset 생성·승인 계약에는 `2.14.1+cpu`가 저장되고 worker의 기존 정확 비교를 유지합니다. 공개 버전이 다르거나 metadata의 local 표기와 빌드가 다르면 계속 거부합니다. 버전 파일은 실행하지 않으며 Conda 설치의 하드 링크는 기존 복사 정책과 동일하게 허용하고 심볼릭 링크/재분석 지점·파일 변경은 거부합니다. `wm_cpu_probe`도 같은 함수를 사용하며 기존 import 호환 별칭을 유지합니다.
+
+### 2. Python 3.12 지원 범위
+
+| 환경 | WM 에이전트 지원 범위 |
+| --- | --- |
+| Windows/Python 3.10 | 기존 정책 유지 |
+| Windows/Python 3.12 + `2.14.1+cpu` | canonical EDA·분할 제안·분할 확정·변환 검사·개발 캐시·Dataset 검사 6단계 |
+| Python 3.12의 GPU 빌드·다른 버전·충돌 후보/제외 분기·모듈 미지정 | 아직 미지원, 실행 차단 |
+
+8개 CLI preflight와 공통 서비스는 모듈 ID를 같은 `wm_runtime.runtime_status(module_id)`에 전달합니다. 정책 조회는 Torch를 import하거나 GPU를 초기화하지 않고 현재 환경의 작은 버전 파일과 배포 정보를 읽습니다. 3.12는 기존 native CPU 합성 검증 범위에 한정합니다. 입력 검증·코드/런타임 해시·단계별 승인·AppContainer·Job·결과 검증·취소/중복 방지는 유지합니다. 비격리 fallback이나 품질 검토 자동 해제는 추가하지 않았습니다.
+
+실제 설치 환경을 읽기 전용으로 확인한 결과 `dl312`의 `2.14.1+cpu`는 정상 6단계 지원, `wm-gpu312`의 `2.14.1+cu130`은 WM 격리 경로 미지원입니다. 후자는 GPU 학습 환경을 사용할 수 없다는 뜻이 아니라, GPU 빌드를 복사한 AppContainer 실행을 아직 허용하지 않는다는 뜻입니다. 학습 환경·캐시·모델은 변경하지 않았습니다.
+
+### 3. 공통 UI 통합 검사와 실제 실행 경계
+
+`tests/agents/test_ui_wm_integration.py`는 고정 합성 canonical과 실제 등록부·생성 서비스·승인 DB·실행기·WM 계산 코어·결과 검증기를 사용합니다. OS 운송만 모의합니다. UI에서 모듈 선택→검토→입력/생성 미리보기→새 작업 준비→사전 검사→별도 승인→별도 실행→표/그래프/보고서 표시를 확인합니다. 품질 검토 필요이면 EDA를 중단하고 로컬 품질 보고서만 표시하는 경로도 검사합니다. 재렌더링은 worker를 다시 호출하지 않습니다. 테스트 DB/생성물은 임시 합성 영역에만 만들며 사용자의 실제 승인·실데이터 작업은 만들지 않습니다.
+
+이 통합 검사는 실제 GUI에서 사용자 승인 후 native worker를 실행한 결과가 아닙니다. 다음은 `dl312`로 UI 서버를 재시작하고 새 합성 작업을 선택해 사용자가 승인/실행을 확인하는 단계입니다. 기존 코드 해시의 실행·승인은 재사용하지 않으며 로그/산출물은 보존합니다. 관리 데이터/기존 숫자 캐시를 다시 원본 pickle에서 변환할 필요는 없습니다. 새 소스와 새 승인 범위의 작업만 별도로 준비합니다.
+
+최종 회귀: 공통 버전/정책·Dataset·합성 CPU 검사·모듈 명세·CSV/WM UI·실제 서비스 기반 UI 정상/품질 중단 통합을 합쳐 **144개 통과**했습니다. 실제 UI에서의 사용자 승인·native 실행은 별도 확인 대상으로 남겼습니다. 이 검증에서는 실제 데이터·GPU 학습·사용자 승인 DB를 사용하지 않았습니다.
+
+## PyTorch·합성 WM CPU 검사 준비 — 2026-10-19
+
+최신 실제 검사 `16444caf34434afab4ca9e3162f71cd0`: Python 3.12.15의 AppContainer에서 11개 합성 검사·worker 정상 종료·Job/프로필 정리가 모두 성공했습니다. Train 36·Validation 9·Test 9개로 배정했고 개발 배치는 `[4,2,32,32]`, float32 입력·int64 라벨입니다. 원래 parent는 배포 메타데이터 `2.14.1`과 worker의 `2.14.1+cpu`를 문자열로 직접 비교해 최종 상태를 `review_required`로 기록했습니다.
+
+parent를 보완해 고정 런타임 명세의 `torch/version.py`를 크기·SHA-256으로 확인하고 AST의 단일 버전 문자열만 읽도록 했습니다. 파일을 실행하거나 `+cpu`를 단순히 무시하지 않습니다. 공개 버전은 배포 메타데이터와 비교하고, worker 버전은 해시로 고정한 빌드 문자열과 정확히 대조합니다. metadata에 local 표기가 있으면 그것도 일치해야 합니다. 부모 판정 항목을 결과와 콘솔에 구분해 표시합니다.
+
+버전 표기·파일 변조·모호한 정의 거부 등 신규 4개를 포함한 관련 회귀 **29개 통과**. 이어서 저장된 원래 런타임 manifest 지문·복사 코드 지문·버전 파일·child 원문·고유 probe ID·종료/자원/정리 증거를 읽기 전용으로 재검토해 모든 부모 판정 조건이 참임을 확인했습니다. 원래 `result.json`은 변경하지 않았고 worker도 재실행하지 않았습니다. 이는 해당 고정 CPU 합성 처리 경로의 native 성공 증거이며 일반 WM 실데이터·GPU·모델·전체 보안 인증은 아닙니다. WM 3.12 지원 정책은 그대로 제한합니다.
+
+실제 검사 `c489a7bdeb414a87a6b64cec00e9467a`는 AppContainer에서 PyTorch/WM 코어 import와 CPU 연산 단계를 지나 `SYNTHETIC_CANONICAL`에서 중단됐습니다. synthetic canonical 파일은 생성됐지만 validation workspace는 생성되지 않았습니다. 자원 초과는 없었고 프로세스·프로필 정리를 확인했습니다. 당시 오류가 일반 코드로만 기록돼 정확한 OS 예외는 보존되지 않았습니다.
+
+생성 직후의 `inventory`가 부모용 `_root`를 호출해 허용되지 않은 프로젝트 상위 경로를 조회하는 부분을 발견했습니다. 기존 WM worker와 동일한 `staged=True`로 두 파일 지문 검사를 변경했으며 파일 목록·링크/하드 링크·바이트 상한·해시 검사와 부모 측 검증은 유지합니다. `CANONICAL_INVENTORY`/`CANONICAL_VALIDATION` 단계 진단과 정제된 접근 거부·OS 코드·검증 코드 기록도 추가했습니다. 상위 경로 검사를 PermissionError로 모의한 조건을 포함해 합성 CPU·분할·캐시·Dataset 회귀 25개가 통과했습니다. 수정 후 실제 AppContainer 재검사는 아직 남아 있으며 이 기록을 native 통과로 해석하지 않습니다.
+
+`src/agents/wm_cpu_probe.py`는 Windows/Python 3.12에서 고정 합성 검사만 실행하는 별도 CLI입니다. 기존 `AppContainer`·ACL·Job·PyTorch 런타임 허용 목록/바이트 복사 검증기를 재사용합니다. 실데이터 입력 경로·pickle·GPU·모델·일반 작업 선택 인자를 받지 않습니다. WM 런타임의 3.12 지원 정책이나 기존 작업 승인은 변경하지 않습니다.
+
+고정 payload는 9개 라벨 범주별 6개, 총 54개의 독립 Lot·맵을 생성합니다. 서로 다른 크기와 숫자 패턴을 사용하되 실제 결함 클래스의 형태를 재현한 데이터로 주장하지 않습니다. PyTorch CPU 텐서 `[0,2,4,6,8,10]`와 NumPy 변환을 확인한 뒤 기존 canonical 검증·EDA·그룹 분할·격리 변환 검사·격리 캐시·Dataset 코어를 호출합니다. 검사 크기는 32×32, 배치는 4개, DataLoader는 기존 단일 CPU 프로세스 경로입니다. 모든 개발 표본의 이미지·라벨을 직접 생성한 합성 원본과 대조하며 canonical 파일 지문이 그대로인지 검사합니다.
+
+canonical 정합성·분할 검증은 전체 합성 맵을 읽습니다. 이후 변환·캐시·Dataset은 Train·Validation만 사용하며 Test 캐시를 만들지 않습니다. 이 구분을 전체 과정의 `test_maps_read: false`로 과장하지 않습니다. 합성 입력만을 위한 고정 검사 확인은 실데이터 시각 검토 승인이나 모델 학습 승인이 아닙니다.
+
+분할 코어 `wafer_dl/split.py`에 선택적 `workspace`를 추가해 격리 scratch의 상속 ACL을 사용하도록 했습니다. 비어 있고 canonical·출력과 겹치지 않는 폴더만 받으며 기존 CLI는 인자를 생략해 이전 임시 폴더 동작을 유지합니다. 알고리즘·분할 목적함수는 바꾸지 않았습니다.
+
+worker는 실제 AppContainer 토큰·네트워크 capability 부재·Job 소속이 아니면 거부합니다. parent는 복사 코드/런타임 지문과 버전·고유 probe ID·모든 필수 검사·배치 shape/dtype·구간 프로토콜·정상 종료·Job 정리·설정 한도·프로필 정리를 대조합니다. worker의 성공 문자열만으로 통과하지 않습니다. 별도 네트워크 차단을 재수집하는 도구는 아니며 `network_evidence_retested: false`로 표시합니다. `cpu_compatibility_passed`는 해당 고정 CPU 처리 경로의 호환성 결과이지 전체 격리 보안·GPU·성능·실데이터 지원 인증이 아닙니다.
+
+최종 검증: 신규 검사 8개를 포함한 합성 CPU 코어·복사 코드 독립성·비격리 진입 거부·분할/캐시/Dataset·공통 서비스·명세·기본 probe 회귀 **64개 통과**. 이 검증에서 실제 CPU 텐서와 WM 코어는 호스트에서 실행했으며 AppContainer 실행을 대신하지 않습니다. 실제 native 검사는 관리자 PowerShell에서 아래 명령으로 수행해야 합니다.
+
+```powershell
+Set-Location D:\workspace\waferguard
+conda activate dl312
+python -m src.agents.wm_cpu_probe --confirm-synthetic-wm-cpu-probe --memory-mib 8192 --processes 2 --wall-seconds 300
+```
+
+기본 런타임 복사 예산은 16 GiB입니다. 설치된 CUDA 포함 PyTorch는 CPU 검사라도 DLL 의존성 때문에 복사량이 클 수 있으며, 디스크 복사 예산과 8 GiB Job RAM 상한은 다릅니다. 실제 크기를 먼저 검사하고 예산 초과는 거부합니다. 자동 재시도·패키지 설치·다운로드·감사 정책 변경을 하지 않습니다. 결과는 새 `logs/agents/wm_cpu_probes/<고유 ID>/result.json`에, 단계 진단은 `scratch/task/diagnostic.json`에 남습니다. 실패 시 부분 결과를 통과로 표시하지 않고 새 프로필 정리를 시도합니다.
+
+## Python 3.12 격리 검사 실행 기록 — 2026-10-19
+
+`appcontainer_probe.py`에 `--experimental-python312`를 추가했습니다. 기존 고정 합성 payload만 사용하며 외부 데이터 경로를 받지 않습니다. 기본 검사와 WM 실데이터 preflight의 지원 정책은 바꾸지 않았습니다. 검사 결과에 Python 버전·실험 여부·검사 범위를 기록하고 `wm_pipeline_verified: false`, `torch_verified: false`, `production_worker_enabled: false`를 유지합니다.
+
+Python 3.12.15에서 실제 합성 AppContainer 검사를 요청했습니다. 결과는 **검토 필요**, `acl_setup / PROBE_INTEGRITY_SETUP_FAILED / native_error_code: 5`입니다. 출력 폴더의 낮은 무결성 수준을 설정하는 단계에서 접근이 거부됐고 worker는 시작하지 않았습니다. 현재 실행 토큰은 관리자 권한이 아님을 확인했습니다. Python 3.12 비호환으로 확정한 결과가 아닙니다. `profile_cleanup: true`, `runtime_copied: false`, `real_data_read: false`이며, 결과는 `logs/agents/appcontainer_probes/c7cd3ee881374ec792626479b0370c1f/result.json`에 남겼습니다. 시스템 감사·방화벽 정책은 변경하지 않았습니다.
+
+독립적인 실제 Windows Job 합성 검사 7개(정상·메모리·프로세스 수·시간·취소·자식 정리·마지막 핸들 종료)는 Python 3.12에서 통과했습니다. probe·Job·진행 기록·loopback 판정·WM 모의 서비스 회귀를 합쳐 **49개 통과**했습니다. Job 검사 통과는 AppContainer 파일/통신 격리, PyTorch 격리 로딩 또는 WM 종단간 검증 통과가 아닙니다.
+
+다음은 관리자 PowerShell에서 프로젝트 루트로 이동한 뒤 같은 합성 검사를 다시 수행합니다. 별도 `--experimental-python312` 옵션이 없는 3.12 실행은 계속 거부됩니다.
+
+```powershell
+Set-Location D:\workspace\waferguard
+conda activate dl312
+python -m src.agents.appcontainer_probe --confirm-isolation-probe --experimental-python312 --memory-mib 2048 --processes 2 --wall-seconds 60
+```
+
+이 명령도 통신 차단의 OS 증거가 부족하면 `review_required`를 유지합니다. 감사 정책 자동 변경이나 검토 상태 자동 해제를 하지 않습니다. 기본 격리 검사 이후 PyTorch·WM 합성 처리·UI 실제 실행의 추가 검증이 남아 있으므로 WM의 Python 3.12 지원을 활성화하지 않았습니다.
+
+## 공통 UI 연결과 생성 설정 — 2026-10-19
+
+기존 5단계 UI의 사이드바에서 `작업 시작 방식 → 등록 모듈`을 선택합니다. WM 전용 화면이나 메뉴를 추가하지 않고 `ui/workflow_view.py`의 공통 표시기에서 등록된 서비스·생성 필드 자료형·결과 종류를 사용합니다. 기존 `LLM 제안` 경로의 CSV UI는 유지합니다. WM을 LLM이 제안하거나 자동 실행하는 연결은 이번 범위가 아닙니다.
+
+1. **요청·대화**: 공통 등록 목록에서 모듈을 선택합니다. 기존 작업은 모듈 선택 후 이름으로 명시적으로 연결할 수 있습니다.
+2. **제안 검토**: 서비스 지원 범위·런타임 제약을 확인하고 검토 완료를 누릅니다.
+3. **입력 선택**: 계획·배정 JSON·단계 ID·새 작업 이름·입출력 예산·자원 상한을 지정합니다. EDA는 canonical 폴더·예시 그림 여부·그룹 상한, 분할/변환/캐시는 각 설정 JSON, Dataset은 배치·런타임 복사 예산을 받습니다. 생성 범위 검사 후 별도 확인으로 작업만 준비합니다.
+4. **실행 승인**: 명시적 상태 확인 → 현재 단계 한 번 진행 → 승인 범위 검사 → 이번 단계 승인 → 별도 실행 확인 순서입니다. 분할 확정·캐시 등 기존 여러 승인 단계는 그대로 유지합니다. 후속 단계를 자동 연쇄 실행하지 않습니다.
+5. **결과 확인**: 버튼을 누른 경우만 도메인 결과 계약을 검사하고 표·그림·텍스트를 표시합니다. 표시 복사본은 파일당 8 MiB, 합계 32 MiB, 참조 128개로 제한합니다. 결과를 읽기 전후에 파일 지문·서비스 결과를 재확인하며 캐시 폴더 전체를 브라우저로 보내지 않습니다.
+
+`agents/wm_creation_schema.py`는 정상 개발 6단계의 **작업 생성** 설정 명세와 인자 변환기입니다. `WmWorkflowService.creation_schema()`와 `preview_form()`을 통해 조회·검증합니다. UI는 임의 import나 Python 코드를 받지 않습니다. 모듈 계획의 `settings`는 여전히 `{}`이며 그 `form_ready: false`와 별개로, 생성 지원 6개 서비스의 `capabilities().creation_form_ready`는 이제 `true`입니다. 충돌 후보·충돌 제외 적용 2개는 기존 작업 연결·조회·승인·실행만 지원하고 새 생성은 기존 CLI를 유지합니다.
+
+계획과 배정은 동일 서명이어야 합니다. 최초 단계도 해당 계획의 `runs: {}`인 유효한 배정 JSON이 필요하며 UI가 임의로 만들거나 기존 배정을 덮어쓰지 않습니다. 생성 성공 시 표시하는 **새 bindings 경로**를 다음 모듈의 생성 입력에 사용합니다. 계획/배정 자동 편집기와 후속 단계 자동 준비는 미구현입니다.
+
+`ui/workflow_service.py`는 세션에 마지막 표시 상태·불변 생성/승인 미리보기·일회 승인 ID를 보관합니다. 렌더링·메뉴 이동만으로 `status` 정밀 검사나 worker·모델 호출을 하지 않습니다. 상태·결과는 사용자가 명시적으로 검사하며 이후 자동 감시하지 않습니다. 실행 예외 후에는 승인 ID를 자동 재사용하지 않고 현재 상태 재확인이 필요합니다. 이전 상태를 재확인한 경우에도 최종 입력·코드·revision·승인 검증은 기존 서비스/실행기가 담당합니다.
+
+Windows/Python 3.10 native 정책은 유지합니다. **Python 3.12에서 화면을 확인할 수 있다는 사실은 WM 격리 실행을 지원한다는 뜻이 아닙니다.** 지원되지 않은 환경에서는 UI 실행 버튼을 비활성화하고 기존 preflight도 차단합니다. 새 생성 스키마를 관리 코드 지문에 추가했으므로 변경 전 소스 해시로 저장된 작업/승인을 그대로 재실행하지 않습니다. 실제 데이터·AppContainer·LLM은 이번 검증에서 실행하지 않았습니다.
+
+최종 검증: Python 3.12에서 신규 생성 명세·UI 세션·결과 표시·Streamlit AppTest 13개를 포함해 CSV UI·WM 공통 서비스·명세 회귀 **116개 통과**. 모의 승인/실행 분리, 재렌더링 무호출, 변경된 생성 입력·중복 생성 거부, 실행 예외 후 자동 재시도 거부, 품질 검토 중단, 결과 변경·크기 상한을 검사했습니다. 실제 3.12 native 지원을 증명하는 검사가 아닙니다.
+
+## WM 처리의 공통 서비스 정비 — 2026-10-19 후속
+
+WM 8개 CLI의 반복 승인 처리를 `src/agents/workflow_approval.py`로 모았습니다. 각 CLI의 `approval_summary`는 기존 작업별 영향·설정·검토 자료 설명을 제공하고, `preview_approval`·`record_approval`이 같은 공통 저장 함수를 사용합니다. 기존 `approve`는 터미널 확인 문자열만 담당합니다. UI에서 `input()`·isatty를 흉내 내거나 승인 DB에 직접 INSERT할 필요가 없습니다.
+
+`src/agents/wm_workflow_service.py`는 등록된 WM 모듈이 공유하는 하나의 서비스입니다. **WM용 화면을 추가하지 않았으며 기존 계산·worker·도메인 결과 검증기는 유지했습니다.** 기존 8개 CLI 명령과 확인 문자열도 유지합니다. 서비스는 `build_agent_registry().service(module_id, version)`으로 조회합니다. CSV 계산 모듈의 서비스 전환은 아직 남아 있으므로 해당 조회는 미지원 오류를 반환합니다.
+
+| 공통 서비스 메서드 | 재사용 범위 |
+| --- | --- |
+| `capabilities()` | 지원 작업·생성 가능 여부·런타임 제약 조회. 실행하지 않음 |
+| `preview_creation(...)` / `create(...)` | 기존 `wm_run_creation`의 정상 개발 6단계 미리보기·생성·배정 검증에 위임 |
+| `status(name)` | 기존 상태/결과 검사와 현재 범위의 미사용 승인·작업 이력을 대조해 `actions` 반환 |
+| `preview_approval(name)` / `record_approval(name, preview, confirmed=True)` | 도메인별 승인 설명과 공통 잠금·상태·입력·코드 재검사·저장 재사용 |
+| `next(name, expected_stage=..., expected_revision=..., approval_id=...)` | 기존 실행 잠금 안에서도 사용자가 본 단계·revision을 재검사해 한 단계만 실행 |
+| `results(name)` | 기존 부모 검증·완료 커밋을 확인한 로컬 결과를 표·이미지·보고서·묶음 참조로 정규화 |
+
+명세의 WM 항목은 `execution.connection_status: service_registered`로 변경했습니다. 이는 백엔드 서비스 등록이지 런타임 호환성 승인이 아닙니다. UI 연결과 생성 폼의 최신 범위는 위 절을 참고하세요. 충돌 후보·충돌 제외 적용 2개는 상태·승인·한 단계 실행·결과 조회를 공유하지만, 생성은 기존 전용 CLI를 유지합니다. 기능 조회에서 이를 `creation_supported: false`로 명시합니다.
+
+```python
+from src.agents.agent_module_registry import build_agent_registry
+
+registry = build_agent_registry()
+service = registry.service("wm_canonical_eda", "1.0.0")
+capabilities = service.capabilities()  # 작업 생성·승인·worker 실행 없음
+
+# 아래는 기존 작업 이름을 사용자가 선택한 뒤 명시적으로 호출할 정밀 조회 예시다.
+# current = service.status("사용자가_선택한_작업")
+# preview = service.preview_approval("사용자가_선택한_작업")
+# 사용자에게 preview.to_dict()["summary"]를 보여 주고 확인받은 뒤에만:
+# approval = service.record_approval("사용자가_선택한_작업", preview, confirmed=True)
+```
+
+상태·결과 조회는 기존 입력·코드·선행 증거의 정밀 검사를 포함하며 큰 canonical 해시를 다시 읽을 수 있습니다. 기존 실행 관리자 생성/SQLite 초기화 경로도 재사용하므로 파일/DB를 전혀 건드리지 않는 가벼운 렌더링 함수로 해석하지 않습니다. 공통 UI 연결 시 명시적 검사 버튼에서 호출하고, 현재 CSV UI 렌더링 경로에 자동 추가하지 않았습니다. 서비스가 반환하는 행동 목록은 안내이며 실행 권한을 대신하지 않습니다.
+
+승인 저장 전 동일 범위를 잠금 안에서 다시 확인합니다. 유효한 미사용 승인이나 예약/실행 이력이 있으면 중복 발급하지 않습니다. 검토 필요·취소·실패·보안 차단 상태는 다음 행동을 주지 않으며, 원래 검토 단계들을 하나의 승인으로 축약하지 않습니다. 결과 참조는 검사 시점의 로컬 경로이며 표시 시에도 경로·파일 검증을 유지해야 합니다. LLM·LangSmith로 자동 전송하지 않습니다.
+
+런타임 판단은 `src/agents/wm_runtime.py`에서 공통 관리합니다. **현재 native 지원은 Windows/Python 3.10뿐**입니다. Python 3.12에서는 서비스 명세 조회·모의 코어 테스트와 실제 격리 지원을 구분하며, 8개 CLI의 preflight는 지원되지 않은 환경을 계속 차단합니다. 버전 조건을 삭제하거나 비격리 실행으로 우회하지 않았습니다.
+
+공통 승인·런타임·서비스 소스를 `wm_canonical_transport.CONTROL_FILES`에 포함했고 후속 WM 운송 계층이 이를 상속합니다. worker에 이 파일들의 읽기 권한을 추가한 것은 아닙니다. 변경 전 코드 해시로 저장된 실행 선택/승인은 새 코드에서 재사용할 수 없습니다. 기존 로그·산출물·소비 승인은 그대로 보존하고, 테스트는 새 합성 작업으로 수행합니다.
+
+검증 기록: 새 WM 서비스 검사 14개를 포함해 Python 3.12의 서비스·명세·UI 회귀 **38개가 통과**했습니다. 이 중 WM 처리 코어는 모의 런타임·모의 격리 운송으로 검사했고 실제 3.12 native 실행은 계속 차단되는 것을 확인했습니다. Python 3.10의 WM 기존 8단계·생성·배정·실행·명세 회귀 106개에서는 105개 통과, 대용량 충돌 제외 1개가 검사 도중 소스 변경에 따른 해시 불일치로 실패했습니다. 최종 소스를 고정한 뒤 해당 1개를 단독 재실행해 통과했습니다. 실제 데이터·Ollama·AppContainer 실행은 하지 않았습니다. 공통 UI 자동 연결·CSV 서비스 전환·WM 생성 폼 스키마·3.12 native 검증은 후속 범위입니다.
+
+## 통합 모듈 설명 명세 정비 — 2026-10-19
+
+공통 UI를 유지하기 위한 구조 정비의 첫 단계입니다. 기존 `ModuleContract`·계산 등록부·WM 처리/승인/worker는 보존하고, **별도 설명 파일과 기존 계약을 결합한 조회 명세**를 추가했습니다. 새 UI나 WM 전용 실행기를 추가한 작업이 아닙니다.
+
+- 설명 파일: `configs/agents/modules/catalogue.json` — 표형 8개·WM 8개의 ID·버전·한글 이름·설명·설정 스키마 ID·실행 프로파일·결과 표시 유형·노출 정책.
+- 결합·검사: `src/agents/module_specification.py` — 등록된 구현과 설명 목록을 대조하고 데이터 전용 명세를 생성.
+- 기존 등록부: `AgentModuleRegistry.specifications()`·`specification()`·`catalogue()` — 봉인 후 명세 조회. 기존 `contracts()`·`resolve()`는 호환 유지.
+- 공통 조회 CLI: `src/agents/module_specification_cli.py` — 목록·상세를 조회할 뿐 작업 준비·실행·승인은 하지 않음. 기존 사용자 참조 모듈의 `module_catalogue_cli list/check`는 그대로 보존.
+
+### 공통 명세의 구성과 기준 정보
+
+| 정보 | 기준 정보와 조회 방식 |
+| --- | --- |
+| ID·버전·입출력 포트·선행 조건·원본 보존·네트워크·승인·자원 정책 | 기존 `ModuleContract`를 그대로 결합. JSON에 중복 복사하지 않음 |
+| 이름·기능 설명·공통 결과 유형·노출 정책 | `catalogue.json`에서 조회 |
+| 표형 설정의 허용 필드·기본값 | 등록 검증기의 기존 `QualityRules`·`PreparationRules` 객체에서 생성 |
+| 설정 자료형·범위·선택지 | 표시용 스키마에 제공. 조합 제약·최종 유효성은 기존 검증기로 다시 검사 |
+| 계산과 다단계 승인 작업의 구분 | `execution.kind`의 `calculation`·`workflow` |
+| WM 실제 처리·검토 단계 | 기존 `WmWorkflowModule.worker_stage`·`review_stages`에서 상속 |
+| 서비스·격리 코드 목록 연결 | `service_id`·`runtime_manifest_id`라는 논리 참조만 선언. 임의 import 경로를 받지 않음 |
+
+결과 표시 유형은 `table`·`chart`·`image`·`report`·`artifact_list`입니다. 모듈별 화면 이름이나 UI Python 함수를 명세에 넣지 않습니다. 이 목록은 사용할 공통 표현 종류이며 실제 결과 파일의 존재·정합성 검증을 대신하지 않습니다.
+
+WM의 계획 `settings`는 여전히 빈 객체입니다. 실제 분할·변환·캐시·자원 설정은 기존 작업 생성 계약을 사용하므로 `settings.scope: workflow_creation`, `form_ready: false`로 표시합니다. 작업 생성 설정 폼은 다음 공통 서비스 분리 단계에서 명세화합니다. 아직 없는 설정·실행 기능을 준비 완료로 표시하지 않습니다. 표형 `form_ready: true`도 표시용 필드 스키마의 준비 상태이지 UI 자동 폼이 이미 연결되었다는 뜻은 아닙니다.
+
+### 조회 방법
+
+```powershell
+python -m src.agents.module_specification_cli list
+python -m src.agents.module_specification_cli list --audience llm
+python -m src.agents.module_specification_cli show --module wm_cache_prepare
+python -m src.agents.module_specification_cli show --module tabular_quality
+```
+
+`list --details`로 전체 명세를 조회할 수 있습니다. 출력의 `declaration_only: true`·`worker_started: false`·`approval_issued: false`는 명세 검사와 실제 실행을 구분합니다.
+
+```python
+from src.agents.agent_module_registry import build_agent_registry
+
+registry = build_agent_registry()
+modules = registry.specifications(audience="ui")
+cache = registry.specification("wm_cache_prepare", "1.0.0")
+catalogue_signature = registry.catalogue().signature
+```
+
+반환 데이터는 복사본이며 변경해도 등록 정보가 바뀌지 않습니다. 등록부 객체별 최초 조회 시 파일을 읽고 이후에는 검증한 불변 명세를 사용합니다. 명세 파일을 바꾸면 새 등록부를 생성해야 합니다. signature는 변경 식별값이며 인증 서명·실행 승인으로 사용하지 않습니다.
+
+### 등록 검증과 남은 연결
+
+구현만 등록하고 설명 명세를 빠뜨린 경우, 중복 ID·잘못된 버전·미등록 구현·알 수 없는 필드·잘못된 설정 스키마·계산/WM 실행 방식 혼용은 거부합니다. JSON 중복 키·비표준 숫자·링크·과대 파일·설명 제어 문자와 임의 HTML 표시 유형도 거부합니다. 등록 조회는 원본 데이터·승인 DB를 읽거나 함수 실행·모델 호출·worker 시작을 하지 않습니다.
+
+`ui_visible`은 공통 목록 표시 후보이고 실행 허가가 아닙니다. `llm_proposable`은 향후 목록 공급용 정책입니다. 현재 값은 기존 허용 3개(품질·결측·상관)와 맞췄으며 WM 제안을 자동 허용하지 않습니다. 실제 LLM 전달은 공개 계약·설명만 별도로 선별해야 하며 명세 전체를 자동 전송하지 않습니다.
+
+**이번 단계에서는 기존 UI·LLM·CSV/WM 실행 목록을 새 명세로 전환하지 않았습니다.** `execution.connection_status`는 모두 `declaration_only`입니다. 다음 단계는 공통 서비스 인터페이스를 분리하고 기존 실행기 연결을 검증한 후, UI와 LLM의 분산 목록이 이 명세를 참조하게 바꾸는 것입니다. 기존 실행 허용 목록·승인 코드 지문은 아직 유지하며 새 명세가 검증을 우회하지 않습니다. 명세 파일 하나만 편집해 임의 모듈이 실행되는 구조가 아닙니다.
+
+사용자 참조 모듈 `user_missing_row_histogram`은 별도 검토·합성 실행 계약을 유지합니다. 현재 통합 실행 등록부의 16개에 자동 편입하지 않습니다. 추가 모듈도 구현·검증기·보안 검토를 먼저 등록하고 이 설명 명세를 함께 제공해야 합니다.
+
+검증: 신규 명세 검사와 기존 사용자 모듈 CLI 호환성 14개, 기존 등록부·WM 계획·표형 준비·메타데이터·모듈 파이프라인·LLM 계약·UI 회귀를 합친 **129개 모두 통과**했습니다. 실제 데이터·모델·AppContainer 실행은 하지 않았습니다. 기존 승인 경계·실행 결과를 바꾸는 단계와 구분합니다.
+
 ## 목적
 
 파이프라인을 미리 검사할 때 사용자 모듈의 Python 계산 코드를 import하지 않고, 고정된 모듈 계약과 JSON 설정 스키마만 확인합니다. 모듈 계산은 별도 실행 단계에서 처리합니다.

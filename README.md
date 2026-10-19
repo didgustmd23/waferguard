@@ -88,14 +88,16 @@ WM-811K는 [Kaggle 배포본](https://www.kaggle.com/datasets/qingyi/wm811k-wafe
 
 ## 빠른 시작 — 현재 구현된 SECOM
 
-Python 가상환경 또는 기존 Conda 환경에서, 프로젝트 루트 기준으로 실행합니다.
+Windows x64/Python 3.12의 GPU 통합 환경에서, 프로젝트 루트 기준으로 실행합니다.
 
-아래 의존성과 명령은 SECOM 경로용입니다. 전처리 에이전트와 WM-811K 딥러닝의 실행 명령·추가 의존성은 구현 후 별도로 안내합니다.
+`requirements.txt` 하나로 SECOM ML·WM 딥러닝·에이전트·UI·노트북 의존성을 설치합니다. PyTorch는 CUDA 13.0 빌드로 고정합니다. 아래 Conda 환경이 이미 있으면 생성 명령은 생략하세요.
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+conda create -n wm-gpu312 python=3.12
+conda activate wm-gpu312
 python -m pip install -r requirements.txt
+python -m pip check
+python -m streamlit run src/ui/app.py --server.address 127.0.0.1
 ```
 
 [UCI 원본](https://archive.ics.uci.edu/dataset/179/secom)의 `secom.data`, `secom_labels.data`를 `data/raw/`에 둔 뒤 데이터 준비를 진행합니다.

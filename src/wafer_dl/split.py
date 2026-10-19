@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+from contextlib import nullcontext
 
 import numpy as np
 
@@ -167,7 +168,7 @@ def verify_assignments(database):
 # - 미라벨의 group_split은 평가 Lot 보호용이며 학습 허가가 아님
 # - 완료 표식은 산출물 검증·저장 후 마지막에만 생성
 # ==========================================
-def run_split(input_dir, output_dir, config_path, approved=False, progress=None):
+def run_split(input_dir, output_dir, config_path, approved=False, progress=None, *, workspace=None):
     require(approved is True, 'SPLIT_POLICY_APPROVAL_REQUIRED')
     root, output = Path(input_dir).resolve(strict=True), Path(output_dir).resolve()
     require(not output.exists() and not output.is_relative_to(root) and
@@ -175,7 +176,17 @@ def run_split(input_dir, output_dir, config_path, approved=False, progress=None)
     config = load_split_config(config_path)
     summary, version = validate_metadata(root)
     require(summary.get('label_normalization_version') == 'wm_label_v2', 'OUTDATED_LABEL_NORMALIZATION')
-    with tempfile.TemporaryDirectory(prefix='wm_split_') as temporary:
+    # 격리 실행에서는 승인된 scratch의 상속 ACL을 유지한다.
+    # 기존 CLI는 workspace를 생략하므로 이전 임시 폴더 동작을 그대로 사용한다.
+    if workspace is not None:
+        workspace = Path(workspace).resolve(strict=True)
+        require(workspace.is_dir() and not any(workspace.iterdir()) and
+                not workspace.is_relative_to(root) and not root.is_relative_to(workspace) and
+                not workspace.is_relative_to(output) and not output.is_relative_to(workspace),
+                'INVALID_SPLIT_WORKSPACE')
+
+    temporary_scope = nullcontext(workspace) if workspace is not None else tempfile.TemporaryDirectory(prefix='wm_split_')
+    with temporary_scope as temporary:
         database = sqlite3.connect(str(Path(temporary) / 'manifest.sqlite'))
         try:
             validate_manifest(root, summary, version, database)

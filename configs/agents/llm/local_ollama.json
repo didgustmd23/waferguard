@@ -1,0 +1,11 @@
+{
+  "schema_version": "local_ollama_v1",
+  "model": "qwen3.5:9b",
+  "host": "127.0.0.1",
+  "port": 11434,
+  "timeout_seconds": 120,
+  "think": false,
+  "temperature": 0,
+  "num_ctx": 8192,
+  "num_predict": 2048
+}

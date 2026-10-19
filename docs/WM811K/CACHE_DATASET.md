@@ -43,13 +43,30 @@ wm_split_d02d993fd73c2cc4bf496d54774401c60a94b0d1737c7c135e7ae4837a6b85d6
 
 이 결과는 선택 구간의 캐시 정합성과 첫 배치 입력 계약 확인입니다. 전체 Epoch 실행·GPU 학습·성능 평가 완료를 뜻하지 않습니다. 이후 명령은 재현·전달용이며 이미 완료한 캐시를 다시 생성할 필요는 없습니다.
 
-프로젝트 루트에서 `ml310` 등 PyTorch가 설치된 환경을 사용하세요. NVIDIA CUDA 12.8용 선택 의존성은 다음과 같습니다.
+## GPU 통합 환경 설치 — 2026-10-19
+
+Windows x64/Python 3.12의 `wm-gpu312` 하나로 UI·에이전트·전처리·GPU 학습을 실행합니다. 루트 `requirements.txt`에 ML·DL·UI·에이전트·노트북 의존성을 통합했고 기존 분리 파일 6개는 제거했습니다. 이전 문서·명령에 분리 requirements가 나오면 이 절차를 사용하세요.
 
 ```powershell
-python -m pip install -r requirements-wafer-dl.txt --index-url https://download.pytorch.org/whl/cu128
+# 이미 환경이 있으면 생성은 생략합니다.
+conda create -n wm-gpu312 python=3.12
+conda activate wm-gpu312
+python -m pip install -r requirements.txt
+python -m pip check
+python -m streamlit run src/ui/app.py --server.address 127.0.0.1
 ```
 
-이미 설치한 환경에서는 재설치하지 않아도 됩니다. CPU·다른 CUDA 환경은 [PyTorch 공식 안내](https://pytorch.org/get-started/locally/)에 맞는 설치 경로를 선택하세요.
+PyTorch는 공식 [torch CUDA 목록](https://download.pytorch.org/whl/cu130/torch/)과 [torchvision CUDA 목록](https://download.pytorch.org/whl/cu130/torchvision/)의 Windows/Python 3.12 wheel 주소로 고정했습니다. 일반 패키지는 PyPI를 사용하고 GPU 파일에만 공식 직접 주소를 지정하므로 별도 index 설정·CPU/GPU 파일 선택·분리 설치가 필요 없습니다. 고정 빌드는 `torch 2.14.1+cu130`, `torchvision 0.29.1+cu130`입니다. 다른 OS/Python은 이 설치 파일의 지원 범위가 아닙니다.
+
+설치 명령은 사용자가 실행합니다. 기존 CPU 빌드가 있으면 GPU 빌드로 교체되며 의존성 해결에 따라 다른 패키지도 변경될 수 있습니다. UI·worker를 종료하고 설치하며 충돌을 `--no-deps`로 숨기지 않습니다.
+
+```powershell
+python -c "import torch; print(torch.__version__, torch.version.cuda); assert torch.cuda.is_available(); x=torch.arange(4,device='cuda'); torch.cuda.synchronize(); assert (x*2).cpu().tolist()==[0,2,4,6]; print(torch.cuda.get_device_name(0))"
+```
+
+CUDA 설치와 전처리 연산 장치는 별개입니다. WM 정상 개발 6단계는 이 GPU 설치 환경도 허용하지만 격리 전처리·Dataset 검사는 CPU 연산을 유지합니다. GPU 학습은 학습 코드에서 모델·Tensor를 CUDA로 옮겨 수행합니다. 실제 GPU 빌드의 AppContainer 호환성은 별도 합성 검사로 확인합니다. 런타임 또는 코드가 바뀌면 해시에 묶인 기존 작업·승인은 재사용하지 않습니다.
+
+원본 pickle 검사 도구인 `scripts/wm_sandbox/requirements.txt`는 프로젝트 주 환경과 용도가 달라 유지합니다.
 
 ## 1. 개발 구간 캐시 생성
 

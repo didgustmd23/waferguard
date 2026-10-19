@@ -13,6 +13,7 @@ __pycache__/
 *.pfx
 credentials*.json
 .secrets/
+/.streamlit/secrets.toml
 
 # 승인·상태 DB와 SQLite 부속 파일은 위치와 무관하게 로컬 보관
 *.db

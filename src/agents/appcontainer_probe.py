@@ -20,12 +20,12 @@ PACKAGES = (
     "numpy", "numpy.libs", "pandas", "pandas.libs", "scipy", "scipy.libs", "sklearn",
     "matplotlib", "mpl_toolkits", "contourpy", "cycler", "dateutil", "six.py", "pytz",
     "tzdata", "packaging", "pyparsing", "PIL", "kiwisolver", "joblib", "threadpoolctl.py",
-    "threadpoolctl", "fontTools", "cloudpickle",
+    "threadpoolctl", "fontTools", "cloudpickle", "narwhals",
 )
 METADATA = (
     "numpy-", "pandas-", "scipy-", "scikit_learn-", "matplotlib-", "contourpy-", "cycler-",
     "python_dateutil-", "six-", "pytz-", "tzdata-", "packaging-", "pyparsing-", "pillow-",
-    "kiwisolver-", "joblib-", "threadpoolctl-", "fonttools-", "cloudpickle-",
+    "kiwisolver-", "joblib-", "threadpoolctl-", "fonttools-", "cloudpickle-", "narwhals-",
 )
 REQUIRED = {
     "appcontainer_token", "allowed_read", "allowed_write", "import_numpy", "import_pandas",
@@ -181,10 +181,19 @@ def _acl(path, sid, permission, *, low=False):
             raise OSError(result.returncode, "PROBE_INTEGRITY_SETUP_FAILED")
 
 
-def run_probe(*, wfp_capture=None, limits=None, cancel_event=None):
+def check_probe_runtime(*, experimental_python312=False):
+    """3.12는 고정 합성 probe에만 명시적으로 허용한다. WM 지원 정책은 바꾸지 않는다."""
+    if type(experimental_python312) is not bool:
+        raise ValueError("실험 검사 여부는 bool이어야 합니다.")
+
+    allowed = {(3, 10), (3, 12)} if experimental_python312 else {(3, 10)}
+    if os.name != "nt" or sys.version_info[:2] not in allowed:
+        raise ValueError("Windows/Python 3.10 또는 명시적으로 선택한 3.12 합성 검사만 지원합니다.")
+
+
+def run_probe(*, wfp_capture=None, limits=None, cancel_event=None, experimental_python312=False):
     """전용 새 폴더와 일회성 프로필에서만 실험한다. 기존 결과·환경을 덮어쓰지 않는다."""
-    if os.name != "nt" or sys.version_info[:2] != (3, 10):
-        raise ValueError("현재 probe는 Windows의 Python 3.10 환경만 지원합니다.")
+    check_probe_runtime(experimental_python312=experimental_python312)
 
     project = _root(Path(__file__).resolve().parents[2])
     parent = project
@@ -206,6 +215,9 @@ def run_probe(*, wfp_capture=None, limits=None, cancel_event=None):
         "schema_version": "appcontainer_probe_v1", "status": "review_required",
         "runtime_copied": False, "profile_cleanup": False, "real_data_read": False,
         "production_worker_enabled": False,
+        "python": list(sys.version_info[:2]), "experimental_python312": experimental_python312,
+        "scope": "fixed_synthetic_base_runtime_and_isolation_only",
+        "wm_pipeline_verified": False, "torch_verified": False,
     }
     container = AppContainer("waferguard.probe." + identifier)
     observer = LoopbackObserver()
@@ -354,6 +366,7 @@ def run_probe(*, wfp_capture=None, limits=None, cancel_event=None):
 def main():
     parser = argparse.ArgumentParser(description="합성 AppContainer 호환성 검사. 기존 환경·실데이터는 변경하지 않습니다.")
     parser.add_argument("--confirm-isolation-probe", action="store_true", help="전용 런타임 복사·일회성 AppContainer 생성·새 폴더 ACL 설정에 동의")
+    parser.add_argument("--experimental-python312", action="store_true", help="Python 3.12의 고정 합성 검사만 허용. WM 실데이터 실행 지원을 활성화하지 않음")
     parser.add_argument("--memory-mib", type=int, default=2048, help="Job 전체 커밋 메모리 상한(MiB)")
     parser.add_argument("--processes", type=int, default=1, help="루트 worker를 포함한 활성 프로세스 수 상한")
     parser.add_argument("--wall-seconds", type=int, default=60, help="worker 실행 경과 시간 상한(초)")
@@ -363,7 +376,7 @@ def main():
         parser.error("실행하려면 --confirm-isolation-probe로 검사 범위를 확인하세요.")
 
     limits = WorkerLimits(args.wall_seconds, args.memory_mib, args.processes)
-    root, result = run_probe(limits=limits)
+    root, result = run_probe(limits=limits, experimental_python312=args.experimental_python312)
     print(result["status"])
 
     if "failure_code" in result:
