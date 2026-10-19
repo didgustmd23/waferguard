@@ -1,6 +1,6 @@
 """합성 snapshot과 임시 승인 DB만 사용해 제안→기존 작업 생성 연결을 확인한다."""
 
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from copy import deepcopy
 from dataclasses import replace
 from io import StringIO
@@ -72,7 +72,7 @@ class ExecutionCandidateTest(unittest.TestCase):
         self.assertEqual(result["status"], "execution_candidate_created")
         run = self.runs / "prepared01"
         self.assertEqual(json.loads((run / "state.json").read_text())["status"], "created")
-        with sqlite3.connect(f"{(run / 'approvals.sqlite3').as_uri()}?mode=ro", uri=True) as db:
+        with closing(sqlite3.connect(f"{(run / 'approvals.sqlite3').as_uri()}?mode=ro", uri=True)) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM approvals").fetchone()[0], 0)
         self.assertTrue((self.drafts / "prepared01/CREATED.json").is_file())
         self.assertFalse(result["worker_started"])

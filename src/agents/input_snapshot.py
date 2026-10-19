@@ -52,7 +52,15 @@ class Snapshot:
 
 def _identity(info):
     """파일 교체·크기·수정 시각 변경을 탐지한다. 악의적 동시 변경의 완전한 방어는 아니다."""
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    # Windows Python 3.12+에서는 경로 stat와 열린 파일 fstat의 ctime 의미가
+    # 다를 수 있다. 생성 시각은 명시적인 birthtime으로 비교하고, 해당 필드가
+    # 없는 구버전에서는 기존 ctime을 사용한다. POSIX의 ctime은 그대로 보존한다.
+    if os.name == "nt":
+        identity_time = getattr(info, "st_birthtime_ns", info.st_ctime_ns)
+    else:
+        identity_time = info.st_ctime_ns
+
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, identity_time)
 
 
 def _scan(stream, maximum, target=None):

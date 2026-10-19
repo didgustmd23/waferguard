@@ -15,7 +15,7 @@ from .approval_store import ApprovalStore
 from .artifacts import _root
 from .audit import append_event
 from .cli import _current_actor
-from .executor import _run_lock
+from .executor import _digest, _run_lock
 from .input_snapshot import SNAPSHOT_VERSION, Snapshot
 from .isolated_eda import _read_file
 from .pipeline_approval import open_pipeline_approval_run
@@ -191,19 +191,25 @@ def _open(name):
 
 
 def next_step(name, approval_id=None):
-    """사전 검사와 승인 요청 상태까지만 진행한다."""
+    """고정 계획의 한 단계를 진행한다. worker 단계는 유효한 일회 승인을 요구한다."""
     directory, _selection, run = _open(name)
     result = asdict(run.next(approval_id=approval_id))
     result["worker_started"] = run.pipeline_execution.worker_started
     return result
 
 
-def approve(name):
-    """계약 요약을 제시하고 일회 승인 레코드를 저장한다."""
-    if not os.isatty(0):
-        raise ValueError("승인은 대화형 터미널에서만 할 수 있습니다.")
+def preview_approval(name):
+    """현재 계약 전체를 재검사해 사용자에게 보여 줄 승인 범위를 고정한다.
 
+    CLI와 UI가 같은 검사를 사용한다. 이 함수는 승인 레코드를 발급하거나
+    worker를 실행하지 않는다. 변경된 상태는 확인 당시 revision으로 탐지한다.
+    """
     directory, selection, run = _open(name)
+    return _approval_preview(directory, selection, run)
+
+
+def _approval_preview(directory, selection, run):
+    """동일하게 열린 계약에서 범위를 만든다. 승인 저장도 이 객체를 재사용한다."""
     state = run.states.load()
 
     if state.status != "awaiting_approval" or state.current_stage != "run_pipeline":
@@ -217,25 +223,34 @@ def approve(name):
     summary = run.binding.approval_summary()
     summary["binding_id"] = run.binding.binding_id
     summary["effect"] = "승인 범위를 저장합니다. 격리 분석 worker는 아직 실행되지 않습니다."
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    token = "PIPELINE-" + secrets.token_hex(4).upper()
+    return {
+        "summary": summary,
+        "selection_id": _digest(json.dumps(selection, sort_keys=True, ensure_ascii=False)),
+        "run_id": state.run_id,
+        "revision": state.revision,
+        "scope": asdict(run.executor.scope_for("run_pipeline")),
+    }
 
-    if input(f"승인하려면 {token} 을 입력하세요: ") != token:
-        return {"code": "APPROVAL_DECLINED"}
+
+def record_approval(name, preview, *, confirmed=False):
+    """사용자가 확인한 바로 그 범위에만 승인한다. 화면 표시로 호출하지 않는다."""
+    if confirmed is not True:
+        raise ValueError("승인 범위를 명시적으로 확인해야 합니다.")
+
+    directory = _root(_directory(name))
 
     with _run_lock(directory) as acquired:
         if not acquired:
             raise ValueError("다른 실행이 진행 중입니다.")
 
-        current_directory, current_selection, current_run = _open(name)
+        # 승인 파일 존재 여부까지 잠금 안에서 검사한다. 동시 클릭도 재발급하지 않는다.
+        _, selection, run = _open(name)
 
-        if current_directory != directory or current_selection != selection or current_run.binding.binding_id != run.binding.binding_id:
-            raise ValueError("승인 확인 중 선택 계약이 변경되었습니다.")
+        if _approval_preview(directory, selection, run) != preview:
+            raise ValueError("승인 확인 중 입력·코드·계획 또는 상태가 변경되었습니다.")
 
         current_state = run.states.load()
-
-        if current_state != state:
-            raise ValueError("승인 확인 중 실행 상태가 변경되었습니다.")
+        approval_path = directory / "approval.json"
 
         scope = run.executor.scope_for("run_pipeline")
         record = run.approvals.record_confirmed_approval(scope)
@@ -263,6 +278,21 @@ def approve(name):
         "binding_id": run.binding.binding_id,
         "worker_started": False,
     }
+
+
+def approve(name):
+    """터미널 확인과 UI 확인이 동일한 승인 저장 경계를 사용한다."""
+    if not os.isatty(0):
+        raise ValueError("승인은 대화형 터미널에서만 할 수 있습니다.")
+
+    preview = preview_approval(name)
+    print(json.dumps(preview["summary"], ensure_ascii=False, indent=2))
+    token = "PIPELINE-" + secrets.token_hex(4).upper()
+
+    if input(f"승인하려면 {token} 을 입력하세요: ") != token:
+        return {"code": "APPROVAL_DECLINED"}
+
+    return record_approval(name, preview, confirmed=True)
 
 
 def status(name):

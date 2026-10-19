@@ -12,6 +12,21 @@ from src.agents.appcontainer_child import denied
 
 
 class AppContainerProbeTest(unittest.TestCase):
+    def test_experimental_312_requires_explicit_opt_in(self):
+        from src.agents.appcontainer_probe import check_probe_runtime
+
+        with patch("src.agents.appcontainer_probe.os.name", "nt"), patch("src.agents.appcontainer_probe.sys.version_info", (3, 12)):
+            with self.assertRaises(ValueError):
+                check_probe_runtime()
+            check_probe_runtime(experimental_python312=True)
+
+        with patch("src.agents.appcontainer_probe.os.name", "nt"), patch("src.agents.appcontainer_probe.sys.version_info", (3, 13)):
+            with self.assertRaises(ValueError):
+                check_probe_runtime(experimental_python312=True)
+
+        with self.assertRaises(ValueError):
+            check_probe_runtime(experimental_python312=1)
+
     def result(self):
         checks = {name: True for name in REQUIRED}
         checks.update({name: {"denied": True, "error_code": 10013 if "network" in name else 5} for name in DENIALS})
@@ -76,6 +91,8 @@ class AppContainerProbeTest(unittest.TestCase):
                 "Lib/__pycache__/os.pyc", "Lib/site-packages/numpy/__init__.py",
                 "Lib/site-packages/cloudpickle/__init__.py",
                 "Lib/site-packages/not_allowed/private.txt", "Lib/site-packages/private.pth",
+                "Lib/site-packages/narwhals/__init__.py",
+                "Lib/site-packages/narwhals-2.27.1.dist-info/METADATA",
                 "Library/bin/synthetic.dll",
             )
 
@@ -90,6 +107,8 @@ class AppContainerProbeTest(unittest.TestCase):
                 "python.exe", "python310.dll", "Lib/os.py", "Lib/encodings/__init__.py",
                 "Lib/site-packages/numpy/__init__.py", "Library/bin/synthetic.dll",
                 "Lib/site-packages/cloudpickle/__init__.py",
+                "Lib/site-packages/narwhals/__init__.py",
+                "Lib/site-packages/narwhals-2.27.1.dist-info/METADATA",
             })
             self.assertEqual(before, {path.relative_to(root) for path in root.rglob("*")})
 

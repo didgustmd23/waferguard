@@ -1,5 +1,7 @@
 """Dataset 검사 전용 PyTorch 런타임의 제한 복사 목록. 기존 런타임 정책은 바꾸지 않는다."""
 
+import ast
+import hashlib
 from importlib.metadata import distribution
 import json
 from pathlib import Path
@@ -20,6 +22,51 @@ METADATA = (
     'torch-', 'filelock-', 'typing_extensions-', 'sympy-', 'mpmath-', 'networkx-',
     'jinja2-', 'markupsafe-', 'fsspec-', 'setuptools-',
 )
+
+
+def pinned_torch_version(prefix, files, metadata_version):
+    """해시로 고정한 version.py의 빌드 문자열을 읽는다. 파일을 실행하지 않는다.
+
+    배포 메타데이터는 +cpu를 생략할 수 있으므로 공개 버전을 대조한다.
+    metadata에도 local 빌드 표기가 있으면 그것도 일치해야 한다. 반환한 전체
+    문자열은 실제 Dataset worker가 torch.__version__과 정확히 비교한다.
+    """
+    from packaging.version import Version
+
+    name = 'Lib/site-packages/torch/version.py'
+    record = files.get(name)
+    if type(record) is not dict or type(record.get('size')) is not int or not 0 < record['size'] <= 65536:
+        raise ValueError('고정된 PyTorch 버전 파일이 필요합니다.')
+
+    prefix = _root(prefix)
+    path = prefix / name
+    # 신뢰하는 conda 설치 파일의 하드 링크는 기존 런타임 수집기처럼 허용한다.
+    # 심볼릭 링크·재분석 지점은 거부하고 실제 바이트를 고정 명세와 대조한다.
+    if not path.is_file() or any(_is_link(part) for part in (path, *path.parents)):
+        raise ValueError('PyTorch 버전 파일 경로가 올바르지 않습니다.')
+
+    with path.open('rb') as stream:
+        raw = stream.read(65537)
+
+    if len(raw) != record['size'] or hashlib.sha256(raw).hexdigest() != record.get('sha256'):
+        raise ValueError('PyTorch 버전 파일이 런타임 명세와 다릅니다.')
+
+    values = []
+    for node in ast.parse(raw.decode('utf-8')).body:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(target, ast.Name) and target.id == '__version__' for target in targets):
+            if not isinstance(node.value, ast.Constant) or type(node.value.value) is not str:
+                raise ValueError('PyTorch 버전은 단일 문자열 리터럴이어야 합니다.')
+            values.append(node.value.value)
+
+    if len(values) != 1:
+        raise ValueError('PyTorch 버전 정의가 누락되거나 중복되었습니다.')
+
+    actual, metadata = Version(values[0]), Version(metadata_version)
+    if actual.public != metadata.public or (metadata.local is not None and actual.local != metadata.local):
+        raise ValueError('설치 메타데이터와 고정한 PyTorch 빌드가 다릅니다.')
+
+    return values[0]
 
 
 def runtime_manifest(prefix, maximum):
@@ -67,7 +114,9 @@ def runtime_manifest(prefix, maximum):
     if len(payload) > MAX_MANIFEST_BYTES:
         raise ValueError('Dataset 런타임 명세 크기 상한을 초과했습니다.')
 
-    return records, distribution('torch').version
+    # 배포 버전만 전달하면 2.14.1과 2.14.1+cpu가 달라 정상 worker를 거부한다.
+    # 실행할 파일 명세에 고정된 전체 빌드 버전을 생성·승인 계약에 저장한다.
+    return records, pinned_torch_version(prefix, records, distribution('torch').version)
 
 
 def decode_manifest(payload, maximum):

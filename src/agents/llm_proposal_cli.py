@@ -13,7 +13,7 @@ from .local_ollama import LocalProposalError
 from .llm_proposal_store import load_proposal, save_proposal
 
 
-def _interactive_request(config, *, preview_only):
+def _interactive_request(config, *, preview_only, backend="http"):
     """셸 인자 대신 터미널에서 문장을 받고 실제 전송 내용을 보여 준 뒤 확인한다."""
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise LocalProposalError("INTERACTIVE_TERMINAL_REQUIRED")
@@ -28,7 +28,8 @@ def _interactive_request(config, *, preview_only):
         raise LocalProposalError("REQUEST_TEXT_INVALID") from error
 
     preview = {"status": "preview", "endpoint": config.endpoint, "payload": payload,
-               "model_called": False, "worker_started": False, "synthetic_only": False}
+               "model_called": False, "worker_started": False, "synthetic_only": False,
+               "backend": backend}
 
     if preview_only:
         return preview
@@ -38,7 +39,8 @@ def _interactive_request(config, *, preview_only):
     if input("위 내용을 로컬 모델에 전달하려면 SEND를 입력하세요: ").strip() != "SEND":
         return {"status": "not_sent", "model_called": False, "worker_started": False}
 
-    result = propose_request(request, config).to_dict()
+    options = {"backend": backend} if backend != "http" else {}
+    result = propose_request(request, config, **options).to_dict()
     result.update(status="proposal_validated", model_called=True, synthetic_only=False)
     return result
 
@@ -72,12 +74,14 @@ def main():
     source.add_argument("--load-name", help="저장된 제안을 현재 계약으로 재검증해 조회")
     parser.add_argument("--preview", action="store_true", help="실제 전송 내용을 표시하고 호출하지 않음")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG), help="로컬 모델 JSON 설정 경로")
+    parser.add_argument("--backend", choices=("http", "langchain"), default="http",
+                        help="모델 연결 계층 선택. 두 경로 모두 기존 로컬 HTTP 보호 규칙 사용")
     parser.add_argument("--save-name", help="제안 후 사용자 확인을 받아 새 이름으로 로컬 보관")
     parser.add_argument("--confirm-local-model-call", action="store_true", help="로컬 모델 호출 의사 확인")
     args = parser.parse_args()
 
     if args.load_name:
-        if args.preview or args.confirm_local_model_call or args.save_name:
+        if args.preview or args.confirm_local_model_call or args.save_name or args.backend != "http":
             parser.error("복원 조회에는 호출·미리보기·저장 옵션을 함께 사용할 수 없습니다.")
 
         try:
@@ -113,6 +117,7 @@ def main():
         try:
             result = _interactive_request(
                 config, preview_only=args.preview or not args.confirm_local_model_call,
+                backend=args.backend,
             )
         except (EOFError, KeyboardInterrupt):
             # 통신 도중 중단됐을 수도 있어 전송하지 않았다고 단정하지 않는다.
@@ -128,6 +133,7 @@ def main():
             "status": "preview", "endpoint": config.endpoint,
             "payload": build_example_payload(args.example, config), "model_called": False,
             "worker_started": False,
+            "backend": args.backend,
         }
 
     else:
@@ -135,12 +141,15 @@ def main():
             parser.error("호출 전에 --preview로 확인하고 --confirm-local-model-call을 지정하세요.")
 
         try:
-            result = propose_example(args.example, config).to_dict()
+            options = {"backend": args.backend} if args.backend != "http" else {}
+            result = propose_example(args.example, config, **options).to_dict()
             result.update(status="proposal_validated", model_called=True, synthetic_only=True)
         except LocalProposalError as error:
             print(json.dumps({"status": "failed", "code": error.code,
                               "worker_started": False, "automatic_retry": False}, ensure_ascii=False))
             return 1
+
+    result["backend"] = args.backend
 
     if args.save_name:
         try:

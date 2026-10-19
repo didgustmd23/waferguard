@@ -4,10 +4,45 @@ from io import BytesIO
 from pathlib import Path
 import os
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from src.agents import input_snapshot as module
+
+
+class SnapshotIdentityTest(unittest.TestCase):
+    """Windows의 시간 필드 차이를 재현하되 실제 변경 감지는 유지한다."""
+
+    def info(self, **changes):
+        return SimpleNamespace(**dict({"st_dev": 1, "st_ino": 2, "st_size": 86,
+                                       "st_mtime_ns": 200, "st_ctime_ns": 100,
+                                       "st_birthtime_ns": 100}, **changes))
+
+    def test_windows_uses_explicit_creation_time(self):
+        with patch.object(module.os, "name", "nt"):
+            self.assertEqual(module._identity(self.info()), module._identity(self.info(st_ctime_ns=200)))
+
+    def test_windows_without_birthtime_preserves_legacy_ctime(self):
+        first = self.info()
+        second = self.info(st_ctime_ns=200)
+        del first.st_birthtime_ns
+        del second.st_birthtime_ns
+
+        with patch.object(module.os, "name", "nt"):
+            self.assertNotEqual(module._identity(first), module._identity(second))
+
+    def test_posix_keeps_metadata_change_detection(self):
+        with patch.object(module.os, "name", "posix"):
+            self.assertNotEqual(module._identity(self.info()), module._identity(self.info(st_ctime_ns=200)))
+
+    def test_windows_still_detects_id_size_mtime_and_creation_changes(self):
+        with patch.object(module.os, "name", "nt"):
+            before = module._identity(self.info())
+
+            for field in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_birthtime_ns"):
+                with self.subTest(field=field):
+                    self.assertNotEqual(before, module._identity(self.info(**{field: 999})))
 
 
 class InputSnapshotTest(unittest.TestCase):

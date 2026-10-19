@@ -1,5 +1,23 @@
 # WaferGuard 소스 구성
 
+최신 런타임 정비: `agents/wm_dataset_runtime.py`의 `pinned_torch_version`을 Dataset 생성·승인·합성 검사기가 공유합니다. `agents/wm_runtime.py`는 Windows/Python 3.12 + `2.14.1+cpu`의 WM 정상 6단계만 허용하고 GPU 빌드/충돌 분기는 차단합니다. CLI와 공통 서비스가 같은 모듈별 정책을 적용합니다. 실제 서비스 기반 합성 UI 생성·승인·결과/품질 중단 통합을 포함한 회귀 144개가 통과했으며, 실제 UI 사용자 승인/native 실행은 별도입니다. [최신 지원 범위](../docs/agents/design/METADATA_REGISTRY.md#dataset-버전-공통화312-cpu-정책공통-ui-통합--2026-10-19)를 참고하세요.
+
+공통 등록 모듈 UI: `ui/workflow_view.py`가 기존 5단계 화면을 재사용하고 `ui/workflow_service.py`가 명시적 생성·조회·승인·한 단계 실행만 공통 서비스에 전달합니다. `agents/wm_creation_schema.py`의 필드 명세로 WM 정상 6단계 생성 폼을 표시합니다. 충돌 분기 2개는 기존 작업 연결만 지원하며 Python 3.12 실행은 차단합니다. `ui/workflow_results.py`는 기존 도메인 검증 후 크기가 제한된 로컬 표시 복사본을 만듭니다. Python 3.12는 검증한 CPU 빌드의 정상 6단계만 지원합니다. [현재 UI 사용법](../docs/agents/design/METADATA_REGISTRY.md#공통-ui-연결과-생성-설정--2026-10-19)을 참고하세요.
+
+WM 공통 작업 서비스: `agents/wm_workflow_service.py`는 모듈 ID·버전으로 기존 생성·조회·승인·한 단계 실행·결과 검증을 호출합니다. `agents/workflow_approval.py`는 화면과 무관한 승인 미리보기·동일 범위 재검사·저장이고, WM 8개 CLI는 기존 터미널 확인 문구를 유지한 채 이 계층을 사용합니다. `agents/wm_runtime.py`는 3.10의 기존 정책과 3.12 CPU 정상 6단계의 모듈별 지원 정책을 공유합니다. GPU 빌드의 격리 실행은 후속 검증 범위입니다. [WM 공통 서비스 안내](../docs/agents/design/METADATA_REGISTRY.md#wm-처리의-공통-서비스-정비--2026-10-19-후속)를 참고하세요.
+
+통합 모듈 명세: `agents/module_specification.py`가 `configs/agents/modules/catalogue.json`을 기존 `agent_module_registry.py`의 계약과 대조해 표형 8개·WM 8개의 공통 설명 명세를 제공합니다. `agents/module_specification_cli.py`는 목록·상세 조회 전용이며 기존 사용자 참조 모듈 CLI는 유지합니다. 설정 기본값·WM 승인 단계는 기존 구현에서 읽고 결과 표시 유형·설명·노출 정책을 결합합니다. 실행 서비스·UI 자동 구성 전환은 후속 단계이며 명세 등록은 실행 허가가 아닙니다. [명세 사용법](../docs/agents/design/METADATA_REGISTRY.md#통합-모듈-설명-명세-정비--2026-10-19)을 참고하세요.
+
+로컬 UI: `ui/app.py`는 Streamlit 진입점, `ui/navigation.py`는 단계 메뉴, `ui/settings.py`는 세션 설정 폼입니다. `ui/source_selection.py`에서 데이터 유형·경로를 선택하고 CSV 원본은 동의 후 snapshot을 만듭니다. `ui/dialogue_view.py`·`dialogue_service.py`는 기존 LangChain·LangGraph 대화와 제안 검토·저장 계약을 재사용합니다. `ui/input_view.py`는 입력 결합 미리보기, `ui/candidate_service.py`·`candidate_view.py`는 미승인 작업 준비와 영수증 검증을 담당합니다. `ui/model_commands.py`는 원문 없이 명령 ID·지문·상태만 기록해 모델 명령의 중복 전송을 차단합니다.
+
+`ui/execution_service.py`·`execution_view.py`는 CSV 사전 검사·범위 확인·승인·별도 실행과 결과 화면을 연결합니다. `agents/pipeline_approval_cli.py`의 공통 승인 함수를 재사용하며 승인 범위 재검사·일회 소비·AppContainer·Job을 유지합니다. `ui/result_service.py`는 완료/검토 중단 결과 계약과 파일 정합성을 확인해 표·보고서·그림을 로컬에 표시합니다. 화면 갱신에서는 worker를 다시 실행하지 않습니다. WM canonical 이후 작업은 위의 공통 등록 모듈 UI로 연결했습니다. CSV 분할·변환·전달, pickle 격리 변환 생성 UI와 결과 LLM 전송은 미연결입니다. 실행은 동기 방식으로 처리하며 백그라운드 실행·실행 중 취소·브라우저 세션 자동 복원은 후속 범위입니다. WM 기존 작업 이름의 명시적 재연결은 지원합니다.
+
+프로젝트 루트에서 `python -m pip install -r requirements.txt`로 통합 의존성을 설치한 뒤 `python -m streamlit run src/ui/app.py`로 실행합니다. Windows x64/Python 3.12의 `wm-gpu312` 환경 하나를 사용합니다. [최신 UI 범위·실행 순서](../docs/agents/GUIDE.md#최신-ui-연결-범위--2026-10-19), [데이터 유형·경로 선택](../docs/agents/GUIDE.md#요청-전-데이터-유형경로-선택-보완), [실행 후보 생성](../docs/agents/GUIDE.md#ui-입력-확인에서-실행-후보-생성-연결)을 참고하세요. 소스 변경 후 UI 서버를 재시작합니다.
+
+LangGraph 제안 대화: `agents/llm_dialogue.py`는 메모리 전용 상태·확인 질문 중단·답변 재개·호출/누적 길이 제한을 관리합니다. `agents/llm_dialogue_cli.py`는 매번 전송 내용 확인과 SEND를 받으며 완성 제안만 별도 SAVE로 기존 저장 계약에 연결합니다. 승인·worker를 실행하는 그래프가 아닙니다. [흐름과 명령](../docs/agents/GUIDE.md#langgraph-확인-질문답변-연결)을 참고하세요.
+
+LangChain 선택 연결: `agents/langchain_local.py`는 `BaseChatModel` 인터페이스와 기존 제한형 로컬 HTTP 운송을 연결합니다. `llm_proposal_cli --backend langchain`으로 선택하며 기존 HTTP 기본 경로·제안 검증·승인·worker는 유지합니다. 모델·그래프가 공통 `run_unobserved`로 추적·부모 콜백 비상속 규칙을 적용합니다. [구현 범위와 명령](../docs/agents/GUIDE.md#langchain-모델-연결--기존-운송-보호-재사용)을 참고하세요.
+
 LLM 제안의 실행 후보 연결: `agents/llm_execution_candidate.py`는 저장 제안·snapshot·프로파일·자원을 기존 어댑터 바인더로 검증하고, 확인 후 기존 `pipeline_approval_cli.create`로 미승인 작업만 준비합니다. `agents/llm_execution_candidate_cli.py`는 로컬 미리보기·생성 확인 명령입니다. LLM 재호출·실행 승인 발급·worker 실행은 하지 않습니다. [입력 결합과 사용법](../docs/agents/GUIDE.md#제안과-입력을-결합한-기존-승인-작업-준비)을 참고하세요.
 
 로컬 LLM 제안: `agents/llm_config.py`가 `configs/agents/llm/local_ollama.json`의 모델·문맥·생성량·타임아웃을 검증합니다. `agents/local_ollama.py`는 loopback HTTP 운송, `agents/llm_proposal.py`는 합성/직접 입력 문장 구성·응답 계약 연결, `agents/llm_proposal_cli.py`는 전송 미리보기·사용자 확인·제안 명령입니다. `agents/llm_proposal_store.py`는 별도 확인 후 제안을 로컬에 보관하고 복원 시 현재 계약·지문을 재검사합니다. 데이터 파일을 자동 첨부하거나 승인 DB·worker에 연결하지 않습니다. 직접 입력한 문장 자체는 모델에 전달됩니다. [설정과 명령](../docs/agents/GUIDE.md#로컬-qwen-연결--합성-제안-호출과-질문-지침-보완)을 참고하세요.

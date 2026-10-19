@@ -23,6 +23,16 @@ CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     ENTRY, "src/agents/wm_canonical.py", "src/agents/wm_canonical_cli.py",
     "src/agents/wm_canonical_transport.py",
     "src/agents/split_evidence.py",
+    # 부모의 공통 승인·런타임·서비스 변경도 기존 승인에 반영한다.
+    # worker에 이 관리 코드의 읽기 권한을 추가하는 목록은 아니다.
+    "src/agents/workflow_approval.py", "src/agents/wm_runtime.py",
+    "src/agents/wm_dataset_runtime.py",
+    "src/agents/wm_workflow_service.py", "src/agents/wm_creation_schema.py",
+    "src/agents/wm_workflow_execution.py", "src/agents/wm_module_catalogue.py",
+    "src/agents/wm_run_creation.py", "src/agents/wm_run_evidence.py",
+    "src/agents/wm_run_bindings.py", "src/agents/wm_workflow_guidance.py",
+    "src/agents/wm_module_plan.py", "src/agents/agent_module_registry.py",
+    "src/agents/module_specification.py", "configs/agents/modules/catalogue.json",
 )))
 
 

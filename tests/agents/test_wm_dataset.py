@@ -1,6 +1,5 @@
 """합성 숫자 캐시로 Dataset 검사 승인·범위·변조·종료 계약을 확인한다."""
 
-from importlib.metadata import version
 import json
 from pathlib import Path
 import shutil
@@ -48,7 +47,11 @@ class WmDatasetTest(unittest.TestCase):
             # 실제 runtime 복사·토큰·DLL 로드는 별도 native 검사에서 확인한다.
             path = Path(sys.prefix) / 'Lib/site-packages/torch/__init__.py'
             records = {'Lib/site-packages/torch/__init__.py': file_hash(path, 1024 * 1024)}
-            mocking = patch('src.agents.wm_dataset_cli.runtime_manifest', return_value=(records, version('torch')))
+            mocking = patch('src.agents.wm_dataset_cli.runtime_manifest', return_value=(records, str(fixtures.torch.__version__)))
+            mocking.start()
+            self.addCleanup(mocking.stop)
+            # 코어·승인 회귀만 검사한다. 이 대역은 native 3.12 지원 승인이 아니다.
+            mocking = patch('src.agents.wm_runtime.runtime_status', return_value={'supported': True})
             mocking.start()
             self.addCleanup(mocking.stop)
 

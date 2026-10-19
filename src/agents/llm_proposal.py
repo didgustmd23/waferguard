@@ -142,18 +142,31 @@ def build_request_payload(request, config=None):
     }
 
 
-def propose_example(example, config=None):
+def propose_example(example, config=None, *, backend="http"):
     """기존 합성 진입점도 같은 요청 처리 경로를 사용한다."""
     if type(example) is not str or example not in EXAMPLES:
         raise ValueError("지원하는 합성 예제를 지정하세요.")
 
-    return propose_request(EXAMPLES[example], config)
+    return propose_request(EXAMPLES[example], config, backend=backend)
 
 
-def propose_request(request, config=None):
+def propose_request(request, config=None, *, backend="http"):
     """호출은 한 번만 하고 응답 계약 실패 시 종료한다. 승인·실행을 이어서 하지 않는다."""
     config = load_local_config() if config is None else config
-    response = request_local_proposal(build_request_payload(request, config), config)
+    payload = build_request_payload(request, config)
+
+    if backend == "http":
+        response = request_local_proposal(payload, config)
+    elif backend == "langchain":
+        # 선택한 경우만 추가 의존성을 읽는다. 기존 HTTP 경로는 독립적으로 유지한다.
+        try:
+            from .langchain_local import request_langchain_proposal
+        except ImportError as error:
+            raise LocalProposalError("LANGCHAIN_DEPENDENCY_MISSING") from error
+
+        response = request_langchain_proposal(payload, config)
+    else:
+        raise LocalProposalError("MODEL_BACKEND_REJECTED")
 
     try:
         return validate_proposal(response, expected_input=dict(SOURCE), allowed_modules=ALLOWED)

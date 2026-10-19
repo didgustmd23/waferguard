@@ -1,6 +1,0 @@
-# WM-811K 학습용 선택 의존성입니다. 공통 환경은 requirements.txt로 별도 설치합니다.
-# NVIDIA CUDA 12.8용 설치 예시:
-# python -m pip install -r requirements-wafer-dl.txt --index-url https://download.pytorch.org/whl/cu128
-# CPU용 또는 다른 CUDA 버전은 공식 설치 안내에 맞는 index-url을 선택하세요.
-torch==2.11.0
-torchvision==0.26.0

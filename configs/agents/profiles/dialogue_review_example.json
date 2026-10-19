@@ -1,0 +1,19 @@
+{
+  "schema_version": "dataset_profile_v1",
+  "profile_id": "dialogue_review_example",
+  "adapter_id": "tabular_csv_v1",
+  "workflow_id": "eda_review_v1",
+  "roles": {
+    "numeric": ["x", "y"],
+    "categorical": ["category"],
+    "target": "target",
+    "group": null,
+    "timestamp": null,
+    "identifiers": []
+  },
+  "max_plot_features": 3,
+  "quality_rules": {
+    "missing_ratio_threshold": 0.0,
+    "high_missing": "review"
+  }
+}

@@ -1,0 +1,139 @@
+<div id="wg-ui-preview">
+  <style>
+    #wg-ui-preview { --wg-bg:light-dark(#f5f6f8,#191c22); --wg-panel:light-dark(#ffffff,#22262d); --wg-text:light-dark(#202630,#eef1f6); --wg-sub:light-dark(#5a6474,#b5becd); --wg-line:light-dark(#dce1e8,#414854); --wg-active:light-dark(#294c71,#b6d4f7); --wg-on:light-dark(#ffffff,#132233); --wg-soft:light-dark(#eaf0f7,#2e3c4e); --wg-warn:light-dark(#744c05,#ffda8e); --wg-warn-bg:light-dark(#fff5dd,#3f341e); color:var(--wg-text); font-family:system-ui,"Malgun Gothic",sans-serif; font-size:14px; }
+    #wg-ui-preview * { box-sizing:border-box; }
+    #wg-ui-preview .wg-window { background:var(--wg-bg); border:1px solid var(--wg-line); border-radius:16px; overflow:hidden; min-height:600px; }
+    #wg-ui-preview .wg-header { background:var(--wg-panel); padding:19px 24px; border-bottom:1px solid var(--wg-line); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding-right:104px; }
+    #wg-ui-preview .wg-brand { display:flex; align-items:center; gap:10px; }
+    #wg-ui-preview .wg-brand strong { font-weight:500; }
+    #wg-ui-preview .wg-tag { color:var(--wg-sub); font-size:12px; }
+    #wg-ui-preview .wg-notice { padding:10px 24px; background:var(--wg-soft); color:var(--wg-text); font-size:12px; }
+    #wg-ui-preview .wg-layout { display:grid; grid-template-columns:185px minmax(0,1fr); }
+    #wg-ui-preview .wg-nav { background:var(--wg-panel); padding:24px 15px; border-right:1px solid var(--wg-line); }
+    #wg-ui-preview .wg-nav-title { color:var(--wg-sub); font-size:12px; margin:0 10px 17px; }
+    #wg-ui-preview .wg-nav button { display:flex; width:100%; text-align:left; gap:10px; margin:5px 0; padding:12px 10px; background:transparent; border:0; border-radius:8px; color:var(--wg-sub); font:inherit; }
+    #wg-ui-preview button { cursor:pointer; }
+    #wg-ui-preview button:disabled { cursor:not-allowed; opacity:.5; }
+    #wg-ui-preview .wg-nav button[aria-current="step"] { background:var(--wg-soft); color:var(--wg-text); font-weight:500; }
+    #wg-ui-preview .wg-main { padding:26px; min-width:0; }
+    #wg-ui-preview h2 { margin:0 0 7px; font-size:20px; font-weight:500; }
+    #wg-ui-preview h3 { margin:0 0 12px; font-size:14px; font-weight:500; }
+    #wg-ui-preview p { margin:6px 0 17px; color:var(--wg-sub); }
+    #wg-ui-preview .wg-box { background:var(--wg-panel); border:1px solid var(--wg-line); border-radius:12px; padding:20px; margin:17px 0; }
+    #wg-ui-preview .wg-chat { display:grid; gap:14px; margin:18px 0; }
+    #wg-ui-preview .wg-bubble { padding:14px 16px; background:var(--wg-panel); border-radius:12px; border:1px solid var(--wg-line); max-width:95%; }
+    #wg-ui-preview .wg-bubble.user { margin-left:auto; background:var(--wg-soft); }
+    #wg-ui-preview .wg-who { color:var(--wg-sub); font-size:12px; margin-bottom:6px; }
+    #wg-ui-preview .wg-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; align-items:center; }
+    #wg-ui-preview .wg-button { background:var(--wg-panel); color:var(--wg-text); border:1px solid var(--wg-line); border-radius:8px; padding:10px 15px; font:inherit; min-height:42px; }
+    #wg-ui-preview .wg-primary { background:var(--wg-active); color:var(--wg-on); border-color:var(--wg-active); }
+    #wg-ui-preview label.wg-field { display:grid; gap:8px; margin:14px 0; }
+    #wg-ui-preview textarea, #wg-ui-preview select, #wg-ui-preview input[type="number"] { width:100%; background:var(--wg-panel); color:var(--wg-text); border:1px solid var(--wg-line); border-radius:8px; padding:10px 12px; font:inherit; }
+    #wg-ui-preview textarea { resize:vertical; min-height:82px; }
+    #wg-ui-preview .wg-small { font-size:12px; color:var(--wg-sub); }
+    #wg-ui-preview .wg-list { margin:0; padding:0; list-style:none; }
+    #wg-ui-preview .wg-list li { padding:12px 0; display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--wg-line); }
+    #wg-ui-preview .wg-list li:last-child { border-bottom:0; }
+    #wg-ui-preview .wg-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+    #wg-ui-preview .wg-check { display:flex; gap:10px; align-items:flex-start; margin:18px 0; }
+    #wg-ui-preview .wg-check input { margin-top:4px; }
+    #wg-ui-preview .wg-warning { background:var(--wg-warn-bg); color:var(--wg-warn); padding:15px; border-radius:9px; margin:15px 0; }
+    #wg-ui-preview .wg-status { display:flex; gap:10px; align-items:center; font-weight:500; }
+    #wg-ui-preview .wg-status i { flex:none; }
+    #wg-ui-preview details { margin-top:17px; font-size:12px; color:var(--wg-sub); }
+    #wg-ui-preview summary { cursor:pointer; padding:8px 0; }
+    #wg-ui-preview pre { white-space:pre-wrap; overflow-wrap:anywhere; color:var(--wg-text); padding:12px; border-radius:8px; background:var(--wg-bg); }
+    #wg-ui-preview .wg-split { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(250px,.9fr); gap:20px; }
+    #wg-ui-preview .wg-rail { background:var(--wg-panel); border:1px solid var(--wg-line); padding:20px; border-radius:12px; align-self:start; }
+    #wg-ui-preview .wg-rail p { font-size:12px; }
+    #wg-ui-preview .wg-tabs { display:flex; gap:6px; flex-wrap:wrap; padding:12px 24px; background:var(--wg-panel); border-bottom:1px solid var(--wg-line); }
+    #wg-ui-preview .wg-tabs button { background:transparent; border:0; color:var(--wg-sub); font:inherit; padding:8px 10px; border-radius:7px; }
+    #wg-ui-preview .wg-tabs button[aria-current="step"] { background:var(--wg-soft); color:var(--wg-text); }
+    @media(max-width:700px) { #wg-ui-preview .wg-layout { grid-template-columns:1fr; } #wg-ui-preview .wg-nav { display:flex; gap:4px; flex-wrap:wrap; padding:8px; border-right:0; border-bottom:1px solid var(--wg-line); } #wg-ui-preview .wg-nav-title { display:none; } #wg-ui-preview .wg-nav button { width:auto; padding:8px; } #wg-ui-preview .wg-main { padding:18px; } #wg-ui-preview .wg-split { grid-template-columns:1fr; } #wg-ui-preview .wg-grid { grid-template-columns:1fr; } #wg-ui-preview .wg-header { padding:15px 18px; padding-right:100px; } }
+    @media(pointer:coarse) { #wg-ui-preview button, #wg-ui-preview select { min-height:44px; } #wg-ui-preview textarea, #wg-ui-preview input { font-size:16px; } }
+  </style>
+  <div class="viz-carousel" aria-label="WaferGuard UI 설계안" data-previous-label="이전 설계" data-next-label="다음 설계">
+    <section data-variant="단계 안내형" aria-label="단계 안내형 전처리 화면">
+      <div class="wg-window" data-layout="wizard">
+        <header class="wg-header"><div class="wg-brand"><i data-lucide="layers" aria-hidden="true"></i><strong>WaferGuard</strong><span class="wg-tag">전처리 작업실</span></div><span class="wg-tag">로컬 전용 · Qwen</span></header>
+        <div class="wg-notice">화면 시연 · 실제 파일·모델·worker 연결 없음</div>
+        <div class="wg-layout"><nav class="wg-nav" aria-label="전처리 진행 단계"></nav><main class="wg-main" aria-live="polite"><h2>어떤 분석이 필요한가요?</h2><p>요청부터 실행 승인까지 단계별로 확인합니다.</p></main></div>
+      </div>
+    </section>
+    <section data-variant="대화 중심형" aria-label="대화와 실행안을 함께 보는 전처리 화면" hidden>
+      <div class="wg-window" data-layout="chat">
+        <header class="wg-header"><div class="wg-brand"><i data-lucide="layers" aria-hidden="true"></i><strong>WaferGuard</strong><span class="wg-tag">전처리 작업실</span></div><span class="wg-tag">로컬 전용 · Qwen</span></header>
+        <div class="wg-notice">화면 시연 · 실제 파일·모델·worker 연결 없음</div>
+        <nav class="wg-tabs" aria-label="전처리 진행 단계"></nav><main class="wg-main" aria-live="polite"><h2>대화로 분석을 준비하세요</h2><p>대화 옆에서 제안과 승인 범위를 확인합니다.</p></main>
+      </div>
+    </section>
+  </div>
+  <script>
+    (() => {
+      const root = document.getElementById('wg-ui-preview');
+      const titles = ['요청·대화', '제안 검토', '입력 선택', '실행 승인', '결과 확인'];
+      const opts = { outcome:'정상 완료', details:false };
+      const sessions = [];
+      const saved = window.openai?.widgetState?.privateContent;
+      function remember() {
+        if (window.openai?.setWidgetState) window.openai.setWidgetState({modelContent:null, privateContent:{screens:sessions.map(s=>s.step),outcome:opts.outcome}}).catch(()=>{});
+      }
+      function icons() { if (globalThis.lucide) lucide.createIcons({attrs:{width:17,height:17}}); }
+      const button = (label, action, primary=false, disabled=false) => `<button type="button" class="wg-button cursor-interaction${primary?' wg-primary':''}" data-action="${action}" ${disabled?'disabled':''}>${label}</button>`;
+      const plan = `<ol class="wg-list"><li><span>1　품질 검사</span><span class="wg-small">먼저 실행</span></li><li><span>2　결측률 분석</span><span class="wg-small">품질 통과 시에만</span></li></ol>`;
+      const conversation = `<div class="wg-chat"><div class="wg-bubble user"><div class="wg-who">사용자</div>전처리를 도와주세요.</div><div class="wg-bubble"><div class="wg-who">에이전트</div>어떤 검사를 원하시나요?</div><div class="wg-bubble user"><div class="wg-who">사용자</div>품질 검사 후 결측률을 확인해 주세요. 데이터는 변경하지 마세요.</div></div>`;
+      function content(s) {
+        if (s.step === 0) return `<h2>어떤 분석이 필요한가요?</h2><p>사용자 문장만 모델에 전달합니다.</p>${conversation}<label class="wg-field">요청 문장<textarea aria-label="전처리 요청">품질 검사 후 결측률을 확인해 주세요. 데이터는 변경하지 마세요.</textarea></label><span class="wg-small">원본·통계·그림·파일 경로를 자동 첨부하지 않습니다.</span><div class="wg-actions">${button('전송 내용 확인','preview',true)}</div>${s.preview?`<div class="wg-box"><h3>전송 전 확인</h3><p>위 요청 문장과 허용된 모듈 명세를 로컬 Qwen에 전달합니다.</p>${button('확인 후 제안 받기 · 시연','next',true)}</div>`:''}`;
+        if (s.step === 1) return `<h2>실행안을 검토하세요</h2><p>지금은 제안만 준비됐습니다. 데이터 처리 승인은 별도입니다.</p><div class="wg-box"><h3>제안된 처리 순서</h3>${plan}</div><div class="wg-box"><h3>이 작업에서 하지 않는 일</h3><span>센서 제거 · 결측 대치 · 원본 변경 · 모델 학습</span></div><div class="wg-actions">${button('요청 수정','back')}${button('제안 저장 후 입력 선택','next',true)}</div>`;
+        if (s.step === 2) return `<h2>처리할 입력을 선택하세요</h2><p>선택한 파일은 로컬 처리에만 사용합니다.</p><div class="wg-box"><label class="wg-field">입력 파일<select aria-label="시연 입력"><option>synthetic-demo.csv · 합성 입력</option></select></label><label class="wg-field">데이터 프로파일<select aria-label="시연 프로파일"><option>표형 CSV · 수치형·범주형 역할 지정</option></select></label><span class="wg-small">시연 화면에서는 실제 파일을 읽거나 업로드하지 않습니다.</span></div><div class="wg-grid"><label class="wg-field">메모리 상한 (MiB)<input type="number" value="2048" readonly aria-label="메모리 상한 2048 MiB"></label><label class="wg-field">동시 프로세스 상한<input type="number" value="2" readonly aria-label="동시 프로세스 상한 2"></label><label class="wg-field">시간 상한 (초)<input type="number" value="300" readonly aria-label="시간 상한 300초"></label></div><div class="wg-actions">${button('뒤로','back')}${button('실행 후보 준비 · 시연','next',true)}</div>`;
+        if (s.step === 3) return `<h2>이 작업의 실행을 승인하시겠습니까?</h2><p>입력·설정·모듈·자원에 한정된 1회 승인입니다.</p><div class="wg-box"><h3>실행 범위</h3><ul class="wg-list"><li><span>입력</span><span>synthetic-demo.csv</span></li><li><span>처리</span><span>품질 검사 → 결측률 분석</span></li><li><span>원본 변경</span><span>없음</span></li><li><span>격리</span><span>AppContainer + Job</span></li><li><span>자원 상한</span><span>2,048 MiB / 2개 / 300초</span></li></ul></div><label class="wg-check"><input type="checkbox" data-confirm ${s.confirm?'checked':''}><span>표시한 입력과 처리 범위를 확인했습니다.</span></label><span class="wg-small">선택 내용이 바뀌면 다시 승인해야 합니다. 품질 검토 필요 시 중단합니다.</span><div class="wg-actions">${button('입력 다시 선택','back')}${button('승인 후 실행 · 시연','run',true,!s.confirm)}</div>`;
+        const review=opts.outcome==='검토 필요';
+        return `<h2>${review?'품질 확인이 필요해 작업을 중단했습니다':'선택한 분석을 완료했습니다'}</h2><p>${review?'후속 결측 분석은 실행하지 않았습니다. 검토 후 별도 작업을 준비하세요.':'품질 검사와 결측 분석 결과를 확인할 수 있습니다.'}</p><div class="${review?'wg-warning':'wg-box'}"><div class="wg-status"><i data-lucide="${review?'circle-alert':'circle-check'}" aria-hidden="true"></i><span>${review?'검토 필요 · 자동 진행 안 함':'완료 · worker 정리 확인'}</span></div></div><div class="wg-box"><h3>처리 내역</h3><ul class="wg-list"><li><span>품질 검사</span><span>${review?'검토 필요':'통과'}</span></li><li><span>결측률 분석</span><span>${review?'실행 안 함':'완료'}</span></li><li><span>실행 승인</span><span>1회 사용됨</span></li><li><span>격리 작업 정리</span><span>완료</span></li></ul></div><div class="wg-actions">${button('보고서 미리보기','report',true)}${button('새 작업 준비','reset')}</div>${s.report?`<div class="wg-box"><h3>보고서 화면 예시</h3><span>${review?'검토 사유 · 적용 기준 · 중단 위치를 표시합니다.':'실제 구현에서는 생성된 표·그림과 로컬 보고서를 이곳에 표시합니다.'}</span></div>`:''}<details ${opts.details?'open':''}><summary>기술 상세 보기</summary><pre>${review?'status: blocked_input\ncode: TOOL_REVIEW_REQUIRED':'status: completed\ncode: STEP_COMPLETED'}\napproval_status: consumed\n화면 시연값 · 실제 실행 기록 아님</pre></details>`;
+      }
+      function render(s) {
+        const nav=s.el.querySelector('nav');
+        nav.innerHTML=titles.map((t,i)=>`<button type="button" class="cursor-interaction" data-step="${i}" ${i===s.step?'aria-current="step"':''}>${i+1}　${t}</button>`).join('');
+        const main=s.el.querySelector('main');
+        const view=content(s);
+        main.innerHTML=s.layout==='chat'&&s.step<4?`<div class="wg-split"><div>${view}</div><aside class="wg-rail"><h3>현재 실행안</h3>${plan}<p>원본 변경 없음<br>LLM 데이터 자동 첨부 없음</p><hr><h3>현재 상태</h3><span>${titles[s.step]}</span><p>${s.step<3?'실행 승인 전 · worker 미시작':'확인 후 명시적으로 승인'}</p></aside></div>`:view;
+        icons();
+      }
+      root.querySelectorAll('.wg-window').forEach((el,i)=>{
+        const proposed=Number(saved?.screens?.[i]);
+        const s={el,layout:el.dataset.layout,step:Number.isInteger(proposed)&&proposed>=0&&proposed<=4?proposed:0,confirm:false,preview:false,report:false};
+        sessions.push(s); render(s);
+        el.addEventListener('click',e=>{
+          const nav=e.target.closest('button[data-step]');
+          const action=e.target.closest('button[data-action]');
+          if(nav) { s.step=Number(nav.dataset.step); s.confirm=false; }
+          else if(action&&!action.disabled) {
+            switch(action.dataset.action) {
+              case 'preview':s.preview=!s.preview;break;
+              case 'next':s.step=Math.min(4,s.step+1);s.confirm=false;break;
+              case 'back':s.step=Math.max(0,s.step-1);s.confirm=false;break;
+              case 'run':if(s.confirm)s.step=4;break;
+              case 'report':s.report=!s.report;break;
+              case 'reset':s.step=0;s.preview=false;s.confirm=false;s.report=false;break;
+            }
+          } else return;
+          render(s);remember();
+        });
+        el.addEventListener('change',e=>{
+          if(e.target.matches('[data-confirm]')) {s.confirm=e.target.checked;const b=el.querySelector('[data-action="run"]');if(b)b.disabled=!s.confirm;}
+        });
+      });
+      if(saved?.outcome==='검토 필요') {opts.outcome=saved.outcome;sessions.forEach(render);}
+      if(globalThis.Tweak) {
+        const tweak=new Tweak({container:root,onChange:()=>{sessions.forEach(render);remember();}});
+        tweak.addSelect(opts,'outcome',{label:'결과 화면 상태',options:['정상 완료','검토 필요']});
+        tweak.addToggle(opts,'details',{label:'기술 상세 펼치기'});
+      }
+      window.addEventListener('openai:set_globals',event=>{
+        const stored=event.detail?.globals?.widgetState?.privateContent;
+        if(!stored)return;
+        if(['정상 완료','검토 필요'].includes(stored.outcome))opts.outcome=stored.outcome;
+        sessions.forEach((s,i)=>{const n=stored.screens?.[i];if(Number.isInteger(n)&&n>=0&&n<=4)s.step=n;render(s);});
+      });
+    })();
+  </script>
+</div>
