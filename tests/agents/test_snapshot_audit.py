@@ -10,6 +10,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from src.agents import snapshot_audit_cli as cli
+from tests.agents.runtime_fixtures import run_supported_preflight
+
 from src.agents.eda_input_contract import bind_eda_input
 from src.agents.input_snapshot import create_snapshot
 from src.agents.quality_result_validation import read_quality_report
@@ -48,7 +51,7 @@ class SnapshotAuditTest(unittest.TestCase):
         self.manager = executor(self.tool)
 
     def waiting(self):
-        self.assertEqual(self.manager.run_next().code, "STEP_COMPLETED")
+        self.assertEqual(run_supported_preflight(self.manager, cli).code, "STEP_COMPLETED")
         self.assertEqual(self.manager.run_next().code, "APPROVAL_REQUIRED")
 
     def approval(self):

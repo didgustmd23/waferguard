@@ -1,0 +1,85 @@
+{
+  "schema_version": "llm_workflow_proposal_v1",
+  "status": "proposed",
+  "workflow": {
+    "workflow_id": "time_preparation_example",
+    "steps": [
+      {
+        "step_id": "split",
+        "module_id": "csv_split_review",
+        "version": "1.0.0",
+        "inputs": {
+          "data": "source.selected_input"
+        },
+        "settings": {
+          "strategy": "time",
+          "train_ratio": 0.7,
+          "validation_ratio": 0.15,
+          "test_ratio": 0.15,
+          "random_state": 42,
+          "stratify": false,
+          "require_all_classes": true,
+          "timestamp_format": "%d/%m/%Y %H:%M:%S",
+          "algorithm_version": "tabular_split_v1"
+        },
+        "depends_on": []
+      },
+      {
+        "step_id": "export",
+        "module_id": "csv_partition_export",
+        "version": "1.0.0",
+        "inputs": {
+          "split": "split.confirmed"
+        },
+        "settings": {},
+        "depends_on": [
+          "split"
+        ]
+      },
+      {
+        "step_id": "candidate",
+        "module_id": "csv_prepare_candidate",
+        "version": "1.0.0",
+        "inputs": {
+          "split": "split.confirmed",
+          "development": "export.development"
+        },
+        "settings": {
+          "missing_ratio_threshold": 0.5,
+          "drop_constant": true,
+          "numeric_imputation": "median",
+          "scaling": "none",
+          "outlier": "none",
+          "iqr_multiplier": 1.5,
+          "binning": "none",
+          "n_bins": 5,
+          "bin_encoding": "ordinal",
+          "categorical_imputation": "missing_category",
+          "unknown_category": "error",
+          "max_categories": 256,
+          "max_output_features": 4096,
+          "max_output_cells": 10000000,
+          "algorithm_version": "tabular_prepare_v1"
+        },
+        "depends_on": [
+          "export"
+        ]
+      },
+      {
+        "step_id": "apply",
+        "module_id": "csv_prepare_apply",
+        "version": "1.0.0",
+        "inputs": {
+          "split": "split.confirmed",
+          "development": "export.development",
+          "candidate": "candidate.saved"
+        },
+        "settings": {},
+        "depends_on": [
+          "candidate"
+        ]
+      }
+    ]
+  },
+  "questions": []
+}

@@ -11,6 +11,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from src.agents import module_pipeline_cli as cli
+from tests.agents.runtime_fixtures import run_supported_preflight
+
 from src.agents.eda_input_contract import bind_eda_input
 from src.agents.input_snapshot import create_snapshot
 from src.agents.module_pipeline import ModulePipelineTool
@@ -59,7 +62,7 @@ class ModulePipelineExecutionTest(unittest.TestCase):
         self.manager = executor(self.tool)
 
     def waiting(self):
-        self.assertEqual(self.manager.run_next().code, "STEP_COMPLETED")
+        self.assertEqual(run_supported_preflight(self.manager, cli).code, "STEP_COMPLETED")
         self.assertEqual(self.manager.run_next().code, "APPROVAL_REQUIRED")
 
     def approval(self):
@@ -247,7 +250,7 @@ class ModulePipelineExecutionTest(unittest.TestCase):
             tool = open_run("cli_demo")
 
         manager = executor(tool)
-        self.assertEqual(manager.run_next().code, "STEP_COMPLETED")
+        self.assertEqual(run_supported_preflight(manager, cli).code, "STEP_COMPLETED")
         self.assertEqual(manager.run_next().code, "APPROVAL_REQUIRED")
 
         with patch("src.agents.module_pipeline_cli.os.isatty", return_value=True), \

@@ -1,6 +1,6 @@
 """대화 CLI→실제 제안 저장·복원→미승인 작업 생성의 합성 통합 검사."""
 
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from io import StringIO
 import json
 from pathlib import Path
@@ -89,7 +89,9 @@ class DialogueHandoffTest(unittest.TestCase):
         self.assertEqual(state["status"], "created")
         self.assertFalse((run / "approval.json").exists())
 
-        with sqlite3.connect((run / "approvals.sqlite3").as_uri() + "?mode=ro", uri=True) as db:
+        with closing(
+            sqlite3.connect((run / "approvals.sqlite3").as_uri() + "?mode=ro", uri=True)
+        ) as db, db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM approvals").fetchone()[0], 0)
 
         envelope = json.loads((self.saved / "dialogue01.json").read_text(encoding="utf-8"))

@@ -50,6 +50,10 @@ class UiDialogue:
     def matches(self, settings):
         return self.settings_id == fingerprint(validate_settings(settings))
 
+    def _validate(self, proposal):
+        return validate_proposal(json.dumps(proposal, ensure_ascii=False),
+                                 expected_input=dict(SOURCE), allowed_modules=ALLOWED).to_dict()
+
     def prepare(self, text, settings):
         """누적 문장·공개 명세·모델 설정의 정확한 미리보기를 만들며 호출은 하지 않는다."""
         with self._lock:
@@ -96,8 +100,7 @@ class UiDialogue:
 
             try:
                 result = self._dialogue.send(pending["text"], confirmed=True)
-                checked = validate_proposal(json.dumps(result["proposal"], ensure_ascii=False),
-                                            expected_input=dict(SOURCE), allowed_modules=ALLOWED).to_dict()
+                checked = self._validate(result["proposal"])
                 proposed = checked["proposal"]["status"] == "proposed"
                 expected = "proposal_validated" if proposed else "awaiting_answer"
 
@@ -128,8 +131,7 @@ class UiDialogue:
             return None
 
         try:
-            checked = validate_proposal(json.dumps(self.result["proposal"], ensure_ascii=False),
-                                        expected_input=dict(SOURCE), allowed_modules=ALLOWED).to_dict()
+            checked = self._validate(self.result["proposal"])
         except (ValueError, TypeError, KeyError):
             return None
 

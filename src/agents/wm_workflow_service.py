@@ -9,6 +9,7 @@ from .wm_module_catalogue import _cli, open_wm_execution, wm_modules
 from .wm_runtime import runtime_status
 from .workflow_approval import approval_progress
 from .worker_paths import _path
+from .operation_progress import report_progress
 
 
 class WmWorkflowService:
@@ -31,6 +32,7 @@ class WmWorkflowService:
 
     def _open(self, name):
         """기존 소유자·코드·입력·선행 증거 검사와 실행 관리자를 재사용한다."""
+        report_progress("contract_check")
         tool, manager = open_wm_execution(self.module_id, self.version, name)
         return _cli(self.module.cli_id), tool, manager
 
@@ -145,6 +147,7 @@ class WmWorkflowService:
             raise ValueError("승인된 단계 실행에는 정확한 승인 ID를 지정하세요.")
 
         result = _SelectedExecutor(manager, check_selection, tool).run_next(approval_id=approval_id)
+        report_progress("result_check")
         return {**asdict(result), "module_id": self.module_id, "run_name": name,
                 "worker_started": tool.worker_started, "local_only": True}
 

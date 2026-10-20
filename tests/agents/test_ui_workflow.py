@@ -198,6 +198,12 @@ class WorkflowResultsTest(unittest.TestCase):
 
 @unittest.skipUnless(find_spec("streamlit"), "Streamlit 미설치")
 class WorkflowAppTest(unittest.TestCase):
+    def setUp(self):
+        permission = patch("src.ui.runtime_notice.server_permissions",
+                           return_value={"elevated": True, "pid": 1, "python": "synthetic-python"})
+        permission.start()
+        self.addCleanup(permission.stop)
+
     def test_same_five_screens_and_rerender_never_executes(self):
         from streamlit.testing.v1 import AppTest
         from src.ui.state import SCREENS
@@ -224,7 +230,7 @@ class WorkflowAppTest(unittest.TestCase):
             self.assertEqual(service.create_calls, 0)
             self.assertEqual(service.status_calls, 0)
 
-    def test_approval_and_execution_are_separate_submissions(self):
+    def test_start_and_approval_execute_without_intermediate_submissions(self):
         from streamlit.testing.v1 import AppTest
         from src.ui.state import SCREENS
 
@@ -241,18 +247,12 @@ class WorkflowAppTest(unittest.TestCase):
             calls = service.status_calls
             app.run()
             self.assertEqual(service.status_calls, calls)
-            app.button(key="workflow_next").click().run()
-            app.button(key="workflow_preview").click().run()
+            app.button(key="approval_flow_start").click().run()
+            self.assertEqual(service.approval_calls, 0)
             app.checkbox[0].check()
-            app.button(key="FormSubmitter:workflow_approve-이번 단계 승인").click().run()
+            app.button(key="FormSubmitter:approval_flow_approve-승인하고 실행").click().run()
             self.assertFalse(app.exception)
             self.assertEqual(service.approval_calls, 1, [e.value for e in app.error])
-            self.assertEqual(service.next_calls, 1)
-            app.run()
-            self.assertEqual(service.approval_calls, 1)
-            app.checkbox[0].check()
-            app.button(key="FormSubmitter:workflow_execute-승인 단계 실행").click().run()
-            self.assertFalse(app.exception)
             self.assertEqual(service.next_calls, 2)
             app.run()
             self.assertEqual(service.next_calls, 2)

@@ -1,0 +1,10 @@
+{
+  "schema_version": "csv_workflows_v1",
+  "modules": [
+    {"module_id": "csv_split_review", "title": "CSV 품질·EDA·분할 확정", "description": "원본 복사본의 품질·EDA·보고서 검토·분할 제안·확정을 각각 승인합니다."},
+    {"module_id": "csv_partition_export", "title": "CSV Train·Validation 내보내기", "description": "확정 분할에서 Train·Validation만 기존 격리 실행기로 내보냅니다."},
+    {"module_id": "csv_prepare_candidate", "title": "CSV 전처리 기준 후보 산출", "description": "Train 기준 후보만 산출하고 원본·Validation·Test를 변경하지 않습니다."},
+    {"module_id": "csv_prepare_apply", "title": "CSV 저장 기준 적용", "description": "완료 후보를 검토하고 별도 승인한 저장 기준을 Train·Validation에 적용합니다."},
+    {"module_id": "csv_local_handoff", "title": "CSV 로컬 전달 묶음", "description": "적용 완료 결과의 고정 파일을 승인 후 로컬 복사·검증합니다. 외부 공유는 하지 않습니다."}
+  ]
+}

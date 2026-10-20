@@ -29,7 +29,7 @@ class DialogueState(TypedDict):
     model_calls: int
 
 
-def _compose_request(request, exchanges, config):
+def _compose_request(request, exchanges, config, build_payload=build_request_payload):
     """검증된 질문과 사용자 답변을 사용자 메시지 안의 대화 자료로 묶는다."""
     if exchanges:
         text = (
@@ -41,7 +41,7 @@ def _compose_request(request, exchanges, config):
         text = request
 
     # 기존 4000자·8 KiB·제어 문자 제한을 전체 누적 대화에도 적용한다.
-    build_request_payload(text, config)
+    build_payload(text, config)
     return text
 
 
@@ -55,14 +55,11 @@ class ProposalDialogue:
         self._thread_id = uuid4().hex
 
         def propose(state):
-            text = _compose_request(state["request"], state["exchanges"], self.config)
-            result = propose_request(text, self.config, backend="langchain").to_dict()
+            text = _compose_request(state["request"], state["exchanges"], self.config, self._build_payload)
+            result = self._propose(text)
 
-            # 그래프 경계에서도 기존 계약으로 검사한다. 상태의 권한 선언은 신뢰하지 않는다.
-            checked = validate_proposal(
-                json.dumps(result["proposal"], ensure_ascii=False),
-                expected_input=dict(SOURCE), allowed_modules=ALLOWED,
-            ).to_dict()
+            # 그래프 경계에서도 선택한 계약으로 검사한다. 상태의 권한 선언은 신뢰하지 않는다.
+            checked = self._validate(result["proposal"])
             return {"proposal": checked, "model_calls": state["model_calls"] + 1}
 
         def route(state):
@@ -78,7 +75,7 @@ class ProposalDialogue:
             # 재개 시 이 노드는 처음부터 실행된다. interrupt 앞에서 모델을 호출하거나
             # 파일을 저장하지 않아 이전 모델 요청이 반복되지 않는다.
             answer = interrupt({"questions": questions})
-            build_request_payload(answer, self.config)
+            self._build_payload(answer, self.config)
             return {"exchanges": state["exchanges"] + [{"questions": questions, "answer": answer}]}
 
         builder = StateGraph(DialogueState)
@@ -90,12 +87,24 @@ class ProposalDialogue:
         # 코드가 만든 기본 자료형만 보관하며 외부 저장소·checkpoint 역직렬화는 받지 않는다.
         self._graph = builder.compile(checkpointer=InMemorySaver())
 
+    def _build_payload(self, text, config):
+        return build_request_payload(text, config)
+
+    def _propose(self, text):
+        return propose_request(text, self.config, backend="langchain").to_dict()
+
+    def _validate(self, proposal):
+        return validate_proposal(
+            json.dumps(proposal, ensure_ascii=False),
+            expected_input=dict(SOURCE), allowed_modules=ALLOWED,
+        ).to_dict()
+
     def preview(self, request_or_answer):
         """다음 호출에 전달할 실제 누적 문장을 만든다. 모델 호출·상태 변경은 없다."""
         if self._phase == "new":
             request, exchanges = request_or_answer, []
         elif self._phase == "awaiting_answer":
-            build_request_payload(request_or_answer, self.config)
+            self._build_payload(request_or_answer, self.config)
             request = self._state["request"]
             exchanges = self._state["exchanges"] + [{
                 "questions": self._state["proposal"]["proposal"]["questions"],
@@ -104,9 +113,9 @@ class ProposalDialogue:
         else:
             raise LocalProposalError("DIALOGUE_NOT_RESUMABLE")
 
-        text = _compose_request(request, exchanges, self.config)
+        text = _compose_request(request, exchanges, self.config, self._build_payload)
         return {"status": "dialogue_preview", "endpoint": self.config.endpoint,
-                "payload": build_request_payload(text, self.config), "model_called": False,
+                "payload": self._build_payload(text, self.config), "model_called": False,
                 "worker_started": False, "execution_approved": False}
 
     def send(self, request_or_answer, *, confirmed=False):

@@ -10,6 +10,7 @@ from src.agents import wm_conflict_cli as candidate_cli
 
 @unittest.skipUnless(os.environ.get("WAFERGUARD_TEST_APPCONTAINER") == "1", "실제 Windows 격리 검사 선택 실행")
 class WmConflictAppContainerTest(unittest.TestCase):
+    native_runtime = True
     # 이전 품질 기록만 모의 OS 전송으로 준비한다. 이번 후보 worker는 실제 AppContainer에서 실행한다.
     setUp = fixtures.WmConflictTest.setUp
     transport = staticmethod(fixtures.WmConflictTest.transport)

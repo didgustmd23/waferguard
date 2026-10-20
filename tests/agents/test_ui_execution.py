@@ -244,7 +244,9 @@ class UiExecutionTest(unittest.TestCase):
         execution = self.prepare()
         receipt = {"name": execution.name, "run_dir": str(execution.directory)}
 
-        with patch("src.ui.candidate_view.current_candidate_receipt", return_value=receipt), patch(
+        with patch("src.ui.runtime_notice.server_permissions",
+                   return_value={"elevated": True, "pid": 1, "python": "synthetic-python"}), patch(
+                "src.ui.candidate_view.current_candidate_receipt", return_value=receipt), patch(
                 "src.ui.navigation.current_candidate_receipt", return_value=receipt), patch(
                 "src.ui.navigation.review_available", return_value=True), patch(
                 "src.ui.navigation.input_available", return_value=True):
@@ -254,21 +256,14 @@ class UiExecutionTest(unittest.TestCase):
             app.session_state["ui_screen"] = SCREENS[3]
             app.run()
             self.assertFalse(app.exception)
-            self.assertTrue(any(item.key == "ui_preflight" for item in app.button),
+            self.assertTrue(any(item.key == "approval_flow_start" for item in app.button),
                             [(item.key, item.label) for item in app.button])
-            app.button(key="ui_preflight").click().run()
+            app.button(key="approval_flow_start").click().run()
             self.assertFalse(execution.error, [item.value for item in app.error])
-            app.button(key="ui_preflight").click().run()
-            app.button(key="ui_approval_preview").click().run()
-            next(item for item in app.button if item.label == "이번 실행 승인").click().run()
+            next(item for item in app.button if item.label == "승인하고 실행").click().run()
             self.assertIsNone(execution.approval_id)
             app.checkbox[0].check()
-            next(item for item in app.button if item.label == "이번 실행 승인").click().run()
-            self.assertEqual(self.calls, 0)
-            app.run()
-            self.assertEqual(self.calls, 0)
-            app.checkbox[0].check()
-            next(item for item in app.button if item.label == "승인한 작업 실행").click().run()
+            next(item for item in app.button if item.label == "승인하고 실행").click().run()
             app.run()
             self.assertEqual(self.calls, 1)
             app.button(key="ui_step_5").click().run()

@@ -19,6 +19,7 @@ WORKER_FILES = (
     "src/agents/worker_paths.py", "src/agents/workflow.py", "src/agents/artifacts.py",
 )
 CONTROL_FILES = WORKER_FILES + (
+    "src/agents/operation_progress.py",
     "src/agents/eda_worker.py", "src/agents/isolated_eda_transport.py",
     "src/agents/isolated_eda.py", "src/agents/job_object.py", "src/agents/appcontainer_native.py",
     "src/agents/appcontainer_probe.py", "src/agents/executor.py",

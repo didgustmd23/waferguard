@@ -1,16 +1,16 @@
 """공통 작업 UI의 세션 상태. 렌더링과 실제 서비스 호출을 분리한다."""
 
 from copy import deepcopy
+from threading import Lock
 
-from src.agents.agent_module_registry import build_agent_registry
+from src.agents.workflow_service_registry import workflow_service, workflow_specifications
 from src.agents.worker_contract import WorkerLimits
 from .dialogue_service import fingerprint
 
 
 def workflow_modules():
     """명세만 조회한다. 원본·작업 DB·worker는 열지 않는다."""
-    return [spec for spec in build_agent_registry().specifications(audience="ui")
-            if spec["execution"]["connection_status"] == "service_registered"]
+    return workflow_specifications()
 
 
 class UiWorkflow:
@@ -28,15 +28,22 @@ class UiWorkflow:
         self.creation_preview = None
         self.creation_selection = None
         self.creation_receipt = None
+        self.creation_busy = False
+        self.creation_requested = None
+        self.creation_failure = None
+        self.path_diagnostics = []
         self.name = None
         self.state = None
         self.approval_preview = None
         self.approval_id = None
         self.last_result = None
         self.error = False
+        self.busy = False
+        self.execution_requested = False
+        self._command_lock = Lock()
 
     def service(self):
-        return build_agent_registry().service(self.module_id, self.version)
+        return workflow_service(self.module_id, self.version)
 
     def preview_creation(self, values, limits):
         self.creation_preview = None
@@ -70,6 +77,24 @@ class UiWorkflow:
         self.approval_id = None
 
     def command(self, action, *, confirmed=False):
+        """UI 복수 제출을 같은 컨트롤러 잠금으로 거부한다. backend 잠금도 유지한다."""
+        if not self._command_lock.acquire(blocking=False):
+            return {"status": "busy"}
+
+        self.busy = True
+        self.execution_requested = False
+        try:
+            return self._perform_command(action, confirmed=confirmed)
+        except BaseException:
+            # 승인 ID가 이미 소진된 실행 중단은 결과 불명으로 취급하고 재시도하지 않는다.
+            if action == "execute" and self.approval_id is None:
+                self.error = True
+            raise
+        finally:
+            self.busy = False
+            self._command_lock.release()
+
+    def _perform_command(self, action, *, confirmed=False):
         if self.name is None:
             raise ValueError("먼저 작업을 준비하거나 연결하세요.")
 

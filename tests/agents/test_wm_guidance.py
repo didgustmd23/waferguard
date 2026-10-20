@@ -1,6 +1,6 @@
 """안내만 수행하고 실제 생성·승인·실행은 호출하지 않는지 확인한다."""
 
-from contextlib import ExitStack
+from contextlib import closing, ExitStack
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
@@ -106,7 +106,9 @@ class WmGuidanceReadonlyTest(unittest.TestCase):
         # 만료된 승인을 조회하더라도 DB status를 expired로 자동 갱신하지 않는다.
         self.assertEqual(self.advise(now=approval.expires_at)["guidance"]["action"], "approve_stage")
 
-        with sqlite3.connect((self.directory / "approvals.sqlite3").as_uri() + "?mode=ro", uri=True) as connection:
+        with closing(
+            sqlite3.connect((self.directory / "approvals.sqlite3").as_uri() + "?mode=ro", uri=True)
+        ) as connection, connection:
             self.assertEqual(connection.execute("SELECT status FROM approvals WHERE approval_id=?",
                                                 (approval.approval_id,)).fetchone()[0], "pending")
 

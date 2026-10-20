@@ -26,6 +26,13 @@ from src.agents.worker_contract import WorkerLimits
 class WmConflictTest(unittest.TestCase):
     def setUp(self):
         """각 클래스 4개와 라벨 충돌·미라벨 복사본만 사용한다. 실데이터는 읽지 않는다."""
+        # 이 fixture는 OS 운송을 모의하는 코어 테스트다. 실제 Python 3.12의
+        # 충돌 분기 제한과 분리하며 native 허용 여부는 런타임 정책 테스트가 검사한다.
+        if not getattr(self, "native_runtime", False):
+            runtime = patch("src.agents.wm_runtime.runtime_status", return_value={"supported": True})
+            runtime.start()
+            self.addCleanup(runtime.stop)
+
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)

@@ -86,12 +86,8 @@ def build_example_payload(example, config=None):
     return build_request_payload(EXAMPLES[example], config)
 
 
-def build_request_payload(request, config=None):
-    """요청 자체만 전달한다. 문장에 적힌 경로를 열거나 자료를 자동 첨부하지 않는다.
-
-    자유 문장에는 사용자가 민감한 내용을 직접 넣을 수 있다. 이 함수가 자동으로
-    익명화하거나 정보 공개를 승인하는 것은 아니며 CLI가 전송 전 확인을 받는다.
-    """
+def validate_request_text(request):
+    """최초 요청과 누적 대화에 같은 길이·제어 문자 제한을 적용한다."""
     if type(request) is not str or not request.strip():
         raise ValueError("비어 있지 않은 요청 문장을 입력하세요.")
 
@@ -101,6 +97,13 @@ def build_request_payload(request, config=None):
     if any((ord(char) < 32 and char not in "\n\t") or ord(char) == 127 for char in request):
         raise ValueError("요청 문장에 터미널 제어 문자를 사용할 수 없습니다.")
 
+
+def build_request_payload(request, config=None):
+    """문장에 적힌 경로를 열거나 자료를 자동 첨부하지 않는다.
+
+    자유 문장은 자동 익명화하지 않는다. CLI가 실제 전송 전 확인을 받는다.
+    """
+    validate_request_text(request)
     config = load_local_config() if config is None else config
     registry = build_agent_registry()
     catalogue = []

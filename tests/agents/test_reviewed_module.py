@@ -10,6 +10,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from src.agents import reviewed_module_cli as cli
+from tests.agents.runtime_fixtures import run_supported_preflight
+
 from src.agents.eda_input_contract import bind_eda_input
 from src.agents.input_snapshot import create_snapshot
 from src.agents.reviewed_module import ReviewedModuleTool
@@ -40,7 +43,7 @@ class ReviewedModuleTest(unittest.TestCase):
         self.calls = 0
 
     def waiting(self):
-        self.assertEqual(self.manager.run_next().code, "STEP_COMPLETED")
+        self.assertEqual(run_supported_preflight(self.manager, cli).code, "STEP_COMPLETED")
         self.assertEqual(self.manager.run_next().code, "APPROVAL_REQUIRED")
 
     def transport(self, request, root, signal):
@@ -69,7 +72,7 @@ class ReviewedModuleTest(unittest.TestCase):
     def test_approval_completion_and_no_rerun(self):
         """승인 전 시작 금지·완료 커밋·재실행 방지·변경 없는 합성 입력을 확인한다."""
         with patch("src.agents.reviewed_module.run_reviewed_worker") as launch:
-            self.assertEqual(self.manager.run_next().code, "STEP_COMPLETED")
+            self.assertEqual(run_supported_preflight(self.manager, cli).code, "STEP_COMPLETED")
             self.assertEqual(self.manager.run_next().code, "APPROVAL_REQUIRED")
 
         launch.assert_not_called()
@@ -190,7 +193,7 @@ class ReviewedModuleTest(unittest.TestCase):
             tool = open_run("cli_demo")
 
         manager = executor(tool)
-        manager.run_next()
+        self.assertEqual(run_supported_preflight(manager, cli).code, "STEP_COMPLETED")
         manager.run_next()
 
         with patch("os.isatty", return_value=False), self.assertRaises(ValueError):

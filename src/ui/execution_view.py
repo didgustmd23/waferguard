@@ -6,6 +6,11 @@ import itertools
 
 from .execution_service import UiExecution
 from .result_service import load_results
+from .progress_view import show_operation_progress
+from .report_view import render_report
+from .runtime_notice import render_permissions, require_execution_permissions
+from .submit_state import clear_unsubmitted_execution
+from .approval_flow_view import render_approval_flow
 
 
 def execution_available(st):
@@ -23,13 +28,20 @@ def execution_available(st):
 
 
 def _submit(st, execution, action, *, confirmed=False):
+    if action in {"approve", "execute"} and not require_execution_permissions(st):
+        clear_unsubmitted_execution(execution)
+        return
+
     try:
-        with st.spinner("로컬 계약 확인 및 요청 처리 중입니다. 작업을 다시 제출하지 마세요."):
-            execution.command(action, confirmed=confirmed)
+        with show_operation_progress(st, "로컬 계약 확인 및 요청 처리 중입니다. 작업을 다시 제출하지 마세요."):
+            result = execution.command(action, confirmed=confirmed)
     except Exception:
         st.error("요청을 완료하지 못했습니다. 현재 작업의 로컬 기록을 확인하세요. "
                  "자동 재시도하거나 승인을 다시 발급하지 않습니다.")
     else:
+        if result.get("status") == "busy":
+            st.info("현재 요청을 처리 중입니다. 다시 제출하지 마세요.")
+            return
         st.rerun()
 
 
@@ -45,64 +57,7 @@ def render_execution(st, receipt, candidate):
         execution = UiExecution(receipt, candidate.run_selection_id)
         st.session_state["ui_active_execution"] = execution
 
-    try:
-        state = execution.read_state()
-    except (OSError, ValueError, TypeError, KeyError):
-        st.error("작업 기록이 변경되었거나 확인할 수 없습니다. 실행하지 않습니다.")
-        return
-
-    st.text("작업 이름: " + execution.name)
-    st.text("현재 상태: " + state.status + " / 단계: " + state.current_stage)
-    st.caption("승인은 실행과 별개입니다. 실행 중에는 현재 화면의 요청 처리가 끝날 때까지 기다려 주세요.")
-
-    if execution.last_result:
-        with st.expander("최근 요청 기술 상세"):
-            st.json(execution.last_result)
-
-    if execution.error:
-        st.error("처리 실패 또는 결과 불명 상태입니다. 결과 화면에서 기록을 확인하고 새 작업으로 준비하세요.")
-        return
-
-    if state.status in {"created", "running"}:
-        if st.button("사전 검사 진행", key="ui_preflight", help="입력·코드를 재검사하고 한 단계만 진행합니다. worker는 시작하지 않습니다."):
-            _submit(st, execution, "preflight")
-        return
-
-    if state.status != "awaiting_approval":
-        st.info("이 작업은 종료되었거나 중단되었습니다. 5번에서 상태와 결과를 확인하세요.")
-        return
-
-    if execution.approval_id is None:
-        if execution.preview is None:
-            if st.button("승인 범위 검사", key="ui_approval_preview", help="현재 입력·모듈·코드·자원 범위를 다시 검사해 표시합니다. 승인은 발급하지 않습니다."):
-                _submit(st, execution, "preview")
-            return
-
-        st.subheader("이번 실행의 승인 범위")
-        st.json(execution.preview["summary"])
-        with st.form("approve_" + execution.name):
-            confirmed = st.checkbox("위 입력·모듈·품질 기준·자원 범위의 이번 실행을 승인합니다", value=False,
-                                    help="현재 작업과 코드에 결합된 일회 승인을 저장합니다. worker는 아직 실행하지 않습니다.")
-            submitted = st.form_submit_button("이번 실행 승인", type="primary")
-
-        if submitted:
-            if confirmed:
-                _submit(st, execution, "approve", confirmed=True)
-            else:
-                st.warning("이번 승인 범위를 확인해 주세요.")
-        return
-
-    st.success("이번 작업의 승인을 저장했습니다. 아래 실행 확인을 제출해야 worker가 시작됩니다.")
-    with st.form("execute_" + execution.name):
-        confirmed = st.checkbox("승인한 범위로 격리 worker를 지금 실행합니다", value=False,
-                                help="일회 승인을 소비합니다. 입력·코드 변경 또는 만료 시 거부하며 자동 재시도하지 않습니다.")
-        submitted = st.form_submit_button("승인한 작업 실행", type="primary")
-
-    if submitted:
-        if confirmed:
-            _submit(st, execution, "execute", confirmed=True)
-        else:
-            st.warning("worker 실행 여부를 확인해 주세요.")
+    render_approval_flow(st, execution, workflow=False)
 
 
 def render_results(st):
@@ -157,7 +112,9 @@ def render_results(st):
     st.text(result["directory"])
 
     render_result_files(st, result["files"])
-    st.caption("결과 해설을 위한 LLM 전송과 외부 추적은 활성화하지 않았습니다.")
+    from .commentary_view import render_commentary
+
+    render_commentary(st, execution, result)
 
 
 def render_result_files(st, files):
@@ -177,6 +134,8 @@ def render_result_files(st, files):
                     st.bar_chart({"특징": [row[0] for row in rows[1:]],
                                   "결측 비율": [float(row[index]) for row in rows[1:]]},
                                  x="특징", y="결측 비율")
+            elif item["suffix"] == ".md":
+                render_report(st, item, files)
             else:
                 # 보고서의 외부 링크·HTML·이미지 참조를 자동으로 해석하지 않는다.
                 st.text(item["data"].decode("utf-8")[:100000])

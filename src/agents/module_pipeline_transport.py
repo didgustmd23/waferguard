@@ -7,6 +7,7 @@ import shutil
 import sys
 
 from .appcontainer_native import AppContainer
+from .operation_progress import report_progress
 from .appcontainer_probe import _acl, probe_environment, runtime_files
 from .artifacts import _fingerprint, _root
 from .writable_directory_acl import prepare_writable_directory
@@ -73,12 +74,16 @@ def run_pipeline_worker(request, root, cancel_event):
     try:
         container = AppContainer("waferguard.modulepipeline." + request.task_id)
         stage = "CODE_MANIFEST"
+        report_progress("contract_check")
         before = code_manifest()
         stage = "RUNTIME_INVENTORY"
+        report_progress("runtime_inventory")
         files = runtime_files(Path(sys.prefix))
         stage = "CONTAINER_CREATE"
+        report_progress("profile_create")
         sid = container.create()
 
+        report_progress("permissions")
         for name in ("runtime", "input", "tools"):
             stage = "ACL_" + name.upper()
             _acl(root / name, sid, "RX")
@@ -89,12 +94,17 @@ def run_pipeline_worker(request, root, cancel_event):
         prepare_writable_directory(root, Path(request.scratch_directory), sid)
 
         stage = "RUNTIME_COPY"
-        for source in files:
+        report_progress("runtime_copy")
+        copied_bytes = 0
+        for index, source in enumerate(files, start=1):
             target = root / "runtime" / source.relative_to(sys.prefix)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
+            copied_bytes += target.stat().st_size
+            report_progress("runtime_copy", completed=index, total=len(files), bytes_done=copied_bytes)
 
         stage = "CODE_COPY"
+        report_progress("tools_copy")
         for name in WORKER_FILES + (ENTRY,):
             target = root / "tools" / ("worker.py" if name == ENTRY else name)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -114,6 +124,7 @@ def run_pipeline_worker(request, root, cancel_event):
             stage = "ENVIRONMENT"
             environment = probe_environment(root / "runtime", Path(request.scratch_directory), os.environ)
             stage = "LAUNCH"
+            report_progress("worker_wait")
             outcome["launch"] = container.launch(
                 root / "runtime" / "python.exe",
                 ["-I", "-S", "-B", str(root / "tools" / "worker.py"), str(root), request.request_id],
@@ -124,6 +135,7 @@ def run_pipeline_worker(request, root, cancel_event):
         raise
     finally:
         try:
+            report_progress("cleanup")
             outcome["profile_cleanup"] = container.close() if container is not None else True
         except Exception as error:
             # 정리 예외로 원래 실패 진단을 덮어쓰지 않는다. 정리 확인이 없으면

@@ -30,6 +30,7 @@ class UiExecution:
         self.error = False
         self.started = False
         self.busy = False
+        self.execution_requested = False
         self.worker_started = False
         self._commands = set()
         self._lock = Lock()
@@ -73,6 +74,8 @@ class UiExecution:
         if not self._lock.acquire(blocking=False):
             return {"status": "busy"}
 
+        self.busy = True
+        self.execution_requested = False
         try:
             state = self.read_state()
             key = (action, state.revision)
@@ -118,6 +121,9 @@ class UiExecution:
                     result = backend.next_step(self.name, self.approval_id)
                     self.worker_started = result.get("worker_started", False)
 
+                from src.agents.operation_progress import report_progress
+
+                report_progress("result_check")
                 self.last_result = deepcopy(result)
                 return result
             except BaseException:
@@ -133,4 +139,5 @@ class UiExecution:
             finally:
                 self.busy = False
         finally:
+            self.busy = False
             self._lock.release()
