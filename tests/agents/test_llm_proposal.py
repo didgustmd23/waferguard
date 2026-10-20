@@ -112,6 +112,80 @@ class LocalOllamaTest(unittest.TestCase):
         connection.close.assert_called_once()
 
 
+class LocalModelListTest(unittest.TestCase):
+    """설치 모델 조회가 고정 loopback에 본문 없이 한 번만 요청하고 이름만 반환하는지 검사한다."""
+
+    def setUp(self):
+        self.config = load_local_config()
+        self.envelope = {"models": [{"name": "qwen3.5:9b", "digest": "synthetic"}, {"name": "other:1b"}]}
+
+    def call(self, raw=None, *, status=200, encoding=None):
+        response = Mock(status=status)
+        response.getheader.return_value = encoding
+        response.read.return_value = json.dumps(self.envelope).encode() if raw is None else raw
+        connection = Mock()
+        connection.getresponse.return_value = response
+
+        with patch.object(local_ollama.http.client, "HTTPConnection", return_value=connection) as factory:
+            try:
+                return local_ollama.list_local_models(self.config), connection, factory, response
+            finally:
+                connection.close.assert_called_once()
+
+    def test_get_tags_without_body_and_names_only(self):
+        with patch.dict("os.environ", {"HTTP_PROXY": "http://untrusted.invalid", "OLLAMA_HOST": "https://untrusted.invalid"}):
+            names, connection, factory, response = self.call()
+
+        self.assertEqual(names, ["other:1b", "qwen3.5:9b"])
+        factory.assert_called_once_with(self.config.host, self.config.port, timeout=self.config.timeout_seconds)
+        connection.request.assert_called_once()
+        self.assertEqual(connection.request.call_args.args, ("GET", "/api/tags"))
+        self.assertNotIn("body", connection.request.call_args.kwargs)
+        response.read.assert_called_once_with(local_ollama.MAX_TAGS_BYTES + 1)
+
+    def test_empty_list_is_valid(self):
+        self.envelope = {"models": []}
+        self.assertEqual(self.call()[0], [])
+
+    def test_http_size_encoding_and_invalid_payload_rejected(self):
+        for status in (301, 404, 500):
+            with self.subTest(status=status), self.assertRaises(local_ollama.LocalProposalError) as caught:
+                self.call(status=status)
+
+            self.assertEqual(caught.exception.code, "OLLAMA_HTTP_FAILED")
+
+        for raw in (b"x" * (local_ollama.MAX_TAGS_BYTES + 1), b"not json", b'{"models":[],"models":[]}',
+                    b'{"models":{}}', b'{"models":[{"name":"bad name"}]}', b'{"models":[{"name":1}]}',
+                    b'{"models":["x"]}', b"\xff", b"[]"):
+            with self.subTest(raw=raw[:30]), self.assertRaises(local_ollama.LocalProposalError):
+                self.call(raw)
+
+        self.envelope = {"models": [{"name": f"m{index}"} for index in range(local_ollama.MAX_LISTED_MODELS + 1)]}
+        with self.assertRaises(local_ollama.LocalProposalError):
+            self.call()
+
+        self.envelope = {"models": []}
+        with self.assertRaises(local_ollama.LocalProposalError):
+            self.call(encoding="gzip")
+
+    def test_connection_error_is_fixed_code_without_retry(self):
+        connection = Mock()
+        connection.request.side_effect = ConnectionRefusedError("synthetic_private_detail")
+
+        with patch.object(local_ollama.http.client, "HTTPConnection", return_value=connection):
+            with self.assertRaises(local_ollama.LocalProposalError) as caught:
+                local_ollama.list_local_models(self.config)
+
+        self.assertEqual(str(caught.exception), "OLLAMA_CONNECTION_FAILED")
+        connection.request.assert_called_once()
+        connection.close.assert_called_once()
+
+    def test_non_config_is_rejected_before_connection(self):
+        with patch.object(local_ollama.http.client, "HTTPConnection", side_effect=AssertionError("네트워크 금지")):
+            with self.assertRaises(local_ollama.LocalProposalError):
+                local_ollama.list_local_models({"host": "remote.invalid", "port": 11434})
+
+
 class LlmProposalTest(unittest.TestCase):
     """합성 요청 제한과 계약 연결을 검사한다. 실제 모델 품질 평가는 아니다."""
 

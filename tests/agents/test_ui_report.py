@@ -134,6 +134,37 @@ class UiReportTableTest(unittest.TestCase):
         render_report(st, self.report('| A | B |\n| --- | --- |\n| x\\|y | z |'), [])
         self.assertEqual(st.dataframe.call_args.args[0].iloc[0, 0], 'x|y')
 
+    def test_candidate_escaped_identifiers_display_without_markdown_backslashes(self):
+        st = MagicMock()
+        text = '| 항목 | 설정 |\n| --- | --- |\n| missing\\_ratio\\_threshold | 0.5 |\n\n'
+        text += '| 특징 | 사유 |\n| --- | --- |\n| sensor\\_5 | CONSTANT\\_OR\\_ALL\\_MISSING |'
+        render_report(st, self.report(text), [])
+        frames = [call.args[0] for call in st.dataframe.call_args_list]
+        self.assertEqual(frames[0].iloc[0, 0], 'missing_ratio_threshold')
+        self.assertEqual(frames[1].iloc[0].tolist(), ['sensor_5', 'CONSTANT_OR_ALL_MISSING'])
+        st.markdown.assert_not_called()
+        st.image.assert_not_called()
+
+    def test_csv_candidate_preview_uses_common_tables_without_creation(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from src.ui.csv_plan_view import inputs
+
+        report = '| 항목 | 설정 |\n| --- | --- |\n| scaling | none |\n\n'
+        report += '| 특징 | 사유 |\n| --- | --- |\n'
+        report += ''.join(f'| sensor\\_{index} | HIGH\\_MISSING\\_RATIO |\n' for index in range(146))
+        plan = SimpleNamespace(active=SimpleNamespace(candidate_report=report))
+        st = MagicMock()
+
+        with patch('src.ui.csv_plan_view._progress', return_value=plan):
+            with patch('src.ui.csv_plan_view.workflow_view.inputs') as form:
+                inputs(st)
+
+        self.assertEqual([call.args[0].shape for call in st.dataframe.call_args_list], [(1, 2), (146, 2)])
+        self.assertEqual(st.dataframe.call_args_list[1].args[0].iloc[-1, 0], 'sensor_145')
+        form.assert_called_once_with(st)
+        st.markdown.assert_not_called()
+
     def test_rows_and_table_count_are_bounded(self):
         st = MagicMock()
         header = '| A | B |\n| --- | --- |\n'

@@ -13,6 +13,7 @@ GitHub에서 확인할 수 있도록 기존 로컬 결과의 집계값만 보존
 | [센서 축소 비교](secom/results/v2_sensor_comparison.csv) | 전체 센서와 반복 weighted gain Top-20의 AP·ROC-AUC | 센서를 각 학습 구간에서 재선택한 시간순 3구간 개발 비교 |
 | [고정 센서 90%·80% 시나리오](secom/results/v2_fixed_scenarios.csv) | OOF 문턱, 이후 Recall·선별 비율·혼동행렬 | 고정 센서 20개 후보의 이후 개발 구간 272행·불량 9건 |
 | [저장·복원 정합성](secom/results/v2_bundle_verification.csv) | 33행 확률·판정·라벨 일치 여부 | 구현 검증이며 탐지 성능 평가가 아님 |
+| [기존 Test 전체 센서·고정 Top-20 비교](secom/results/v2_existing_test_comparison.csv) | 전체 센서 444개와 고정 Top-20의 OOF 목표 80%·90% Recall·선별 비율·혼동행렬·AP·ROC-AUC | 기존 Test 236행·불량 9건. 완전 미사용 독립 Test 아님 |
 
 센서 축소 비교의 AP 상대 하락은 **1.96%**입니다. 전체 모델은 깊이 3, Top-20 모델은 깊이 2이므로 센서 수와 분류기 설정을 함께 변경한 후보 비교입니다. 동일 설정에서 센서 수만 줄인 효과로 해석하지 않습니다. 이 표의 Top-20은 아래 저장 모델의 고정 센서 평가와 다릅니다.
 
@@ -33,13 +34,14 @@ GitHub에서 확인할 수 있도록 기존 로컬 결과의 집계값만 보존
 | V2 — OOF 목표 90% | 100.00% | 94.92% | 9 / 215 / 0 / 12 | 0.075077 | 0.682330 |
 | V2 — OOF 목표 80% | 66.67% | 46.19% | 6 / 103 / 3 / 124 | 0.075077 | 0.682330 |
 
-원본은 `logs/secom/v2/v2_recall90_existing_test/`, `logs/secom/v2/v2_recall80_existing_test/`의 평가 JSON·CSV입니다. 재학습·문턱 변경 없이 평가했으나 과거 V1 결과를 참고한 개발 이력이 있어 완전 미사용 독립 Test는 아닙니다. [V2 Model Card 5.1절](../docs/secom/model_card_v2.md#51-기존-v1-test-구간의-후속-평가)을 참고하세요.
+V2 원본은 `logs/secom/v2/v2_recall90_existing_test/`, `logs/secom/v2/v2_recall80_existing_test/`, V1 원본은 `logs/secom/v1/m3_frozen_time_evaluation/`의 평가 JSON·CSV입니다. 재학습·문턱 변경 없이 평가했으나 과거 V1 결과를 참고한 개발 이력이 있어 완전 미사용 독립 Test는 아닙니다. [V2 Model Card 5.1절](../docs/secom/model_card_v2.md#51-기존-v1-test-구간의-후속-평가)을 참고하세요.
 
 ### CSV 필드 읽는 방법
 
-- 비율은 0~1입니다. `0.9`는 90%이며 `target_recall`은 목표, `recall`은 이후 개발 구간에서 실제 관측한 값입니다.
-- `oof_*`는 문턱을 선택한 과거 OOF 결과입니다. 접두사가 없는 성능 지표는 이후 개발 구간 결과입니다.
-- `alarm_ratio = (TP + FP) / support`는 위험 대상 선별 비율입니다. 실제 불량 비율이나 검사 수행량이 아닙니다.
+- 비율은 0~1입니다. `0.9`는 90%이며 `target_recall`은 목표, `recall`은 관측한 값입니다.
+- `v2_fixed_scenarios.csv`에서 `oof_*`는 문턱을 선택한 과거 OOF 결과이고, 접두사가 없는 성능 지표는 이후 개발 구간 272행 결과입니다.
+- `v2_existing_test_comparison.csv`의 성능 지표는 기존 Test 236행·불량 9건 결과입니다. `recall_target_met`은 이 Test에서 목표 Recall을 달성했는지를 뜻합니다.
+- `alarm_ratio`(`v2_fixed_scenarios.csv`)와 `reinspection_ratio`(`v2_existing_test_comparison.csv`)는 모두 `(TP + FP) / support`인 위험 대상 선별 비율입니다. 실제 불량 비율이나 검사 수행량이 아닙니다.
 - TP는 검출한 불량, FP는 선별한 정상, FN은 놓친 불량, TN은 선별하지 않은 정상입니다.
 - `ap_mean`·`ap_std`는 3구간 AP의 평균·표준편차입니다. `ap_loss_ratio = 1 - candidate_ap_mean / baseline_ap_mean`입니다.
 - 정밀한 문턱과 집계 수치는 원본 값을 유지했습니다. CSV에는 수식이 없으며 기존 실험의 정적 요약입니다.
@@ -53,8 +55,9 @@ GitHub에서 확인할 수 있도록 기존 로컬 결과의 집계값만 보존
 | `v2_sensor_comparison.csv` | `logs/secom/v2/v2_p0_stable_gain_top20_depth2/summary.csv`, `reduction_assessment.csv`, 같은 실험의 설정 기록 |
 | `v2_fixed_scenarios.csv` | `logs/v2_fixed_sensor20_oof/scenario_results.csv` |
 | `v2_bundle_verification.csv` | `models/candidates/v2_fixed20_recall90/verification.json`, `models/candidates/v2_fixed20_recall80/verification.json` |
+| `v2_existing_test_comparison.csv` | `logs/secom/v2/v2_all_vs_fixed20_existing_test/comparison.csv` |
 
-실험을 다시 실행해도 이 공개 요약은 자동 갱신되지 않습니다. 새 결과의 설정·평가 범위를 확인한 뒤 필요한 집계값만 갱신합니다. `.gitignore`는 위 CSV 세 파일만 예외로 허용합니다.
+실험을 다시 실행해도 이 공개 요약은 자동 갱신되지 않습니다. 새 결과의 설정·평가 범위를 확인한 뒤 필요한 집계값만 갱신합니다. `.gitignore`는 `reports/secom/results/`의 위 CSV 네 파일만 예외로 허용합니다.
 
 상세 해석은 [V2 Model Card](../docs/secom/model_card_v2.md), [실험 요약](../docs/secom/SECOM_ML_SUMMARY.md), [상세 보고서](../docs/secom/report.md), 전체 로컬 이력은 [로그 목록](../docs/secom/LOG_INDEX.md)을 참고하세요.
 

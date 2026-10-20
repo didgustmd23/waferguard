@@ -21,7 +21,8 @@ def _table_cells(line):
         return None
 
     # 이스케이프한 셀 안의 세로줄은 열 구분자로 취급하지 않는다.
-    return [cell.strip().replace(r"\|", "|") for cell in re.split(r"(?<!\\)\|", line[1:-1])]
+    return [cell.strip().replace(r"\|", "|").replace(r"\_", "_")
+            for cell in re.split(r"(?<!\\)\|", line[1:-1])]
 
 
 def render_text_with_tables(st, text, table_budget=MAX_INLINE_TABLES):

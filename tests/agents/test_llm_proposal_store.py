@@ -4,6 +4,7 @@ from contextlib import redirect_stdout
 from copy import deepcopy
 from io import StringIO
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -48,6 +49,41 @@ class ProposalStoreTest(unittest.TestCase):
             "schema_version", "proposal", "plan_signature", "proposal_sha256",
             "proposal_only", "execution_approved", "worker_started",
         })
+
+    def test_list_is_empty_without_store_and_creates_nothing(self):
+        self.assertEqual(store.list_saved_proposals(root=self.root), [])
+        self.assertFalse(self.root.exists())
+
+    def test_list_shows_names_and_times_newest_first_without_reading_content(self):
+        self.saved()
+        store.save_proposal("second", self.result, root=self.root)
+        os.utime(self.root / "example.json", (1_700_000_000, 1_700_000_000))
+        os.utime(self.root / "second.json", (1_700_000_100, 1_700_000_100))
+        (self.root / "broken.json").write_text("not json", encoding="utf-8")
+        os.utime(self.root / "broken.json", (1_600_000_000, 1_600_000_000))
+        (self.root / "Bad-Name.json").write_text("{}", encoding="utf-8")
+        (self.root / "notes.txt").write_text("x", encoding="utf-8")
+        (self.root / "folder.json").mkdir()
+
+        with patch("pathlib.Path.open", side_effect=AssertionError("내용 읽기 금지")):
+            items = store.list_saved_proposals(root=self.root)
+
+        self.assertEqual([item["name"] for item in items], ["second", "example", "broken"])
+        self.assertEqual(set(items[0]), {"name", "saved_at"})
+        self.assertTrue(items[0]["saved_at"] > items[1]["saved_at"])
+        # 목록에 있어도 복원 검증은 별도다.
+        with self.assertRaises(ValueError):
+            store.load_proposal("broken", root=self.root)
+
+    def test_list_rejects_relative_root_and_is_bounded(self):
+        with self.assertRaises(ValueError):
+            store.list_saved_proposals(root=Path("relative/proposals"))
+
+        self.root.mkdir(parents=True)
+        for index in range(store.MAX_LISTED + 5):
+            (self.root / f"p{index}.json").write_text("{}", encoding="utf-8")
+
+        self.assertEqual(len(store.list_saved_proposals(root=self.root)), store.MAX_LISTED)
 
     def test_duplicate_never_overwrites(self):
         path = self.saved()

@@ -76,6 +76,10 @@ class UiShellRenderingTest(unittest.TestCase):
         policy_patcher = patch("src.ui.commentary_view.save_policy")
         policy_patcher.start()
         self.addCleanup(policy_patcher.stop)
+        # 폼 제출 모의값이 모든 버튼에 적용되므로 모델 연결 확인도 실제 loopback에 접속하지 않게 한다.
+        models_patcher = patch("src.ui.settings.list_local_models", return_value=[])
+        self.list_models = models_patcher.start()
+        self.addCleanup(models_patcher.stop)
         self.st = MagicMock()
         self.st.button.return_value = False
         self.st.session_state = {}
@@ -136,6 +140,41 @@ class UiShellRenderingTest(unittest.TestCase):
         self.app.main()
         self.assertEqual(self.st.session_state["ui_settings_revision"], 1)
 
+    def test_model_check_runs_only_on_submit_and_hides_stale_result(self):
+        from src.agents.local_ollama import LocalProposalError
+
+        self.st.session_state["ui_screen"] = "설정"
+        self.app.main()
+        self.list_models.assert_not_called()
+
+        configured = self.st.session_state["ui_settings"]["model"]["model"]
+        self.list_models.return_value = [configured, "other:1b"]
+        self.st.form_submit_button.side_effect = lambda label, **kwargs: label == "연결 확인"
+        self.app.main()
+        self.list_models.assert_called_once()
+        self.assertEqual(self.list_models.call_args.args[0].model, configured)
+        self.assertEqual(self.st.session_state["ui_model_check"]["names"], [configured, "other:1b"])
+
+        # 화면 갱신만으로는 다시 조회하지 않는다.
+        self.st.form_submit_button.side_effect = lambda *args, **kwargs: False
+        self.st.success.reset_mock()
+        self.app.main()
+        self.list_models.assert_called_once()
+        self.assertTrue(any(configured in str(call.args[0]) for call in self.st.success.call_args_list))
+
+        # 설정이 바뀌면 이전 결과를 현재 상태처럼 표시하지 않는다.
+        self.st.session_state["ui_settings"]["model"]["model"] = "changed:local"
+        self.st.success.reset_mock()
+        self.st.warning.reset_mock()
+        self.app.main()
+        self.assertFalse(any("설치" in str(call.args[0]) for call in
+                             self.st.success.call_args_list + self.st.warning.call_args_list))
+
+        self.list_models.side_effect = LocalProposalError("OLLAMA_CONNECTION_FAILED")
+        self.st.form_submit_button.side_effect = lambda label, **kwargs: label == "연결 확인"
+        self.app.main()
+        self.assertTrue(any("OLLAMA_CONNECTION_FAILED" in str(call.args[0]) for call in self.st.error.call_args_list))
+
     def test_rerender_preserves_state_without_network_or_file_writes(self):
         self.app.main()
         before = deepcopy(self.st.session_state)
@@ -151,6 +190,8 @@ class UiShellRenderingTest(unittest.TestCase):
         # 직접 지정한 잠긴 화면도 정규화되고 그 외 작업 상태는 보존된다.
         self.st.session_state["ui_screen"] = before["ui_screen"]
         self.assertEqual(self.st.session_state, before)
+        # setUp에서 대체한 모델 조회도 화면 갱신만으로는 호출되지 않아야 한다.
+        self.list_models.assert_not_called()
 
     def test_every_settings_field_has_help_including_disabled_policy(self):
         self.st.session_state["ui_screen"] = "설정"

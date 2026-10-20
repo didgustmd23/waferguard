@@ -1,6 +1,7 @@
 """요청·누적 전송 미리보기·질문·제안 검토 화면. 부작용은 명시적 제출에서만 발생한다."""
 
 from src.agents.llm_proposal import DESCRIPTIONS
+from src.agents.llm_proposal_store import list_saved_proposals
 from .dialogue_service import UiDialogue
 from .state import MODES, validate_draft
 from .source_selection import render_source_selection, selected_source
@@ -62,6 +63,9 @@ def render_request(st):
             st.session_state.pop("ui_execution_candidate", None)
             st.rerun()
             return
+
+    if dialogue is None and source is not None and settings["mode"] == MODES[0]:
+        render_saved_restore(st, settings, source)
 
     accepting = dialogue is None or dialogue.phase in ("new", "awaiting_answer")
     with st.form("request_form"):
@@ -139,6 +143,71 @@ def render_request(st):
             else:
                 st.session_state["ui_draft"] = ""
                 st.rerun()
+
+
+def _refresh_saved(st):
+    try:
+        st.session_state["ui_saved_proposals"] = list_saved_proposals()
+    except (OSError, ValueError):
+        st.session_state["ui_saved_proposals"] = []
+        st.error("저장 제안 폴더를 읽지 못했습니다. 폴더 위치와 링크 사용 여부를 확인하세요.")
+
+
+def render_saved_restore(st, settings, source):
+    """저장 제안 목록에서 고른 뒤 명시적으로 불러온다. 목록 표시·선택은 파일 이름과 시각만 읽는다."""
+    st.subheader("저장된 제안 불러오기")
+    st.caption("‘불러오기’를 누르면 저장 파일을 현재 계약으로 다시 검사합니다. "
+               "모델 호출·승인 발급·작업 생성은 하지 않으며, 불러온 제안도 실행 승인이 아닙니다.")
+
+    if "ui_saved_proposals" not in st.session_state:
+        _refresh_saved(st)
+
+    items = st.session_state["ui_saved_proposals"]
+    times = {item["name"]: item["saved_at"].replace("T", " ")[:19] for item in items}
+
+    with st.form("saved_proposal_restore"):
+        if items:
+            name = st.selectbox("저장된 제안", list(times), format_func=lambda value: f"{value} · 저장 {times[value]}",
+                                help="최근 저장 순입니다. 저장 시각은 파일 수정 시각이며, 목록에 있다고 검증을 통과한 것은 아닙니다.")
+        else:
+            name = None
+            st.info("저장된 제안이 없습니다. 새 요청으로 제안을 만들고 ‘2 제안 검토’에서 저장하세요.")
+
+        refresh = st.form_submit_button("목록 새로고침", help="저장 폴더의 파일 이름과 수정 시각만 다시 읽습니다.")
+        restore = st.form_submit_button("불러오기", type="primary", disabled=not items,
+                                        help="선택한 제안을 기존 복원 검사기로 확인합니다. 모델·worker를 실행하지 않습니다.")
+
+    if refresh:
+        _refresh_saved(st)
+        st.rerun()
+        return
+
+    if not restore or name is None:
+        return
+
+    dialogue = None
+
+    try:
+        dialogue = UiDialogue(settings)
+        dialogue.ui_source_id = source["selection_id"]
+        dialogue.restore_saved(name, settings)
+    except Exception as error:
+        if dialogue is not None:
+            dialogue.close()
+
+        _restore_error(st, error)
+    else:
+        st.session_state["ui_dialogue"] = dialogue
+        st.rerun()
+
+
+def _restore_error(st, error):
+    # 저장 파일 내용이나 예외 원문을 화면에 그대로 노출하지 않는다.
+    if isinstance(error, ImportError):
+        st.error("대화 의존성이 없습니다. 현재 Python 환경의 requirements-agents.txt 설치를 확인하세요.")
+    else:
+        st.error("선택한 제안을 불러오지 못했습니다. 파일이 삭제됐거나 현재 등록 모듈·설정·계획 지문 "
+                 "검사를 통과하지 못했습니다. 파일을 수정하지 않았습니다. ‘목록 새로고침’ 후 확인하세요.")
 
 
 def render_review(st):
