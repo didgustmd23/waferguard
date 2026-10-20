@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 from src.agents.llm_config import LocalModelConfig
 from src.agents.llm_proposal import ALLOWED, SOURCE, build_request_payload
 from src.agents.llm_proposal_contract import validate_proposal
+from src.agents.llm_proposal_store import list_saved_proposals, save_proposal
 from src.ui.dialogue_service import UiDialogue
 from src.ui.model_commands import ModelCommandLedger
 from src.ui.state import SCREENS, default_settings
@@ -192,6 +193,72 @@ class UiDialogueTest(unittest.TestCase):
         self.assertEqual(self.backend.send.call_count, 2)
 
 
+class UiSavedRestoreTest(unittest.TestCase):
+    """저장 제안 불러오기가 모델·명령 기록 없이 기존 복원 검사만 거치는지 확인한다."""
+
+    def setUp(self):
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / "proposals"
+        self.ledger_path = Path(temporary.name) / "commands.sqlite3"
+        self.settings = default_settings()
+        self.backend = mock_dialogue(LocalModelConfig(**self.settings["model"]))
+        save_proposal("saved_one", checked_result(), root=self.root)
+
+    def dialogue(self):
+        dialogue = UiDialogue(self.settings, factory=lambda config: self.backend,
+                              ledger=ModelCommandLedger(self.ledger_path), proposal_root=self.root)
+        self.addCleanup(dialogue.close)
+        return dialogue
+
+    def test_restore_unlocks_review_without_model_or_ledger(self):
+        dialogue = self.dialogue()
+        receipt = dialogue.restore_saved("saved_one", self.settings)
+        self.assertEqual(receipt["status"], "proposal_restored")
+        self.assertFalse(receipt["execution_approved"])
+        self.assertFalse(receipt["worker_started"])
+        self.assertEqual(dialogue.phase, "proposal_validated")
+        self.assertIsNotNone(dialogue.validated_proposal(self.settings))
+        self.assertEqual(dialogue.saved_proposal(self.settings)["name"], "saved_one")
+        self.assertIsNone(dialogue.pending)
+        self.backend.preview.assert_not_called()
+        self.backend.send.assert_not_called()
+
+    def test_tampered_missing_or_changed_settings_keep_new_state(self):
+        path = self.root / "saved_one.json"
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        envelope["proposal"]["pipeline"]["steps"][0]["module_id"] = "unknown_module"
+        (self.root / "tampered.json").write_text(json.dumps(envelope), encoding="utf-8")
+        changed = deepcopy(self.settings)
+        changed["model"]["model"] = "another:local"
+
+        for name, settings in (("tampered", self.settings), ("missing_one", self.settings),
+                               ("saved_one", changed)):
+            dialogue = self.dialogue()
+
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                dialogue.restore_saved(name, settings)
+
+            self.assertEqual(dialogue.phase, "new")
+            self.assertIsNone(dialogue.validated_proposal(self.settings))
+            self.assertIsNone(dialogue.saved)
+
+        self.backend.send.assert_not_called()
+
+    def test_restore_only_into_fresh_dialogue(self):
+        dialogue = self.dialogue()
+        dialogue.prepare("품질 검사 후 결측률을 확인해 주세요.", self.settings)
+
+        with self.assertRaises(ValueError):
+            dialogue.restore_saved("saved_one", self.settings)
+
+        restored = self.dialogue()
+        restored.restore_saved("saved_one", self.settings)
+
+        with self.assertRaises(ValueError):
+            restored.restore_saved("saved_one", self.settings)
+
+
 @unittest.skipUnless(find_spec("langgraph"), "LangGraph 설치 환경에서 실제 대화 그래프를 검사하세요.")
 class UiRealDialogueTest(unittest.TestCase):
     def test_real_graph_clarification_and_proposal_use_existing_unobserved_transport(self):
@@ -274,6 +341,73 @@ class UiDialogueAppTest(unittest.TestCase):
                 app.run()
                 self.assertEqual(len(app.exception), 0)
                 backend.send.assert_called_once()
+
+    def test_saved_list_empty_refresh_and_explicit_restore_never_call_model(self):
+        from streamlit.testing.v1 import AppTest
+
+        settings = default_settings()
+        backend = mock_dialogue(LocalModelConfig(**settings["model"]))
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "proposals"
+            ledger = ModelCommandLedger(Path(directory) / "commands.sqlite3")
+
+            def factory(settings):
+                return UiDialogue(settings, factory=lambda config: backend, ledger=ledger, proposal_root=root)
+
+            with patch("src.ui.dialogue_view.UiDialogue", side_effect=factory), \
+                    patch("src.ui.dialogue_view.list_saved_proposals", side_effect=lambda: list_saved_proposals(root=root)):
+                app = AppTest.from_file(str(ROOT / "src/ui/app.py")).run()
+                app.selectbox(key="ui_source_mode_widget").set_value("데이터 없이 제안만 검토").run()
+                self.assertTrue(any("저장된 제안이 없습니다" in item.value for item in app.info))
+                self.assertTrue(next(item for item in app.button if item.label == "불러오기").disabled)
+
+                # 화면 갱신만으로는 새 파일을 읽지 않고, 새로고침을 눌러야 목록에 나온다.
+                save_proposal("saved_one", checked_result(), root=root)
+                app.run()
+                self.assertTrue(next(item for item in app.button if item.label == "불러오기").disabled)
+                next(item for item in app.button if item.label == "목록 새로고침").click().run()
+                choice = next(item for item in app.selectbox if item.label == "저장된 제안")
+                self.assertEqual(list(choice.options)[0].split(" · ")[0], "saved_one")
+                self.assertTrue(app.button(key="ui_step_2").disabled)
+                choice.set_value("saved_one").run()
+                self.assertTrue(app.button(key="ui_step_2").disabled)
+
+                next(item for item in app.button if item.label == "불러오기").click().run()
+                self.assertEqual(len(app.exception), 0)
+                self.assertFalse(app.button(key="ui_step_2").disabled)
+                app.run()
+                backend.preview.assert_not_called()
+                backend.send.assert_not_called()
+
+    def test_tampered_saved_proposal_shows_fixed_error_and_stays_locked(self):
+        from streamlit.testing.v1 import AppTest
+
+        settings = default_settings()
+        backend = mock_dialogue(LocalModelConfig(**settings["model"]))
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "proposals"
+            save_proposal("saved_one", checked_result(), root=root)
+            envelope = json.loads((root / "saved_one.json").read_text(encoding="utf-8"))
+            envelope["proposal"]["questions"] = ["PRIVATE_TAMPERED_TEXT"]
+            (root / "saved_one.json").write_text(json.dumps(envelope), encoding="utf-8")
+            ledger = ModelCommandLedger(Path(directory) / "commands.sqlite3")
+
+            def factory(settings):
+                return UiDialogue(settings, factory=lambda config: backend, ledger=ledger, proposal_root=root)
+
+            with patch("src.ui.dialogue_view.UiDialogue", side_effect=factory), \
+                    patch("src.ui.dialogue_view.list_saved_proposals", side_effect=lambda: list_saved_proposals(root=root)):
+                app = AppTest.from_file(str(ROOT / "src/ui/app.py")).run()
+                app.selectbox(key="ui_source_mode_widget").set_value("데이터 없이 제안만 검토").run()
+                next(item for item in app.button if item.label == "불러오기").click().run()
+                self.assertEqual(len(app.exception), 0)
+                errors = " ".join(error.value for error in app.error)
+                self.assertIn("검사를 통과하지 못했습니다", errors)
+                self.assertNotIn("PRIVATE_TAMPERED_TEXT", errors)
+                self.assertTrue(app.button(key="ui_step_2").disabled)
+                backend.send.assert_not_called()
 
     def test_missing_optional_dependency_shows_guidance_without_sending(self):
         from streamlit.testing.v1 import AppTest

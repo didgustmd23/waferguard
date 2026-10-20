@@ -2,7 +2,52 @@
 
 from copy import deepcopy
 
+from src.agents.llm_config import LocalModelConfig
+from src.agents.local_ollama import LocalProposalError, list_local_models
 from .state import MODES, validate_settings
+
+
+def render_model_check(st):
+    """버튼을 누른 경우만 적용된 세션 설정의 로컬 서버에 설치 모델 목록을 한 번 조회한다."""
+    st.subheader("모델 연결 확인")
+    st.caption("설치 모델 이름 목록만 조회합니다. 프롬프트·데이터를 보내지 않고 모델을 실행하지 않습니다. "
+               "화면 갱신만으로는 다시 조회하지 않습니다.")
+    model = st.session_state["ui_settings"]["model"]
+
+    with st.form("model_check_form"):
+        checked = st.form_submit_button(
+            "연결 확인",
+            help="현재 적용된 Ollama 주소·포트로 설치 모델 목록을 1회 조회합니다. 자동 재시도·모델 설치·호출은 하지 않습니다.",
+        )
+
+    if checked:
+        result = {"model": deepcopy(model)}
+
+        try:
+            result["names"] = list_local_models(LocalModelConfig(**model))
+        except LocalProposalError as error:
+            result["error"] = error.code
+
+        st.session_state["ui_model_check"] = result
+
+    result = st.session_state.get("ui_model_check")
+
+    # 설정이 바뀐 뒤에는 이전 조회 결과를 현재 상태처럼 보여주지 않는다.
+    if result is None or result["model"] != model:
+        return
+
+    if "error" in result:
+        st.error("연결 확인 실패(" + result["error"] + "). Ollama 실행 여부와 주소·포트를 확인하세요.")
+        return
+
+    st.success(f"Ollama 응답 확인 · 설치 모델 {len(result['names'])}개")
+
+    if model["model"] in result["names"]:
+        st.success("설정한 모델이 설치 목록에 있습니다: " + model["model"])
+    else:
+        st.warning("설정한 모델이 설치 목록에 없습니다: " + model["model"])
+
+    st.text("\n".join(result["names"]) or "(설치 모델 없음)")
 
 
 def render_settings(st):
@@ -49,7 +94,7 @@ def render_settings(st):
             "모델 추론 출력 사용", value=model["think"],
             help="지원 모델에 추론 모드 사용을 요청하는 옵션입니다. 응답 시간과 생성량이 늘 수 있으며, 모델의 답이 정확하다는 보증은 아닙니다.",
         )
-        st.caption("설치 모델 자동 조회·연결 확인은 아직 연결하지 않았습니다. 모델명은 설정값이며 접속 확인 결과가 아닙니다.")
+        st.caption("모델명은 설정값이며 접속 확인 결과가 아닙니다. 설치 여부는 아래 ‘연결 확인’으로 조회합니다.")
 
         st.subheader("작업 기본 자원")
         limits = current["limits"]
@@ -96,6 +141,7 @@ def render_settings(st):
 
     st.text("현재 적용 모델: " + st.session_state["ui_settings"]["model"]["model"])
     st.text("현재 적용 문맥 길이: " + str(st.session_state["ui_settings"]["model"]["num_ctx"]) + " 토큰")
+    render_model_check(st)
 
     from .commentary_view import render_policy
 

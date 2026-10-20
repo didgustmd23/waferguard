@@ -1,9 +1,11 @@
 """제안의 로컬 보관·복원. 해시는 변경 감지용이며 실행 승인·진본 인증이 아니다."""
 
+from datetime import datetime
 import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 
 from src.preprocessing.module_contracts import check_id
 from .artifacts import _is_link
@@ -14,6 +16,7 @@ from .worker_paths import _path
 
 STORE_ROOT = Path(__file__).resolve().parents[2] / "logs/agents/llm_proposals"
 MAX_SAVED_BYTES = 64 * 1024
+MAX_LISTED = 200
 
 
 def _canonical(value):
@@ -28,6 +31,10 @@ def _digest(value):
 def _store_path(name, root, *, create):
     """모델이 아닌 사용자의 짧은 이름으로만 경로를 정하고 링크·덮어쓰기를 거부한다."""
     check_id(name)
+    return _store_root(root, create=create) / f"{name}.json"
+
+
+def _store_root(root, *, create):
     root = Path(root)
 
     if not root.is_absolute():
@@ -45,8 +52,42 @@ def _store_path(name, root, *, create):
     if create:
         root.mkdir(parents=True, exist_ok=True)
 
-    root = _path(root, directory=True)
-    return root / f"{name}.json"
+    return _path(root, directory=True)
+
+
+def list_saved_proposals(*, root=STORE_ROOT):
+    """저장 파일의 이름·수정 시각만 최근 순으로 나열한다.
+
+    파일 내용은 읽지 않는다. 목록에 있다는 것은 검증 통과가 아니며 복원 시 load_proposal이 검사한다.
+    수정 시각은 파일 시스템 값이며 저장 시점의 진본 기록이 아니다.
+    """
+    if not Path(root).is_absolute():
+        raise ValueError("제안 보관 위치는 절대 로컬 경로여야 합니다.")
+
+    if not Path(root).exists():
+        return []
+
+    items = []
+
+    for entry in _store_root(root, create=False).iterdir():
+        if entry.suffix != ".json":
+            continue
+
+        try:
+            check_id(entry.stem)
+        except ValueError:
+            continue
+
+        info = entry.lstat()
+
+        if _is_link(entry) or not stat.S_ISREG(info.st_mode):
+            continue
+
+        saved_at = datetime.fromtimestamp(info.st_mtime).astimezone()
+        items.append({"name": entry.stem, "saved_at": saved_at.isoformat(timespec="seconds")})
+
+    items.sort(key=lambda item: (item["saved_at"], item["name"]), reverse=True)
+    return items[:MAX_LISTED]
 
 
 def _validated(value):

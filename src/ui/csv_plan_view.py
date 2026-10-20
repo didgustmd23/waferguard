@@ -10,6 +10,7 @@ from src.agents.worker_contract import _decode
 from src.agents.workflow_service_registry import CSV_IDS
 from .csv_plan_service import CsvPlanDialogue, CsvPlanSession
 from .state import MODES
+from .report_view import render_text_with_tables
 from . import workflow_view
 
 
@@ -212,7 +213,7 @@ def inputs(st):
     if report is not None:
         st.caption("검증한 후보 보고서의 로컬 표시 복사본입니다. 적용 준비 전에 검토하세요.")
         with st.expander("고정 후보 보고서", expanded=True):
-            st.text(report)
+            render_text_with_tables(st, report)
 
     workflow_view.inputs(st)
 

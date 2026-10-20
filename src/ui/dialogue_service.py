@@ -3,6 +3,7 @@
 from copy import deepcopy
 import hashlib
 import json
+from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
@@ -161,6 +162,35 @@ class UiDialogue:
             return None
 
         return restored
+
+    def restore_saved(self, name, settings):
+        """저장 제안을 기존 복원 검사와 현재 계약으로 다시 확인해 새 대화의 검토 상태로 둔다.
+
+        모델 호출·명령 소비·승인 발급·작업 생성은 하지 않는다. 불러온 제안도 실행 승인이 아니다.
+        """
+        with self._lock:
+            if (not self.matches(settings) or self.phase != "new" or self.pending is not None
+                    or self.result is not None or self.saved is not None):
+                raise ValueError("새 대화에서만 저장 제안을 불러올 수 있습니다.")
+
+            restored = load_proposal(name, root=self._proposal_root)
+            checked = self._validate(restored["proposal"])
+
+            if checked["plan_signature"] != restored["plan_signature"] or checked["proposal"] != restored["proposal"]:
+                raise ValueError("저장 제안이 현재 계약과 일치하지 않습니다.")
+
+            self.result = checked
+            self.phase = "proposal_validated"
+            self.saved = {"status": "proposal_restored", "name": name,
+                          "local_file": str(Path(self._proposal_root) / f"{name}.json"),
+                          "plan_signature": checked["plan_signature"],
+                          "execution_approved": False, "worker_started": False}
+
+            if self.saved_proposal(settings) is None:
+                self.result, self.saved, self.phase = None, None, "new"
+                raise ValueError("불러온 제안의 복원 검증을 통과하지 못했습니다.")
+
+            return deepcopy(self.saved)
 
     def save(self, name, settings, *, confirmed=False):
         """명시적 검토 확인 후 새 파일로 저장한다. 동일 저장 제출은 재검증만 한다."""
