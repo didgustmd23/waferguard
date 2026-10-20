@@ -1,16 +1,20 @@
 # WaferGuard 소스 구성
 
-최신 런타임 정비: `agents/wm_dataset_runtime.py`의 `pinned_torch_version`을 Dataset 생성·승인·합성 검사기가 공유합니다. `agents/wm_runtime.py`는 Windows/Python 3.12 + `2.14.1+cpu`의 WM 정상 6단계만 허용하고 GPU 빌드/충돌 분기는 차단합니다. CLI와 공통 서비스가 같은 모듈별 정책을 적용합니다. 실제 서비스 기반 합성 UI 생성·승인·결과/품질 중단 통합을 포함한 회귀 144개가 통과했으며, 실제 UI 사용자 승인/native 실행은 별도입니다. [최신 지원 범위](../docs/agents/design/METADATA_REGISTRY.md#dataset-버전-공통화312-cpu-정책공통-ui-통합--2026-10-19)를 참고하세요.
+최신 기준(2026-10-20): CSV 5개 작업·WM 정상 개발 6단계의 공통 UI, EDA/CSV workflow LLM 제안·확인 질문, 저장 제안 복원·모델 목록 조회, 별도 정책의 결과 해설을 구현했습니다. 최종 전체 합성 회귀는 958개 실행·945개 통과·13개 생략·실패/오류 0입니다. 실제 모델 품질·OS 격리 재검증과 구분하며 [현재 완료·보류 범위](../docs/agents/GUIDE.md#현재-구현-상태)를 기준으로 읽습니다.
 
-공통 등록 모듈 UI: `ui/workflow_view.py`가 기존 5단계 화면을 재사용하고 `ui/workflow_service.py`가 명시적 생성·조회·승인·한 단계 실행만 공통 서비스에 전달합니다. `agents/wm_creation_schema.py`의 필드 명세로 WM 정상 6단계 생성 폼을 표시합니다. 충돌 분기 2개는 기존 작업 연결만 지원하며 Python 3.12 실행은 차단합니다. `ui/workflow_results.py`는 기존 도메인 검증 후 크기가 제한된 로컬 표시 복사본을 만듭니다. Python 3.12는 검증한 CPU 빌드의 정상 6단계만 지원합니다. [현재 UI 사용법](../docs/agents/design/METADATA_REGISTRY.md#공통-ui-연결과-생성-설정--2026-10-19)을 참고하세요.
+런타임: `agents/wm_dataset_runtime.py`의 `pinned_torch_version`을 Dataset 생성·승인·합성 검사기가 공유합니다. `agents/wm_runtime.py`는 Windows/Python 3.12에서 `2.14.1+cpu` 또는 `2.14.1+cu130`의 WM 정상 6단계를 허용합니다. CUDA 빌드에서도 전처리 worker는 CPU 연산이며 GPU 장치 실행과 충돌 분기 2개는 허용하지 않습니다. CLI와 공통 서비스는 같은 모듈별 정책을 적용하고 실제 환경 격리 호환성 검증은 별도입니다.
 
-WM 공통 작업 서비스: `agents/wm_workflow_service.py`는 모듈 ID·버전으로 기존 생성·조회·승인·한 단계 실행·결과 검증을 호출합니다. `agents/workflow_approval.py`는 화면과 무관한 승인 미리보기·동일 범위 재검사·저장이고, WM 8개 CLI는 기존 터미널 확인 문구를 유지한 채 이 계층을 사용합니다. `agents/wm_runtime.py`는 3.10의 기존 정책과 3.12 CPU 정상 6단계의 모듈별 지원 정책을 공유합니다. GPU 빌드의 격리 실행은 후속 검증 범위입니다. [WM 공통 서비스 안내](../docs/agents/design/METADATA_REGISTRY.md#wm-처리의-공통-서비스-정비--2026-10-19-후속)를 참고하세요.
+공통 등록 모듈 UI: `ui/workflow_view.py`가 기존 5단계 화면을 재사용하고 `ui/workflow_service.py`가 명시적 생성·조회·승인·한 단계 실행만 공통 서비스에 전달합니다. `agents/wm_creation_schema.py`의 필드 명세로 WM 정상 6단계 생성 폼을 표시합니다. 충돌 분기 2개는 기존 작업 연결만 지원하며 Python 3.12 실행은 차단합니다. `ui/workflow_results.py`는 기존 도메인 검증 후 크기가 제한된 로컬 표시 복사본을 만듭니다. 런타임 지원은 위의 현재 정책을 따릅니다. [UI 사용법](../docs/agents/design/METADATA_REGISTRY.md#공통-ui-연결과-생성-설정--2026-10-19)을 참고하세요.
 
-통합 모듈 명세: `agents/module_specification.py`가 `configs/agents/modules/catalogue.json`을 기존 `agent_module_registry.py`의 계약과 대조해 표형 8개·WM 8개의 공통 설명 명세를 제공합니다. `agents/module_specification_cli.py`는 목록·상세 조회 전용이며 기존 사용자 참조 모듈 CLI는 유지합니다. 설정 기본값·WM 승인 단계는 기존 구현에서 읽고 결과 표시 유형·설명·노출 정책을 결합합니다. 실행 서비스·UI 자동 구성 전환은 후속 단계이며 명세 등록은 실행 허가가 아닙니다. [명세 사용법](../docs/agents/design/METADATA_REGISTRY.md#통합-모듈-설명-명세-정비--2026-10-19)을 참고하세요.
+WM 공통 작업 서비스: `agents/wm_workflow_service.py`는 모듈 ID·버전으로 기존 생성·조회·승인·한 단계 실행·결과 검증을 호출합니다. `agents/workflow_approval.py`는 화면과 무관한 승인 미리보기·동일 범위 재검사·저장을 담당하고 WM 8개 CLI가 재사용합니다. 3.10의 기존 정책과 3.12 정상 6단계의 모듈별 지원 정책을 공유하며 설치된 CUDA 빌드와 실제 GPU 장치 사용은 구분합니다. [WM 공통 서비스 안내](../docs/agents/design/METADATA_REGISTRY.md#wm-처리의-공통-서비스-정비--2026-10-19-후속)를 참고하세요.
+
+통합 모듈 명세: `agents/module_specification.py`가 `configs/agents/modules/catalogue.json`을 기존 `agent_module_registry.py`의 계약과 대조해 표형 8개·WM 8개의 공통 설명 명세를 제공합니다. `agents/module_specification_cli.py`는 목록·상세 조회 전용이며 기존 사용자 참조 모듈 CLI는 유지합니다. 설정 기본값·WM 승인 단계는 기존 구현에서 읽고 결과 표시 유형·설명·노출 정책을 결합합니다. 명세 기반 실행 서비스·공통 UI를 연결했으며 명세 등록 자체는 실행 허가가 아닙니다. [명세 사용법](../docs/agents/design/METADATA_REGISTRY.md#통합-모듈-설명-명세-정비--2026-10-19)을 참고하세요.
 
 로컬 UI: `ui/app.py`는 Streamlit 진입점, `ui/navigation.py`는 단계 메뉴, `ui/settings.py`는 세션 설정 폼입니다. `ui/source_selection.py`에서 데이터 유형·경로를 선택하고 CSV 원본은 동의 후 snapshot을 만듭니다. `ui/dialogue_view.py`·`dialogue_service.py`는 기존 LangChain·LangGraph 대화와 제안 검토·저장 계약을 재사용합니다. `ui/input_view.py`는 입력 결합 미리보기, `ui/candidate_service.py`·`candidate_view.py`는 미승인 작업 준비와 영수증 검증을 담당합니다. `ui/model_commands.py`는 원문 없이 명령 ID·지문·상태만 기록해 모델 명령의 중복 전송을 차단합니다.
 
-`ui/execution_service.py`·`execution_view.py`는 CSV 사전 검사·범위 확인·승인·별도 실행과 결과 화면을 연결합니다. `agents/pipeline_approval_cli.py`의 공통 승인 함수를 재사용하며 승인 범위 재검사·일회 소비·AppContainer·Job을 유지합니다. `ui/result_service.py`는 완료/검토 중단 결과 계약과 파일 정합성을 확인해 표·보고서·그림을 로컬에 표시합니다. 화면 갱신에서는 worker를 다시 실행하지 않습니다. WM canonical 이후 작업은 위의 공통 등록 모듈 UI로 연결했습니다. CSV 분할·변환·전달, pickle 격리 변환 생성 UI와 결과 LLM 전송은 미연결입니다. 실행은 동기 방식으로 처리하며 백그라운드 실행·실행 중 취소·브라우저 세션 자동 복원은 후속 범위입니다. WM 기존 작업 이름의 명시적 재연결은 지원합니다.
+`ui/execution_service.py`·`execution_view.py`는 CSV 사전 검사·범위 확인·승인·별도 실행과 결과 화면을 연결합니다. `agents/pipeline_approval_cli.py`의 승인 범위 재검사·일회 소비·AppContainer·Job을 유지합니다. `ui/result_service.py`는 완료/검토 중단 결과의 정합성을 확인해 로컬 표시합니다. CSV 분할·변환·전달과 WM canonical 이후 정상 6단계를 공통 UI에 연결했고 `ui/csv_plan_view.py`가 CSV LLM 실행안을 같은 화면으로 연결합니다. `ui/commentary_*.py`는 별도 정책으로 허용한 집계·그래프만 로컬 모델에 전달합니다. EDA 제안은 목록 선택, CSV 실행안·WM 기존 작업은 명시적 이름으로 연결하며 과거 승인·실행 요청·대화 원문은 복원하지 않습니다. 화면 갱신으로 모델·worker를 다시 실행하지 않습니다. pickle 생성 UI·실행 중 취소·백그라운드 실행은 미지원/보류입니다.
+
+저장·모델 확인: `agents/llm_proposal_store.py`의 목록/복원과 `ui/dialogue_service.py`·`dialogue_view.py`를 연결했습니다. `ui/settings.py`의 연결 확인은 `agents/local_ollama.py`로 loopback `/api/tags`를 1회 조회해 설치 모델 이름만 표시하며 추론·GPU 동작 확인은 아닙니다.
 
 프로젝트 루트에서 `python -m pip install -r requirements.txt`로 통합 의존성을 설치한 뒤 `python -m streamlit run src/ui/app.py`로 실행합니다. Windows x64/Python 3.12의 `wm-gpu312` 환경 하나를 사용합니다. [최신 UI 범위·실행 순서](../docs/agents/GUIDE.md#최신-ui-연결-범위--2026-10-19), [데이터 유형·경로 선택](../docs/agents/GUIDE.md#요청-전-데이터-유형경로-선택-보완), [실행 후보 생성](../docs/agents/GUIDE.md#ui-입력-확인에서-실행-후보-생성-연결)을 참고하세요. 소스 변경 후 UI 서버를 재시작합니다.
 
@@ -224,7 +228,7 @@ from src.sensor_ml.experiments.time_weight_compare import build_weight_candidate
 | 맵 데이터 준비 | ingestion, audit, split, dataset, transforms | 양현승 |
 | 딥러닝 | models, train, metrics, evaluate, predict | 이종수 |
 
-전처리 에이전트의 작업 관리 코드는 별도 `src/agents/`에서 위 데이터 준비 함수를 호출하도록 계획합니다. 여기서 다시 에이전트 실행 관리 코드를 중복 구현하지 않습니다.
+전처리 에이전트의 작업 관리 코드는 `src/agents/`에서 위 데이터 준비 함수를 재사용합니다. 여기서 다시 에이전트 실행 관리 코드를 중복 구현하지 않습니다.
 
 작은 CNN과 ResNet18, 9종 패턴 분류, Lot 비중첩 분할을 계획합니다. SECOM 이진 분류 설정·지표를 그대로 사용하지 않으며 입력 채널·클래스 매핑·맵 변환·학습 조건은 별도 계약으로 관리합니다. `config.json`의 SECOM Profile을 WM 설정으로 교체하지 않습니다.
 
