@@ -13,6 +13,11 @@ from tests.agents import test_wm_workflow_service as fixtures
 @unittest.skipUnless(find_spec('streamlit'), 'Streamlit 미설치')
 class UiWmIntegrationTest(unittest.TestCase):
     def setUp(self):
+        permission = patch("src.ui.runtime_notice.server_permissions",
+                           return_value={"elevated": True, "pid": 1, "python": "synthetic-python"})
+        permission.start()
+        self.addCleanup(permission.stop)
+
         self.fixture = fixtures.WmWorkflowServiceTest()
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
@@ -72,12 +77,7 @@ class UiWmIntegrationTest(unittest.TestCase):
         self.assertFalse(app.error, [e.value for e in app.error])
 
         app.button(key='ui_step_4').click().run()
-        app.button(key='workflow_refresh').click().run()
-        app.button(key='workflow_next').click().run()
-        app.button(key='workflow_next').click().run()
-        app.button(key='workflow_preview').click().run()
-        app.checkbox[0].check()
-        app.button(key='FormSubmitter:workflow_approve-이번 단계 승인').click().run()
+        app.button(key='approval_flow_start').click().run()
         self.assertFalse(app.exception)
         self.assertFalse(app.error, [e.value for e in app.error])
 
@@ -86,7 +86,7 @@ class UiWmIntegrationTest(unittest.TestCase):
             app.run()
             worker.assert_not_called()
             app.checkbox[0].check()
-            app.button(key='FormSubmitter:workflow_execute-승인 단계 실행').click().run()
+            app.button(key='FormSubmitter:approval_flow_approve-승인하고 실행').click().run()
             self.assertFalse(app.exception)
             self.assertFalse(app.error, [e.value for e in app.error])
             self.assertEqual(worker.call_count, 1)

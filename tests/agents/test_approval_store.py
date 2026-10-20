@@ -1,6 +1,7 @@
 """합성 승인으로 SQLite의 단일 소비·동시성·롤백을 확인한다."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -8,6 +9,7 @@ import sqlite3
 import tempfile
 from threading import Barrier
 import unittest
+from unittest.mock import patch
 
 from src.agents.approvals import ApprovalScope
 from src.agents.approval_store import ApprovalStore
@@ -32,8 +34,26 @@ class ApprovalStoreTest(unittest.TestCase):
 
     def reservation_count(self):
         """내부 DB를 직접 조회해 실제 작업 예약 수를 확인한다."""
-        with sqlite3.connect(self.path) as connection:
+        # SQLite 문맥은 트랜잭션만 끝낸다. closing으로 파일 연결도 닫는다.
+        with closing(sqlite3.connect(self.path)) as connection, connection:
             return connection.execute("SELECT COUNT(*) FROM reservations").fetchone()[0]
+
+    def test_reservation_count_closes_connection_even_on_query_failure(self):
+        """조회 성공·실패 모두 연결을 닫고 GC나 임시 폴더 삭제에 기대지 않는다."""
+        for missing_table in (False, True):
+            with self.subTest(missing_table=missing_table):
+                database = ":memory:" if missing_table else self.path
+                connection = sqlite3.connect(database)
+
+                with patch.object(sqlite3, "connect", return_value=connection):
+                    if missing_table:
+                        with self.assertRaises(sqlite3.OperationalError):
+                            self.reservation_count()
+                    else:
+                        self.assertEqual(self.reservation_count(), 0)
+
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    connection.execute("SELECT 1")
 
     def test_roundtrip_and_single_consumption(self):
         """재연결 후에도 승인과 소비 상태가 유지되며 재사용을 거부한다."""
@@ -104,7 +124,7 @@ class ApprovalStoreTest(unittest.TestCase):
         record = self.store.record_confirmed_approval(self.scope)
 
         # 승인 UPDATE 뒤 예약 INSERT가 실패하도록 합성 DB에만 장애를 주입한다.
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection, connection:
             connection.execute("""
                 CREATE TRIGGER fail_reservation BEFORE INSERT ON reservations
                 BEGIN SELECT RAISE(ABORT, 'synthetic_failure'); END
@@ -135,7 +155,7 @@ class ApprovalStoreTest(unittest.TestCase):
 
         record = self.store.record_confirmed_approval(self.scope)
 
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection, connection:
             connection.execute(
                 "UPDATE approvals SET scope_json = '{}' WHERE approval_id = ?",
                 (record.approval_id,),

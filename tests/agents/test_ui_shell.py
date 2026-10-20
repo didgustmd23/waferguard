@@ -72,6 +72,10 @@ class UiShellRenderingTest(unittest.TestCase):
     """Streamlit 미설치 환경에서도 화면 함수의 서비스 미호출 경계를 검사한다."""
 
     def setUp(self):
+        # 모델 설정 폼 검사가 실제 해설 정책 파일을 변경하지 않게 한다.
+        policy_patcher = patch("src.ui.commentary_view.save_policy")
+        policy_patcher.start()
+        self.addCleanup(policy_patcher.stop)
         self.st = MagicMock()
         self.st.button.return_value = False
         self.st.session_state = {}

@@ -1,6 +1,6 @@
 """계획 배정·중단·다른 부모 거부와 읽기 전용 조회를 합성 입력으로 검사한다."""
 
-from contextlib import ExitStack
+from contextlib import closing, ExitStack
 from copy import deepcopy
 from importlib.metadata import version
 import json
@@ -177,7 +177,7 @@ class WmRunReadonlyIntegrationTest(unittest.TestCase):
             database = self.tool.states.directory / "approvals.sqlite3"
             saved_database = database.read_bytes()
 
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute("UPDATE task_runs SET status='failed' WHERE scope_json=?", (
                     json.dumps(asdict(_scope(self.tool, "validate_contract")), ensure_ascii=False, sort_keys=True),))
 

@@ -46,7 +46,7 @@ def _directory(name, *, create_parent=False):
 
 
 def _preflight(output, arguments):
-    if arguments or os.name != "nt" or sys.version_info[:2] != (3, 10):
+    if arguments or os.name != "nt" or sys.version_info[:2] not in ((3, 10), (3, 12)):
         return ToolResult("blocked_input")
 
     (output / "preflight.json").write_text(json.dumps({"version": POLICY_VERSION}), encoding="utf-8")

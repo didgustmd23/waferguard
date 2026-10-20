@@ -1,5 +1,6 @@
 """승인·커밋 증거와 구간 복사본 결합을 합성 산출물로 검사한다. 내보내기 worker 테스트는 아니다."""
 
+from contextlib import closing
 from dataclasses import asdict, replace
 import json
 from pathlib import Path
@@ -131,13 +132,13 @@ class PartitionInputContractTest(unittest.TestCase):
             read_confirmed_split(self.split_run, replace(self.split_scope, config_id="different"))
 
         for sql in ("UPDATE task_runs SET status='failed'", "UPDATE approvals SET status='revoked'"):
-            with sqlite3.connect(self.split_run / "approvals.sqlite3") as connection:
+            with closing(sqlite3.connect(self.split_run / "approvals.sqlite3")) as connection, connection:
                 connection.execute(sql)
 
             with self.assertRaises(ValueError):
                 read_confirmed_split(self.split_run, self.split_scope)
 
-            with sqlite3.connect(self.split_run / "approvals.sqlite3") as connection:
+            with closing(sqlite3.connect(self.split_run / "approvals.sqlite3")) as connection, connection:
                 connection.execute("UPDATE task_runs SET status='committed'")
                 connection.execute("UPDATE approvals SET status='consumed'")
 

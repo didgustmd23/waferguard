@@ -10,6 +10,7 @@ from src.agents import wm_exclusion_cli as apply_cli
 
 @unittest.skipUnless(os.environ.get("WAFERGUARD_TEST_APPCONTAINER") == "1", "실제 Windows 격리 검사 선택 실행")
 class WmExclusionAppContainerTest(unittest.TestCase):
+    native_runtime = True
     # 이전 품질·후보 기록만 모의 OS 전송으로 준비한다. 새 제외 worker는 실제 격리 실행한다.
     setUp = fixtures.WmExclusionTest.setUp
     transport = staticmethod(fixtures.WmExclusionTest.transport)

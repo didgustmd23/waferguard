@@ -1,7 +1,9 @@
 """합성 CPU 검사 코어·결과 계약·복사 목록 검사. 실제 AppContainer를 시작하지 않는다."""
 
 from copy import deepcopy
+from contextlib import redirect_stdout
 import hashlib
+import io
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,6 +14,34 @@ from unittest.mock import patch
 
 from src.agents.wm_cpu_probe import COPY_FILES, validate_child, pinned_torch_version
 from src.agents.wm_cpu_probe_payload import run_synthetic
+
+
+class ProbeProgressTest(unittest.TestCase):
+    def test_phase_counts_and_elapsed_without_paths_or_false_overall_percentage(self):
+        from src.agents.wm_cpu_probe import ProbeProgress
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            progress = ProbeProgress()
+            progress.stage("라이브러리 복사")
+            progress.update(2, 2, 1024 ** 2, 1024 ** 2)
+
+        text = output.getvalue()
+        self.assertIn("라이브러리 복사", text)
+        self.assertIn("파일 2/2", text)
+        self.assertIn("1.0 MiB / 1.0 MiB", text)
+        self.assertIn("경과", text)
+        self.assertNotIn("%", text)
+        self.assertNotIn("D:\\", text)
+
+    def test_heartbeat_is_stopped_and_joined(self):
+        from src.agents.wm_cpu_probe import ProbeProgress
+
+        progress = ProbeProgress()
+        progress.start()
+        progress.close()
+        self.assertTrue(progress.stopped.is_set())
+        self.assertFalse(progress.thread.is_alive())
 
 
 class PinnedTorchVersionTest(unittest.TestCase):

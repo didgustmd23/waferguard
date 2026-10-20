@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import threading
+import time
 import uuid
 
 from .appcontainer_native import AppContainer
@@ -24,6 +26,51 @@ from .worker_paths import _path
 ENTRY = "src/agents/wm_cpu_probe_worker.py"
 PAYLOAD = "src/agents/wm_cpu_probe_payload.py"
 COPY_FILES = tuple(dict.fromkeys((*WM_FILES, PAYLOAD)))
+
+
+class ProbeProgress:
+    """긴 동기 작업 중에도 현재 단계·경과 시간을 알린다. 성공 판정에는 관여하지 않는다."""
+
+    def __init__(self):
+        self.started = time.monotonic()
+        self.lock = threading.Lock()
+        self.stopped = threading.Event()
+        self.label = "검사 준비"
+        self.detail = ""
+        self.thread = threading.Thread(target=self._heartbeat, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def stage(self, label):
+        with self.lock:
+            self.label, self.detail = label, ""
+            self._print()
+
+    def update(self, completed, total, copied_bytes, total_bytes=None):
+        # 파일명·원본 경로·데이터 내용 대신 처리량만 표시한다.
+        with self.lock:
+            size = f"{copied_bytes / 1024 ** 2:,.1f} MiB"
+            if total_bytes is not None:
+                size += f" / {total_bytes / 1024 ** 2:,.1f} MiB"
+
+            self.detail = f" | 파일 {completed:,}/{total:,} | {size}"
+            if completed == total:
+                self._print()
+
+    def _print(self):
+        elapsed = time.monotonic() - self.started
+        print(f"[진행] {self.label}{self.detail} | 경과 {elapsed:.0f}초", flush=True)
+
+    def _heartbeat(self):
+        # 모델·worker를 재호출하지 않는다. 멈춤 신호 대기와 출력만 수행한다.
+        while not self.stopped.wait(5):
+            with self.lock:
+                self._print()
+
+    def close(self):
+        self.stopped.set()
+        self.thread.join()
 
 
 def assess_result(child, launch, limits, torch_version, probe_id):
@@ -98,27 +145,38 @@ def run_probe(limits, max_runtime_bytes):
               "network_evidence_retested": False, "worker_started": False,
               "worker_launch_attempted": False, "profile_cleanup": False}
     container = AppContainer("waferguard.wmcpu." + root.name)
+    progress = ProbeProgress()
+    progress.start()
     stage = "PROFILE_CREATE"
     try:
+        progress.stage("AppContainer 프로필 생성")
         sid = container.create()
         stage = "OUTPUT_ACL"
+        progress.stage("격리 폴더 권한 설정")
         for name in ("runtime", "tools"):
             _acl(root / name, sid, "RX")
         for name in ("output", "scratch/task"):
             _acl(root / name, sid, "M", low=True)
 
         stage = "RUNTIME_INVENTORY"
-        files, torch_version = runtime_manifest(Path(sys.prefix), max_runtime_bytes)
+        progress.stage("라이브러리 목록 수집·해시 검사 (목록 수집 중에는 총량 미확정)")
+        files, torch_version = runtime_manifest(Path(sys.prefix), max_runtime_bytes,
+                                               on_progress=progress.update)
         result.update(runtime_bytes=sum(item["size"] for item in files.values()), torch_version=torch_version)
         (root / "runtime_files.json").write_text(json.dumps(files, sort_keys=True), encoding="utf-8")
         result["runtime_manifest"] = _fingerprint(root / "runtime_files.json")
         before = {name: _fingerprint(project / name) for name in (*COPY_FILES, ENTRY)}
         result["code_manifest"] = before
         stage = "RUNTIME_COPY"
-        for name, record in files.items():
+        progress.stage("격리 라이브러리 복사·검증")
+        copied_bytes = 0
+        for index, (name, record) in enumerate(files.items(), start=1):
             copy_runtime_file(Path(sys.prefix) / name, root / "runtime" / name, record)
+            copied_bytes += record["size"]
+            progress.update(index, len(files), copied_bytes, result["runtime_bytes"])
 
         stage = "TOOLS_COPY"
+        progress.stage("합성 검사 코드 복사·검증")
         for name, record in before.items():
             target = root / "tools" / ("worker.py" if name == ENTRY else name)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -129,6 +187,7 @@ def run_probe(limits, max_runtime_bytes):
             raise ValueError("검사 준비 중 코드가 변경되었습니다.")
 
         stage = "WORKER_LAUNCH"
+        progress.stage("격리 worker 실행 대기·합성 검사 (남은 시간 미확정)")
         environment = probe_environment(root / "runtime", root / "scratch/task", os.environ)
         environment.update({"CUDA_VISIBLE_DEVICES": "-1", "TORCH_DEVICE_BACKEND_AUTOLOAD": "0"})
         result["worker_launch_attempted"] = True
@@ -139,6 +198,7 @@ def run_probe(limits, max_runtime_bytes):
         result["worker_started"] = True
 
         stage = "RESULT_CHECK"
+        progress.stage("worker 결과·자원 한도 검증")
         child = _decode(_read_file(_path(root / "output/child_result.json", directory=False), 65536).decode("utf-8"))
         result["child"] = child
         result["result_checks"] = assess_result(child, result["launch"], limits, torch_version, root.name)
@@ -150,10 +210,12 @@ def run_probe(limits, max_runtime_bytes):
         result["preparation_failure"] = preparation_failure(stage, error)
     finally:
         try:
+            progress.stage("AppContainer 프로필 정리")
             result["profile_cleanup"] = container.close()
         except Exception as error:
             result["cleanup_failure"] = preparation_failure("PROFILE_CLEANUP", error)
         finally:
+            progress.close()
             if not result["profile_cleanup"]:
                 result["status"] = "review_required"
             (root / "result.json").write_text(json.dumps(result, allow_nan=False, indent=2), encoding="utf-8")

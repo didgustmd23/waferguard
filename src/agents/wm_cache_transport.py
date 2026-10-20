@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import sys
 
+from .operation_progress import report_progress
 from .appcontainer_native import AppContainer
 from .appcontainer_probe import _acl, probe_environment, runtime_files
 from .artifacts import _fingerprint, _root
@@ -47,13 +48,17 @@ def run_cache_worker(request, root, cancel_event):
     stage = "CODE_CHECK"
 
     try:
+        report_progress("contract_check")
         before = code_manifest()
         stage = "RUNTIME_INVENTORY"
+        report_progress("runtime_inventory")
         files = runtime_files(Path(sys.prefix))
         stage = "PROFILE_CREATE"
+        report_progress("profile_create")
         sid = container.create()
         stage = "INPUT_ACL"
 
+        report_progress("permissions")
         for name in ("runtime", "input", "tools"):
             _acl(root / name, sid, "RX")
 
@@ -62,12 +67,17 @@ def run_cache_worker(request, root, cancel_event):
         _acl(Path(request.scratch_directory), sid, "M", low=True)
 
         stage = "RUNTIME_COPY"
-        for source in files:
+        report_progress("runtime_copy")
+        copied_bytes = 0
+        for index, source in enumerate(files, start=1):
             target = root / "runtime" / source.relative_to(sys.prefix)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
+            copied_bytes += target.stat().st_size
+            report_progress("runtime_copy", completed=index, total=len(files), bytes_done=copied_bytes)
 
         stage = "TOOLS_COPY"
+        report_progress("tools_copy")
         for name in WORKER_FILES + (ENTRY,):
             target = root / "tools" / ("worker.py" if name == ENTRY else name)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +96,7 @@ def run_cache_worker(request, root, cancel_event):
             stage = "ENVIRONMENT"
             environment = probe_environment(root / "runtime", Path(request.scratch_directory), os.environ)
             stage = "WORKER_LAUNCH"
+            report_progress("worker_wait")
             outcome["launch"] = container.launch(
                 root / "runtime/python.exe",
                 ["-I", "-S", "-B", str(root / "tools/worker.py"), str(root), request.request_id],
@@ -98,6 +109,7 @@ def run_cache_worker(request, root, cancel_event):
         outcome["preparation_failure"] = preparation_failure(stage, error)
     finally:
         try:
+            report_progress("cleanup")
             outcome["profile_cleanup"] = container.close()
         except Exception as error:
             outcome.setdefault("preparation_failure", preparation_failure("PROFILE_CLEANUP", error))

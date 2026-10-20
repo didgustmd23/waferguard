@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from tests.agents.runtime_fixtures import run_supported_preflight
+
 from src.agents.eda_input_contract import bind_eda_input
 from src.agents.eda_result_validation import validate_eda_report
 from src.agents.input_snapshot import create_snapshot
@@ -47,7 +49,7 @@ class SnapshotEdaTest(unittest.TestCase):
         self.calls = 0
 
     def waiting(self):
-        self.assertEqual(self.manager.run_next().code, "STEP_COMPLETED")
+        self.assertEqual(run_supported_preflight(self.manager, cli).code, "STEP_COMPLETED")
         self.assertEqual(self.manager.run_next().code, "APPROVAL_REQUIRED")
 
     def approval(self):
@@ -225,7 +227,7 @@ class SnapshotEdaTest(unittest.TestCase):
             cli.create("cli_example", self.snapshot_dir, profile_path, self.contract.limits, confirmed=True)
             tool = cli.open_run("cli_example")
             manager = cli.executor(tool)
-            manager.run_next()
+            self.assertEqual(run_supported_preflight(manager, cli).code, "STEP_COMPLETED")
             self.assertEqual(manager.run_next().code, "APPROVAL_REQUIRED")
 
             with patch.object(cli.os, "isatty", return_value=False), self.assertRaises(ValueError):

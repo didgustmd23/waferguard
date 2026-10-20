@@ -1,0 +1,15 @@
+{
+  "include": ["src", "tests", "scripts"],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+    "**/venv",
+    "**/.venv",
+    "**/anaconda3",
+    "**/data",
+    "**/datasets",
+    "**/log",
+    "**/logs"
+  ]
+}

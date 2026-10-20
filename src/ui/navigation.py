@@ -18,6 +18,13 @@ STEP_HINTS = (
 
 def availability(st):
     """선택한 진입 경로의 메뉴 조건만 조회한다. worker·승인을 호출하지 않는다."""
+    from .csv_plan_service import selected
+
+    if selected(st.session_state):
+        from .csv_plan_view import flags
+
+        return flags(st)
+
     if st.session_state.get("ui_workflow_mode") == "등록 모듈":
         from .workflow_view import flags
 

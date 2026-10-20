@@ -25,9 +25,15 @@ class DatasetRuntimeTest(unittest.TestCase):
                 (torch / 'version.py').write_bytes(f"__version__ = '2.14.1+{build}'\n".encode())
                 with patch('src.agents.appcontainer_probe.runtime_files', return_value=[executable]), \
                         patch('src.agents.wm_dataset_runtime.distribution', return_value=SimpleNamespace(version='2.14.1')):
-                    records, version = runtime_manifest(root, 1024 * 1024)
+                    progress = []
+                    records, version = runtime_manifest(root, 1024 * 1024,
+                        on_progress=lambda *counts: progress.append(counts))
+                    unchanged, same_version = runtime_manifest(root, 1024 * 1024)
                 self.assertEqual(version, f'2.14.1+{build}')
                 self.assertIn('Lib/site-packages/torch/version.py', records)
+                self.assertEqual((records, version), (unchanged, same_version))
+                self.assertEqual(progress[-1], (len(records), len(records),
+                                                sum(item['size'] for item in records.values())))
 
     def test_probe_and_dataset_share_one_version_validator(self):
         from src.agents.wm_cpu_probe import pinned_torch_version as probe_validator

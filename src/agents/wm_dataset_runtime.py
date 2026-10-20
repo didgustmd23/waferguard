@@ -69,7 +69,7 @@ def pinned_torch_version(prefix, files, metadata_version):
     return values[0]
 
 
-def runtime_manifest(prefix, maximum):
+def runtime_manifest(prefix, maximum, *, on_progress=None):
     """설치된 라이브러리만 해싱한다. 설치·다운로드·모델 파일 로드는 하지 않는다."""
     from .appcontainer_probe import runtime_files
 
@@ -96,7 +96,7 @@ def runtime_manifest(prefix, maximum):
     if len(paths) > MAX_RUNTIME_FILES:
         raise ValueError('Dataset 런타임 파일 개수 상한을 초과했습니다.')
 
-    for path in sorted(paths):
+    for index, path in enumerate(sorted(paths), start=1):
         # Conda 설치 파일은 패키지 저장소와 하드 링크일 수 있다. 신뢰하는
         # 설치 환경은 읽기만 하고 별도 바이트 복사·해시 검증으로 분리한다.
         if (not path.is_file() or
@@ -108,6 +108,10 @@ def runtime_manifest(prefix, maximum):
         record = file_hash(path, maximum - total)
         records[relative] = record
         total += record['size']
+
+        # 선택적 진행 표시일 뿐 해시·상한·승인 계약은 변경하지 않는다.
+        if on_progress is not None:
+            on_progress(index, len(paths), total)
 
     payload = json.dumps(records, sort_keys=True).encode()
 

@@ -9,6 +9,9 @@ import sys
 import unittest
 from unittest.mock import patch
 
+from src.agents import isolated_eda_cli as cli
+from tests.agents.runtime_fixtures import run_supported_preflight
+
 from src.agents.eda_worker import execute_request
 from src.agents.isolated_eda import SyntheticEdaTool, validate_report
 from src.agents.isolated_eda_cli import _executor, cancel
@@ -31,7 +34,7 @@ class IsolatedEdaTest(unittest.TestCase):
 
     def waiting(self):
         """환경 검사 후 EDA 승인 대기 상태를 만든다."""
-        self.assertEqual(self.executor.run_next().code, "STEP_COMPLETED")
+        self.assertEqual(run_supported_preflight(self.executor, cli).code, "STEP_COMPLETED")
         self.assertEqual(self.executor.run_next().code, "APPROVAL_REQUIRED")
 
     def approve(self):

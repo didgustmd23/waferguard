@@ -7,12 +7,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 
+from src.agents import pickle_import_cli as import_cli
 from src.agents.pickle_import_cli import create, executor, open_run, status
 from src.agents.pickle_import_worker import execute_request
 from src.agents.pickle_import_transport import WORKER_FILES, ENTRY
@@ -71,7 +73,12 @@ class WmPickleImportTest(unittest.TestCase):
         return outcome
 
     def approval(self):
-        self.assertEqual(self.manager.run_next().code, "STEP_COMPLETED")
+        # 계산·승인 흐름 검사에서만 지원 OS 조건을 모의한다.
+        # 전역 sys.version_info는 바꾸지 않고 worker 실행 전 모의를 해제한다.
+        with patch.object(import_cli, "os", SimpleNamespace(name="nt")), patch.object(
+            import_cli, "sys", SimpleNamespace(version_info=(3, 10, 0))
+        ):
+            self.assertEqual(self.manager.run_next().code, "STEP_COMPLETED")
 
         with patch("src.agents.pickle_import.run_import_worker") as launch:
             self.assertEqual(self.manager.run_next().code, "APPROVAL_REQUIRED")
@@ -79,6 +86,21 @@ class WmPickleImportTest(unittest.TestCase):
         launch.assert_not_called()
 
         return self.manager.approvals.record_confirmed_approval(self.manager.scope_for("ingest"))
+
+    def test_unsupported_runtime_blocks_before_approval_or_worker(self):
+        """3.12 실제 지원은 허용하지 않으며 사전 검사에서 중단한다."""
+        with patch.object(import_cli, "os", SimpleNamespace(name="nt")), patch.object(
+            import_cli, "sys", SimpleNamespace(version_info=(3, 12, 15))
+        ), patch("src.agents.pickle_import.run_import_worker") as launch, patch.object(
+            self.manager.approvals, "record_confirmed_approval"
+        ) as approve:
+            result = self.manager.run_next()
+
+        self.assertEqual(result.code, "TOOL_INPUT_BLOCKED")
+        self.assertEqual(result.status, "blocked_input")
+        self.assertFalse(self.tool.states.load().artifact_refs)
+        launch.assert_not_called()
+        approve.assert_not_called()
 
     def test_approval_completion_and_reuse(self):
         """승인 전 미실행·한 번의 승인 소비·검증·완료 등록·재실행 방지를 확인한다."""
@@ -234,6 +256,37 @@ class WmPickleImportTest(unittest.TestCase):
                 patch("src.agents.pickle_import_worker._isolated_process", return_value=False), \
                 patch("pandas.read_pickle", side_effect=AssertionError("host worker 역직렬화 금지")):
             self.assertEqual(main(), 2)
+
+
+class PicklePreflightRuntimeTest(unittest.TestCase):
+    """운영 사전 검사의 지원 범위를 계산·승인 흐름 모의와 분리한다."""
+
+    def test_platform_version_and_arguments_gate(self):
+        cases = (
+            ("nt", (3, 10, 0), {}, True),
+            ("nt", (3, 12, 15), {}, False),
+            ("nt", (3, 11, 0), {}, False),
+            ("nt", (3, 13, 0), {}, False),
+            ("posix", (3, 10, 0), {}, False),
+            ("nt", (3, 10, 0), {"unexpected": True}, False),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            for index, (system, version, arguments, supported) in enumerate(cases):
+                output = root / str(index)
+                output.mkdir()
+
+                with self.subTest(system=system, version=version, arguments=arguments), patch.object(
+                    import_cli, "os", SimpleNamespace(name=system)
+                ), patch.object(import_cli, "sys", SimpleNamespace(version_info=version)):
+                    result = import_cli._preflight(output, arguments)
+                    self.assertEqual(result.status, "passed" if supported else "blocked_input")
+                    self.assertEqual((output / "preflight.json").exists(), supported)
+
+                    if supported:
+                        self.assertTrue(import_cli._validate_preflight(output, arguments))
 
 
 if __name__ == "__main__":

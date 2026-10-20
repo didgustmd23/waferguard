@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import sys
 
+from .operation_progress import report_progress
 from .appcontainer_native import AppContainer
 from .appcontainer_probe import _acl, probe_environment, runtime_files
 from .artifacts import _fingerprint, _root
@@ -38,21 +39,30 @@ def run_exclusion_worker(request, root, cancel_event):
     outcome = {"request_id": request.request_id, "profile_cleanup": False}
 
     try:
+        report_progress("contract_check")
         before = code_manifest()
+        report_progress("runtime_inventory")
         files = runtime_files(Path(sys.prefix))
+        report_progress("profile_create")
         sid = container.create()
 
+        report_progress("permissions")
         for name in ("runtime", "input", "tools"):
             _acl(root / name, sid, "RX")
 
         _acl(Path(request.output_directory), sid, "M", low=True)
         _acl(Path(request.scratch_directory), sid, "M", low=True)
 
-        for source in files:
+        report_progress("runtime_copy")
+        copied_bytes = 0
+        for index, source in enumerate(files, start=1):
             target = root / "runtime" / source.relative_to(sys.prefix)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
+            copied_bytes += target.stat().st_size
+            report_progress("runtime_copy", completed=index, total=len(files), bytes_done=copied_bytes)
 
+        report_progress("tools_copy")
         for name in WORKER_FILES + (ENTRY,):
             target = root / "tools" / ("worker.py" if name == ENTRY else name)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -68,6 +78,7 @@ def run_exclusion_worker(request, root, cancel_event):
             outcome["launch"] = {"status": "cancelled"}
         else:
             environment = probe_environment(root / "runtime", Path(request.scratch_directory), os.environ)
+            report_progress("worker_wait")
             outcome["launch"] = container.launch(
                 root / "runtime/python.exe",
                 ["-I", "-S", "-B", str(root / "tools/worker.py"), str(root), request.request_id],
@@ -75,6 +86,7 @@ def run_exclusion_worker(request, root, cancel_event):
                 limits=request.limits, cancel_event=cancel_event,
             )
     finally:
+        report_progress("cleanup")
         outcome["profile_cleanup"] = container.close()
         (root / "transport.json").write_text(json.dumps(outcome), encoding="utf-8")
 

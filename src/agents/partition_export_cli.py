@@ -50,7 +50,7 @@ def _directory(name, *, create_parent=False):
 
 def _preflight(output, arguments):
     """지원 플랫폼만 확인한다. 이 단계의 통과는 OS 격리 성공 증거가 아니다."""
-    if arguments or os.name != "nt" or sys.version_info[:2] != (3, 10):
+    if arguments or os.name != "nt" or sys.version_info[:2] not in ((3, 10), (3, 12)):
         return ToolResult("blocked_input")
 
     (output / "preflight.json").write_text(json.dumps({"version": POLICY_VERSION}), encoding="utf-8")

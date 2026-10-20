@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import sys
 
+from .operation_progress import report_progress
 from .appcontainer_native import AppContainer
 from .appcontainer_probe import _acl, probe_environment, runtime_files
 from .artifacts import _fingerprint, _root
@@ -49,8 +50,10 @@ def run_dataset_worker(request, root, cancel_event):
     stage = "CODE_CHECK"
 
     try:
+        report_progress("contract_check")
         before = code_manifest()
         stage = "RUNTIME_INVENTORY"
+        report_progress("runtime_inventory")
         from .worker_contract import _decode
         from .wm_canonical_contract import digest
         from .wm_canonical_results import _read_small
@@ -62,9 +65,11 @@ def run_dataset_worker(request, root, cancel_event):
         if digest(files) != packet["runtime_sha256"]:
             raise ValueError("Dataset 런타임 명세가 승인 범위와 다릅니다.")
         stage = "PROFILE_CREATE"
+        report_progress("profile_create")
         sid = container.create()
         stage = "INPUT_ACL"
 
+        report_progress("permissions")
         for name in ("runtime", "input", "tools"):
             _acl(root / name, sid, "RX")
 
@@ -73,10 +78,15 @@ def run_dataset_worker(request, root, cancel_event):
         _acl(Path(request.scratch_directory), sid, "M", low=True)
 
         stage = "RUNTIME_COPY"
-        for name, record in files.items():
+        report_progress("runtime_copy")
+        copied_bytes = 0
+        for index, (name, record) in enumerate(files.items(), start=1):
             copy_runtime_file(Path(sys.prefix) / name, root / "runtime" / name, record)
+            copied_bytes += record["size"]
+            report_progress("runtime_copy", completed=index, total=len(files), bytes_done=copied_bytes)
 
         stage = "TOOLS_COPY"
+        report_progress("tools_copy")
         for name in WORKER_FILES + (ENTRY,):
             target = root / "tools" / ("worker.py" if name == ENTRY else name)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +106,7 @@ def run_dataset_worker(request, root, cancel_event):
             environment = probe_environment(root / "runtime", Path(request.scratch_directory), os.environ)
             environment.update({"CUDA_VISIBLE_DEVICES": "-1", "TORCH_DEVICE_BACKEND_AUTOLOAD": "0"})
             stage = "WORKER_LAUNCH"
+            report_progress("worker_wait")
             outcome["launch"] = container.launch(
                 root / "runtime/python.exe",
                 ["-I", "-S", "-B", str(root / "tools/worker.py"), str(root), request.request_id],
@@ -108,6 +119,7 @@ def run_dataset_worker(request, root, cancel_event):
         outcome["preparation_failure"] = preparation_failure(stage, error)
     finally:
         try:
+            report_progress("cleanup")
             outcome["profile_cleanup"] = container.close()
         except Exception as error:
             outcome.setdefault("preparation_failure", preparation_failure("PROFILE_CLEANUP", error))

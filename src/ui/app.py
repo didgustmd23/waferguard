@@ -55,6 +55,9 @@ def main():
     with st.sidebar:
         st.selectbox("작업 시작 방식", ("LLM 제안", "등록 모듈"), key="ui_workflow_mode",
                      help="LLM 제안은 기존 대화 흐름입니다. 등록 모듈은 공통 명세로 작업을 준비하며 LLM을 호출하지 않습니다.")
+        if st.session_state.get("ui_workflow_mode", "LLM 제안") == "LLM 제안":
+            st.selectbox("제안 범위", ("품질·EDA", "CSV 분할·전처리"), key="ui_proposal_scope",
+                         help="CSV 실행안도 같은 5단계를 사용합니다. 작업 준비와 각 실행 승인은 별도입니다.")
 
     screen = render_navigation(st)
     st.title("전처리 작업실")
@@ -69,21 +72,33 @@ def main():
                      workflow_view.approval, workflow_view.results, render_settings)
         renderers = tuple((lambda renderer=renderer: renderer(st)) for renderer in renderers)
 
+    from src.ui.csv_plan_service import selected
+
+    if selected(st.session_state):
+        from src.ui import csv_plan_view
+
+        renderers = tuple((lambda renderer=renderer: renderer(st)) for renderer in (
+            csv_plan_view.request, csv_plan_view.review, csv_plan_view.inputs,
+            csv_plan_view.approval, csv_plan_view.results, render_settings))
+
     with st.container(border=True):
         renderers[SCREENS.index(screen)]()
 
     with st.expander("기술 상세 보기"):
-        dialogue = st.session_state.get("ui_dialogue")
+        csv_plan = st.session_state.get("ui_csv_plan") if selected(st.session_state) else None
+        dialogue = st.session_state.get("ui_csv_dialogue" if selected(st.session_state) else "ui_dialogue")
         execution = st.session_state.get("ui_active_execution")
-        workflow = st.session_state.get("ui_workflow") if st.session_state.get("ui_workflow_mode") == "등록 모듈" else None
-        st.json({"ui_phase": "registered_workflow" if workflow is not None else "local_dialogue", "settings_revision": st.session_state["ui_settings_revision"],
+        workflow = (csv_plan.active if csv_plan is not None else
+                    st.session_state.get("ui_workflow") if st.session_state.get("ui_workflow_mode") == "등록 모듈" else None)
+        st.json({"ui_phase": "csv_workflow" if selected(st.session_state) else "registered_workflow" if workflow is not None else "local_dialogue", "settings_revision": st.session_state["ui_settings_revision"],
                  "dialogue_phase": None if dialogue is None else dialogue.phase,
                  "approval_recorded": (workflow.approval_id is not None if workflow is not None
                                        else execution is not None and execution.approval_id is not None),
                  "worker_started": (bool((workflow.last_result or {}).get("worker_started")) if workflow is not None
                                     else execution is not None and execution.worker_started),
                  "langsmith_tracing": False,
-                 "settings_storage": "session_memory_only"})
+                 "settings_storage": "session_memory_only",
+                 "workflow_storage": "local_plan_and_creation_records" if csv_plan is not None else None})
 
 
 if __name__ == "__main__":

@@ -1,25 +1,14 @@
-"""설정 화면의 폼과 미연결 기능 표시. 모델 호출·정책 활성화는 하지 않는다."""
+"""모델·자원 설정과 결과 해설 전달 정책. 저장 자체로 모델을 호출하지 않는다."""
 
 from copy import deepcopy
 
 from .state import MODES, validate_settings
 
 
-# 항목 허용은 자동 전송 승인이 아니다. 비활성 항목도 향후 의미와 현재 한계를 안내한다.
-POLICY_HELP = {
-    "작업 상태": "완료·검토 필요·실패 단계와 정제된 오류 코드입니다. 원문 로그는 포함하지 않습니다. 현재 전송 기능은 미연결입니다.",
-    "데이터 구조": "컬럼 수·자료형·역할 정보입니다. 실제 컬럼명 허용과 별개이며 구조만으로도 정보를 추측할 수 있습니다.",
-    "실제 컬럼명·라벨명": "센서명·분류명처럼 실제로 사용하는 이름입니다. 표·그래프의 이름도 이 범위에 포함됩니다.",
-    "집계": "결측률·분포·상관계수·표본 수 등 요약 수치입니다. 원본 행이 없어도 민감한 정보를 추측할 수 있습니다.",
-    "선택한 결과 표": "사용자가 선택한 결과 표의 허용된 행·열만 대상으로 합니다. 원본 데이터 표 전체를 전달하는 기능은 아닙니다.",
-    "선택한 그래프": "사용자가 선택한 결과 그림입니다. 제목·축·범례·수치도 전달 정보가 되며 원본 웨이퍼 이미지는 제외합니다. 후속 연결 예정입니다.",
-}
-
-
 def render_settings(st):
     """저장 버튼을 누른 경우만 검증하고 이번 세션 설정을 교체한다."""
     st.header("설정")
-    st.caption("현재는 이번 브라우저 세션에만 적용합니다. 프로젝트 JSON·정책 파일은 변경하지 않습니다.")
+    st.caption("모델·자원 설정은 이번 세션에 적용합니다. 아래 해설 전달 정책은 별도 저장 버튼으로 로컬 파일에 보존합니다.")
     current = st.session_state["ui_settings"]
     model = current["model"]
 
@@ -106,21 +95,10 @@ def render_settings(st):
                 st.info("설정 변경이 없습니다. 기존 세션 설정을 유지합니다.")
 
     st.text("현재 적용 모델: " + st.session_state["ui_settings"]["model"]["model"])
+    st.text("현재 적용 문맥 길이: " + str(st.session_state["ui_settings"]["model"]["num_ctx"]) + " 토큰")
 
-    st.subheader("LLM 정보 전달 정책")
-    st.info("정책 제어 계층 연결 전입니다. 결과 전송은 모두 차단하며 아래 항목은 상태 표시용입니다.")
-    st.selectbox(
-        "사용 목적", ("실행안 제안·질문", "결과 해설", "정제된 오류 설명"), disabled=True,
-        help="목적별로 전달 허용 범위를 분리합니다. 같은 자료도 다른 목적으로 자동 전송하지 않습니다. 현재는 정책 화면 표시만 제공합니다.",
-    )
+    from .commentary_view import render_policy
 
-    for label, explanation in POLICY_HELP.items():
-        st.checkbox(label + " 전달", value=False, disabled=True, help=explanation)
-
-    st.caption("향후 기본 정책 저장과 실제 자료 전송 확인을 분리합니다. 원본·키·승인 토큰은 전달 대상이 아닙니다.")
-    st.button(
-        "기본 전달 정책 저장 · 연결 예정", disabled=True,
-        help="구현 후에도 기본 허용 범위만 저장합니다. 실제 자료는 별도 미리보기·전송 확인을 거쳐야 하며, 현재는 저장 기능이 연결되지 않았습니다.",
-    )
+    render_policy(st)
     st.subheader("추가 기능 상태")
     st.text("외부 API: 미지원\nLangSmith 추적: 비활성화\n대화 파일 저장: 미연결")
