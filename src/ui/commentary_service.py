@@ -74,6 +74,10 @@ def failure_code(error):
 
 def build_packet(result, policy):
     """허용된 집계만 포함한다. 상한 초과 시 일부만 잘라서 전송하지 않는다."""
+    # 역할 지정 전 입력 진단 결과는 컬럼명·원본 수치를 담으므로 해설 자료로 만들지 않는다.
+    if result.get("diagnostic_only") is not None:
+        raise ValueError("COMMENTARY_DIAGNOSTIC_BLOCKED")
+
     if result["status"] not in ("completed", "passed"):
         raise ValueError("RESULT_NOT_COMPLETED")
 

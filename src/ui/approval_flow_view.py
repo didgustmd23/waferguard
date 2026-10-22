@@ -1,7 +1,7 @@
 """CSV·WM에서 같은 승인 중심 조작을 제공한다. 렌더링만으로 실행하지 않는다."""
 
 from .approval_flow import ApprovalFlow, mark_flow_pending
-from .commentary_view import after_completion, render_classification
+from .commentary_view import after_completion, diagnostic_blocked, render_classification
 from .progress_view import show_operation_progress
 from .runtime_notice import render_permissions, require_execution_permissions
 from .workflow_feedback import STATE_LABELS, STAGE_LABELS, render_approval_summary, show_error
@@ -13,6 +13,8 @@ def render_approval_flow(st, controller, *, workflow):
         flow = ApprovalFlow(controller, workflow=workflow)
         controller.approval_flow = flow
 
+    # 입력 진단은 해설 민감도 지정·완료 후 자동 해설을 모두 열지 않는다.
+    commentary = not diagnostic_blocked(controller)
     st.text("작업 이름: " + controller.name)
     permission_ok = render_permissions(st)
     st.caption("시작 후 다음 승인 지점까지 자동 진행합니다. 승인하면 해당 범위를 실행합니다. 실패 시 자동 재시도하지 않습니다.")
@@ -34,15 +36,27 @@ def render_approval_flow(st, controller, *, workflow):
         st.info("현재 요청을 처리 중입니다. 버튼을 잠갔습니다. 다음 승인 지점 또는 완료까지 기다려 주세요.")
 
     if flow.error or controller.error:
-        st.error("요청이 중단됐거나 결과가 불명확합니다. 5 결과 확인에서 저장된 상태를 확인하세요. 자동 재시도하지 않습니다.")
+        st.error("요청이 중단됐거나 결과가 불명확합니다. 5 결과 확인에서 저장된 상태를 확인하세요. 자동 재시도하지 않습니다." if commentary
+                 else "입력 진단 요청이 중단됐거나 결과가 불명확합니다. 자동 재시도하지 않습니다. 아래 안내에 따라 새 작업을 준비하세요.")
         return
 
     if state and state["status"] in {"completed", "blocked_input", "failed_runtime", "security_locked", "cancelled"}:
-        st.info("작업이 완료되었거나 중단되었습니다. 5 결과 확인에서 보고서를 확인하세요.")
+        if commentary:
+            st.info("작업이 완료되었거나 중단되었습니다. 5 결과 확인에서 보고서를 확인하세요.")
+        else:
+            # 실패·차단·취소 상태에서 검증된 결과가 있는 것처럼 안내하지 않는다.
+            st.info({
+                "completed": "입력 진단이 완료되었습니다. 아래에서 검증된 결과를 확인하세요.",
+                "blocked_input": "입력 진단이 차단되었습니다. 아래 사유와 다음 행동을 확인하세요.",
+                "failed_runtime": "입력 진단 실행에 실패했습니다. 아래 오류 안내를 확인하세요.",
+                "security_locked": "입력 진단 실행에 실패했습니다. 아래 오류 안내를 확인하세요.",
+                "cancelled": "입력 진단이 취소되었습니다.",
+            }[state["status"]])
         return
 
     if not flow.started:
-        render_classification(st, controller, disabled=flow.busy)
+        if commentary:
+            render_classification(st, controller, disabled=flow.busy)
         st.button("작업 시작·승인 지점까지 진행", key="approval_flow_start", disabled=flow.busy or not runtime_ok,
                   on_click=mark_flow_pending, args=(st, flow, "start"))
 
@@ -71,16 +85,17 @@ def render_approval_flow(st, controller, *, workflow):
         return
 
     try:
-        if action == "start":
+        if action == "start" and commentary:
             from .commentary_view import freeze_classification
 
             freeze_classification(st, controller)
         with show_operation_progress(st, "다음 승인 지점 또는 완료까지 처리하고 있습니다."):
             result = flow.run(action)
     except Exception as error:
-        show_error(st, error, "요청을 완료하지 못했습니다. 5 결과 확인에서 저장된 기록을 확인하세요.")
+        show_error(st, error, "요청을 완료하지 못했습니다. 5 결과 확인에서 저장된 기록을 확인하세요." if commentary
+                   else "입력 진단 요청을 완료하지 못했습니다. 자동 재시도하지 않습니다.")
     else:
-        if result.get("status") == "completed":
+        if result.get("status") == "completed" and commentary:
             after_completion(st, controller, workflow=workflow)
         if result.get("status") != "busy":
             st.rerun()

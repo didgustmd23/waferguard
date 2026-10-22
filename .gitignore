@@ -106,4 +106,4 @@ Thumbs.db
 *.ckpt
 *.onnx
 pytorch_model*.bin
-
+/graphify-out/

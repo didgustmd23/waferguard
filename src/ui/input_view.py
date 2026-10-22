@@ -7,6 +7,7 @@ from src.agents.input_snapshot import InputTooLarge, MIB
 from .path_picker import path_input
 from .dialogue_service import fingerprint
 from .candidate_view import render_candidate_creation
+from .profiling_service import effective_snapshot, linked_profile
 
 
 def prepare_selected_input(st):
@@ -16,15 +17,18 @@ def prepare_selected_input(st):
     if source is None or source["mode"] not in (CSV_SOURCE, CSV_SNAPSHOT):
         return "", "", False
 
+    # 첫 화면에서 직접 지정한 프로파일이 우선이다. 없으면 같은 선택에서 저장한 EDA 프로파일을 기본값으로 쓴다.
+    profile = source["profile"] or linked_profile(st.session_state, source["selection_id"], "eda_review_v1")
+
     if source["mode"] == CSV_SNAPSHOT:
-        return source["path"], source["profile"], True
+        return _effective(st, source, source["path"]), profile, True
 
     st.text("선택한 CSV 원본: " + source["path"])
     copied = st.session_state.get("ui_source_snapshot")
 
     if copied is not None and copied["selection_id"] == source["selection_id"]:
         st.success("선택한 CSV의 로컬 snapshot을 준비했습니다. 원본은 변경하지 않았습니다.")
-        return copied["directory"], source["profile"], True
+        return _effective(st, source, copied["directory"]), profile, True
 
     with st.form("copy_source_" + source["selection_id"]):
         maximum = st.number_input("입력 복사 크기 상한 (MiB)", min_value=1, max_value=4096,
@@ -48,7 +52,21 @@ def prepare_selected_input(st):
                 st.session_state["ui_source_snapshot"] = copied
                 st.rerun()
 
-    return None, source["profile"], True
+    return None, profile, True
+
+
+def _effective(st, source, directory):
+    """1번에서 등록한 중복 컬럼명 정비 파생 입력이 있으면 그 snapshot으로 결합·승인한다."""
+    try:
+        effective = effective_snapshot(st.session_state, source["selection_id"], directory)
+    except ValueError:
+        st.error("1번에서 등록한 파생 입력이 등록 기록과 맞지 않아 사용하지 않습니다. 1번에서 입력을 다시 선택하세요.")
+        return None
+
+    if effective != directory:
+        st.info("1번에서 중복 컬럼명을 정비한 파생 입력을 사용합니다. 원본과 기존 snapshot은 변경하지 않았습니다.")
+
+    return effective
 
 
 def input_available(st):
@@ -102,7 +120,7 @@ def render_input(st):
 
     with st.form("input_selection_form"):
         namespace = fingerprint({"source": getattr(dialogue, "ui_source_id", None),
-                                 "snapshot": default_snapshot})[:16]
+                                 "snapshot": default_snapshot, "profile": default_profile})[:16]
         snapshot = path_input(
             st, "snapshot 폴더 경로", key="input_snapshot_" + namespace, kind="directory",
             value=default_snapshot, disabled=fixed_snapshot,

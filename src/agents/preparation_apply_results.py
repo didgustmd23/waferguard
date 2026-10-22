@@ -38,12 +38,21 @@ def read_application(directory, contract, code_id):
 
         report = json.loads(_read_file(root / "application.json", 65536).decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_invalid)
         expected_fields = {"schema_version", "status", "binding", "partitions", "transformed", "refit", "test_used", "model_trained"}
+        # v2는 구간별 실제 적용 영향 합계를 더한다. v1(영향 집계 이전 적용)은 이전 코드로 실행한 기록일 때만 받는다.
+        versioned = type(report) is dict and report.get("schema_version") == "preparation_application_v2"
 
-        if (type(report) is not dict or set(report) != expected_fields or report["schema_version"] != "preparation_application_v1"
+        if versioned:
+            expected_fields = expected_fields | {"impact"}
+        elif code_id == _current_code_id():
+            return None
+
+        if (type(report) is not dict or set(report) != expected_fields
+                or report["schema_version"] != ("preparation_application_v2" if versioned else "preparation_application_v1")
                 or report["status"] != "applied" or report["transformed"] is not True or report["refit"] is not False
                 or report["test_used"] is not False or report["model_trained"] is not False
                 or report["binding"] != json.loads(json.dumps(contract.packet(code_id)))
-                or type(report["partitions"]) is not dict or set(report["partitions"]) != {"train", "validation"}):
+                or type(report["partitions"]) is not dict or set(report["partitions"]) != {"train", "validation"}
+                or (versioned and (type(report["impact"]) is not dict or set(report["impact"]) != {"train", "validation"}))):
             return None
 
         expected_columns = contract.candidate.output_columns
@@ -82,6 +91,7 @@ def read_application(directory, contract, code_id):
                     return None
 
                 observed = 0
+                tally = _ImpactTally(state["records"]) if versioned else None
 
                 for row in reader:
                     observed += 1
@@ -96,8 +106,19 @@ def read_application(directory, contract, code_id):
                         if not value or not math.isfinite(float(value)):
                             return None
 
+                    if tally is not None:
+                        tally.add(row)
+
                 if observed != count:
                     return None
+
+            if tally is not None and not tally.matches(report["impact"][name], state["records"], count):
+                return None
+
+        # 같은 Train·같은 기준이므로 후보가 센 Train 영향 합계와 적용 Train 합계가 같아야 한다. Train에는 새 범주가 없다.
+        if versioned and (report["impact"]["train"]["unknown_categories"]
+                          or not _matches_candidate(contract.candidate.directory / "candidate.json", report["impact"]["train"])):
+            return None
 
             # 검사 중 파일 변경도 완료로 인정하지 않는다.
             if not _file_record(features, record["features"], contract.max_partition_bytes) or not _file_record(row_path, record["row_contract"], min(contract.max_partition_bytes, 8 * 1024 * 1024)):
@@ -128,3 +149,74 @@ def _pairs(items):
 
 def _invalid(value):
     raise ValueError("적용 보고서에 비표준 숫자를 사용할 수 없습니다.")
+
+
+def _current_code_id():
+    from .preparation_apply_transport import code_manifest
+    from .snapshot_eda import _digest
+
+    return _digest(code_manifest())
+
+
+def _matches_candidate(path, totals):
+    """후보 v2의 Train 영향 합계와 대조한다. 후보가 v1(이전 코드)이면 대조할 값이 없어 통과한다."""
+    from src.preprocessing.transform import impact_totals
+
+    candidate = read_metadata(path)
+
+    if candidate.get("schema_version") != "preparation_candidate_report_v2":
+        return candidate.get("schema_version") == "preparation_candidate_report_v1"
+
+    return impact_totals(candidate["impact"]) == totals
+
+
+class _ImpactTally:
+    """이미 전수 읽는 적용 출력에서 worker가 기록한 영향 합계 중 출력만으로 정해지는 값을 센다.
+
+    출력 열이 모두 한 값인 특징 수, 원핫 묶음이 모두 0인 행(Train에 없던 범주) 수, 빈 칸(결측) 수는 정확히 대조한다.
+    clipping 변경 수는 출력만으로 다시 셀 수 없어 범위와 일관성만 확인한다.
+    """
+
+    def __init__(self, records):
+        self.first = None
+        self.varies = None
+        self.blocks = []
+        offset = 0
+
+        for record in records:
+            self.blocks.append((offset, record["width"], record["kind"]))
+            offset += record["width"]
+
+        self.unknown = 0
+        self.missing = 0
+
+    def add(self, row):
+        self.missing += sum(1 for value in row if value == "")
+        # worker와 같게 숫자로 비교한다(-0과 0은 같은 값). 빈 칸은 빈 칸끼리만 같다.
+        values = [None if value == "" else float(value) for value in row]
+
+        if self.first is None:
+            self.first, self.varies = values, [False] * len(values)
+        else:
+            for index, value in enumerate(values):
+                if not self.varies[index] and value != self.first[index]:
+                    self.varies[index] = True
+
+        for offset, width, kind in self.blocks:
+            if kind == "categorical" and all(float(value) == 0 for value in row[offset:offset + width]):
+                self.unknown += 1
+
+    def matches(self, totals, records, count):
+        fields = {"clipped_values", "clipped_features", "constant_features", "unknown_categories", "missing_values"}
+
+        if type(totals) is not dict or set(totals) != fields or any(type(value) is not int or value < 0 for value in totals.values()):
+            return False
+
+        clip_features = sum(1 for record in records if record["kind"] == "numeric" and record.get("clip") is not None)
+        constant = sum(1 for offset, width, _ in self.blocks
+                       if self.varies is None or not any(self.varies[offset:offset + width]))
+
+        return (totals["constant_features"] == constant and totals["unknown_categories"] == self.unknown
+                and totals["missing_values"] == self.missing
+                and totals["clipped_features"] <= clip_features and totals["clipped_values"] <= count * totals["clipped_features"]
+                and (totals["clipped_values"] == 0) == (totals["clipped_features"] == 0))

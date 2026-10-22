@@ -4,11 +4,16 @@ import hashlib
 
 from src.agents.artifacts import _inventory, _root, check_artifacts
 from src.agents.isolated_eda import _read_file, _valid_png
+from src.agents.input_profile_pipeline import InputProfileTool
 from src.agents.module_pipeline_results import read_pipeline_result
 
 
 def load_results(execution):
     """실행 이력·결과 계약을 재검사한다. 검토 중단 결과를 완료로 표시하지 않는다."""
+    # 입력 진단은 일반 결과·해설 경로로 열지 않는다. 진단 결과는 profiling_service만 읽는다.
+    if getattr(execution, "diagnostic_only", False) is True:
+        raise ValueError("DIAGNOSTIC_RESULT_NOT_GENERAL")
+
     state = execution.read_state()
 
     if state.status not in {"completed", "blocked_input"}:
@@ -22,6 +27,10 @@ def load_results(execution):
 
     output = _root(run.executor._output(task))
     tool = run.pipeline_execution.worker_tool
+
+    if isinstance(tool, InputProfileTool):
+        raise ValueError("DIAGNOSTIC_RESULT_NOT_GENERAL")
+
     pipeline = _root(output / "pipeline")
     result = read_pipeline_result(pipeline, tool.module_plan, tool.contract.profile)
 

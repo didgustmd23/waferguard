@@ -27,7 +27,13 @@ def code_id():
     root = Path(__file__).resolve().parents[2]
     names = ("src/agents/csv_workflow_creation.py", "src/agents/csv_workflow_service.py",
              "src/agents/csv_workflow_schema.py", "src/agents/csv_handoff_workflow.py",
-             "src/agents/workflow_service_registry.py", "configs/agents/modules/csv_workflows.json")
+             "src/agents/workflow_service_registry.py", "configs/agents/modules/csv_workflows.json",
+             # 작업 조정기는 이 작업들의 승인을 위임 발급하므로 같은 코드 지문에 묶는다.
+             # 어댑터·계획 검증·위임 발급 코드는 동의 C·D 발급 전 판정을 맡는다.
+             "src/agents/task_orchestrator.py", "src/agents/task_consent.py", "src/agents/task_store.py",
+             "src/agents/llm_task_assist.py", "src/agents/task_adapters.py", "src/agents/tabular_task.py",
+             "src/agents/task_plan.py", "src/agents/task_recommend.py", "src/agents/delegated_approval.py",
+             "src/agents/strict_json.py")
     digest = hashlib.sha256()
     for name in names:
         digest.update(name.encode())

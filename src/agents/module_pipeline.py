@@ -47,6 +47,10 @@ class ModulePipelineTool(SnapshotEdaTool):
 
         self.contract.check_input()
 
+    def _read_result(self, directory):
+        """부모 결과 검증 입구. 진단 도구만 이 메서드를 별도 검증기로 바꾼다."""
+        return read_pipeline_result(directory, self.module_plan, self.contract.profile)
+
     def _request(self, task_id):
         return replace(super()._request(task_id), policy_version=POLICY_VERSION)
 
@@ -104,7 +108,7 @@ class ModulePipelineTool(SnapshotEdaTool):
             return ToolResult("blocked_input", errors=("WORKER_INPUT_BLOCKED",))
 
         reply = WorkerResult.from_json(_read_file(reply_path, 65536).decode("utf-8"))
-        result = read_pipeline_result(staged / "pipeline", self.module_plan, self.contract.profile)
+        result = self._read_result(staged / "pipeline")
 
         if not reply.matches(request) or reply.status != "succeeded" or reply.artifact_refs != ("pipeline",) or result is None:
             return ToolResult("blocked_input", errors=("WORKER_INPUT_BLOCKED",))
@@ -115,7 +119,7 @@ class ModulePipelineTool(SnapshotEdaTool):
         shutil.copytree(staged / "pipeline", output / "pipeline")
         (output / "worker_receipt.json").write_text(json.dumps(self._receipt(request)), encoding="utf-8")
 
-        if read_pipeline_result(output / "pipeline", self.module_plan, self.contract.profile) != result:
+        if self._read_result(output / "pipeline") != result:
             return ToolResult("blocked_input", errors=("WORKER_INPUT_BLOCKED",))
 
         status = result["status"]
@@ -133,7 +137,7 @@ class ModulePipelineTool(SnapshotEdaTool):
         if self.cancel.is_set() or not {"pipeline", "worker_receipt.json"}.issubset(names) or names - {"pipeline", "worker_receipt.json", "AGENT_COMPLETE.json"}:
             return False
 
-        result = read_pipeline_result(output / "pipeline", self.module_plan, self.contract.profile)
+        result = self._read_result(output / "pipeline")
         receipt = _decode(_read_file(output / "worker_receipt.json", 65536).decode("utf-8"))
 
         return result is not None and result["status"] == "passed" and receipt == self._receipt(self._request(output.name))

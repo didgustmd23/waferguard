@@ -18,7 +18,7 @@ def execute_request(request, root):
     from src.agents.worker_contract import WorkerResult, _decode
     from src.preprocessing.profiles import _unique_pairs
     from src.preprocessing.split import _digest
-    from src.preprocessing.transform import load_preparation
+    from src.preprocessing.transform import impact_totals, load_preparation
 
     root = Path(root).resolve()
     inputs = root / "input"
@@ -119,6 +119,7 @@ def execute_request(request, root):
         prepared = output / "prepared"
         prepared.mkdir()
         records = {}
+        impact = {}
 
         for name in ("train", "validation"):
             source = inputs / name / "input.bin"
@@ -152,6 +153,8 @@ def execute_request(request, root):
 
             stage = "INPUT_VALIDATION"
             transformed = pipeline.transform(frame)
+            # 실제 적용 결과의 영향 합계. 같은 변환 결과에서 세며 기준을 다시 산출하지 않는다.
+            impact[name] = impact_totals(transformer.impact(frame, transformed))
 
             with (prepared / f"{name}_features.csv").open("xb") as stream:
                 writer = BoundedCsvWriter(stream, maximum)
@@ -174,8 +177,9 @@ def execute_request(request, root):
         if digest != packet["preprocessor_sha256"]:
             raise ValueError("적용 중 저장 기준 파일이 변경되었습니다.")
 
-        write_json_bounded(prepared / "application.json", {"schema_version": "preparation_application_v1", "status": "applied",
-                           "binding": packet, "partitions": records, "transformed": True, "refit": False, "test_used": False, "model_trained": False}, 65536)
+        write_json_bounded(prepared / "application.json", {"schema_version": "preparation_application_v2", "status": "applied",
+                           "binding": packet, "partitions": records, "impact": impact, "transformed": True, "refit": False,
+                           "test_used": False, "model_trained": False}, 65536)
         (prepared / "application.md").write_text(application_markdown(), encoding="utf-8", newline="")
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, csv.Error) as error:
         code = "ACCESS_DENIED" if isinstance(error, PermissionError) else "IO_FAILED" if isinstance(error, OSError) else "INPUT_INVALID"

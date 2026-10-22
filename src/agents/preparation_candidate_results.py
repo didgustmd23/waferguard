@@ -73,9 +73,71 @@ def read_candidate(directory, contract, code_id, *, committed=False):
             "output_feature_count": len(columns), "transformed": False, "model_trained": False,
         }
 
+        # v2는 처리 영향을 더한다. v1(영향 집계 이전 후보)은 이전 코드로 실행한 기록일 때만 받는다.
+        # 현재 코드의 worker는 항상 v2를 쓰므로 현재 지문의 v1은 영향 검증을 피하려는 기록으로 보고 거부한다.
+        if type(report) is dict and report.get("schema_version") == "preparation_candidate_report_v2":
+            if not _valid_impact(report.get("impact"), state, contract.rules):
+                return None
+
+            expected_report.update(schema_version="preparation_candidate_report_v2", impact=report["impact"])
+        elif code_id == _current_code_id():
+            return None
+
         if report != expected_report or _read_file(root / "candidate.md", contract.max_candidate_bytes).decode("utf-8") != candidate_markdown(expected_report):
             return None
 
         return report
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, OverflowError, RecursionError):
         return None
+
+
+def _current_code_id():
+    from .preparation_candidate_transport import code_manifest
+    from .snapshot_eda import _digest
+
+    return _digest(code_manifest())
+
+
+def _valid_impact(impact, state, rules):
+    """worker가 Train에서 센 처리 영향의 형식·범위·순서와 저장 기준에서 결정되는 결과를 확인한다.
+
+    건수의 정답은 원본 없이 다시 셀 수 없으므로 재계산하지 않는다. 다만 clip 상하한이 같거나 구간 경계가 없으면
+    출력이 반드시 상수이므로 그 값은 대조한다. 형식이 하나라도 다르면 후보 전체를 받지 않는다.
+    """
+    rows = state["train_rows"]
+    fields = {"column", "kind", "width", "missing", "imputed", "clipped", "distinct_before", "constant_after", "unknown", "missing_after"}
+
+    if type(impact) is not list or len(impact) != len(state["records"]):
+        return False
+
+    for item, record in zip(impact, state["records"]):
+        if type(item) is not dict or set(item) != fields or item["column"] != record["column"] or item["kind"] != record["kind"]:
+            return False
+
+        # bool·실수는 정수와 같게 비교되므로 형식을 먼저 엄격히 본다.
+        if any(type(item[key]) is not int for key in ("width", "missing", "imputed", "distinct_before", "unknown", "missing_after")):
+            return False
+
+        if item["width"] != record["width"] or any(not 0 <= item[key] <= rows for key in ("missing", "imputed", "distinct_before", "unknown")):
+            return False
+
+        if type(item["constant_after"]) is not bool or item["imputed"] > item["missing"] or item["unknown"]:
+            return False
+
+        # 대치 여부로 대치 건수와 출력 결측 칸 수가 정해진다(범주는 항상 채우고, 대치 없는 수치 결측은 그대로 남는다).
+        filled = record["kind"] == "categorical" or record.get("impute") is not None
+
+        if item["imputed"] != (item["missing"] if filled else 0) or item["missing_after"] != (0 if filled else item["missing"]):
+            return False
+
+        clip = record.get("clip") if record["kind"] == "numeric" else None
+
+        if (clip is None) != (item["clipped"] is None) or (item["clipped"] is not None and (type(item["clipped"]) is not int or not 0 <= item["clipped"] <= rows - item["missing"])):
+            return False
+
+        forced = record["kind"] == "numeric" and (record.get("edges") == [] or (clip is not None and clip[0] == clip[1] and record.get("edges") is None and item["missing"] in (0, item["imputed"])))
+
+        if forced and not item["constant_after"]:
+            return False
+
+    return True
