@@ -78,4 +78,4 @@ python -m unittest tests.agents.test_reviewed_module tests.agents.test_module_ca
 
 2026-10-17 사용자 제공 결과에서 `reviewed-module01`의 `completed / module_status: passed / synthetic_only: true / cancel_requested: false`를 확인했다. 적용된 작업 ID는 `c0f6841b7f7d4b40a76a514d4dbaeaa0`이며 결과는 `logs/agents/reviewed_module/runs/reviewed-module01/attempts/c0f6841b7f7d4b40a76a514d4dbaeaa0/pipeline`이다. 위 사용자 확인 전 표기는 구현 당시 이력이다. 이 갱신에서 worker를 재실행하거나 승인 기록을 변경하지 않았다.
 
-다음 연결 범위는 [검토된 CSV 모듈의 범용 파이프라인 설계](../design/REVIEWED_CSV_PIPELINE_DESIGN.md)에 정리했다. 임의 업로드·동적 import·새 의존성 자동 설치·LLM 등록 승인·외부 전송은 추가하지 않는다. 합성 성공이 실데이터 실행 승인을 대신하지 않는다.
+다음 연결 범위는 [검토된 CSV 모듈의 범용 파이프라인 설계](../DESIGN.md#모듈과-파이프라인)에 정리했다. 임의 업로드·동적 import·새 의존성 자동 설치·LLM 등록 승인·외부 전송은 추가하지 않는다. 합성 성공이 실데이터 실행 승인을 대신하지 않는다.
