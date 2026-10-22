@@ -10,8 +10,34 @@ from .artifacts import check_artifacts
 from .csv_workflow_creation import CsvCreationPreview, code_id, create, preview_creation
 from .csv_workflow_schema import creation_schema
 from .executor import RulesExecutor
-from .workflow_approval import approval_progress, preview_approval, record_approval
+from .delegated_approval import record_delegated
+from .workflow_approval import WorkflowApprovalPreview, approval_progress, preview_approval, record_approval
 from .worker_paths import _path
+
+
+DIAGNOSTIC_CODES = {"PASSED", "ACCESS_DENIED", "INPUT_INVALID", "IO_FAILED", "RUNTIME_FAILED"}
+DIAGNOSTIC_DETAILS = {"CATEGORY_LIMIT_EXCEEDED"}
+
+
+def read_worker_diagnostic(root):
+    """worker가 scratch에 남긴 고정 분류만 허용 목록으로 검증해 읽는다. 없거나 형식이 다르면 None."""
+    import re
+    from .isolated_eda import _read_file
+    from .worker_contract import _decode
+
+    path = root / "scratch" / "task" / "diagnostic.json"
+
+    try:
+        item = _decode(_read_file(path, 4096).decode("utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return None
+
+    if (type(item) is not dict or set(item) - {"detail"} != {"stage", "code"} or item["code"] not in DIAGNOSTIC_CODES
+            or type(item["stage"]) is not str or re.fullmatch(r"[A-Z_]{1,40}", item["stage"]) is None
+            or ("detail" in item and item["detail"] not in DIAGNOSTIC_DETAILS)):
+        return None
+
+    return dict(item)
 
 
 class SelectedExecutor(RulesExecutor):
@@ -124,11 +150,37 @@ class CsvWorkflowService:
             raise ValueError("현재 Python 환경의 CSV 실행은 검증되지 않았습니다.")
         cli, tool, manager = self._open(name)
         result = record_approval(tool, manager, self._summary, preview, confirmed=confirmed)
+        self._save_proof(tool, manager, result["approval_id"])
+        return result
+
+    def record_delegated_approval(self, name, preview, *, authorize):
+        """작업 동의 범위 안의 위임 발급. 직접 확인과 같은 승인 증거 파일을 남긴다."""
+        if not self.runtime()["supported"]:
+            raise ValueError("현재 Python 환경의 CSV 실행은 검증되지 않았습니다.")
+        if not isinstance(preview, WorkflowApprovalPreview) or not callable(authorize):
+            raise ValueError("현재 승인 미리보기와 동의 범위 판정이 필요합니다.")
+
+        cli, tool, manager = self._open(name)
+        result = record_delegated(tool, manager, self._summary, preview, authorize=authorize)
+        self._save_proof(tool, manager, result["approval_id"])
+        return result
+
+    def worker_diagnostic(self, name):
+        """중단된 단계의 worker 진단 분류(고정 stage·code)만 돌려준다. 원문 예외·경로·값은 없다."""
+        cli, tool, manager = self._open(name)
+        state = tool.states.load()
+        task = manager.approvals.get_task(manager.scope_for(state.current_stage))
+
+        if task is None or not hasattr(tool, "_work_root"):
+            return None
+
+        return read_worker_diagnostic(tool._work_root(manager._output(task).name))
+
+    def _save_proof(self, tool, manager, approval_id):
         proof = {"code_id": code_id(), "scope": asdict(manager.scope_for(tool.states.load().current_stage))}
         # 연결 코드 변경 후 이전 승인으로 실행하지 않는다. 기존 승인 DB 형식은 유지한다.
-        with (tool.states.directory / ("ui_approval_" + result["approval_id"] + ".json")).open("x", encoding="utf-8") as stream:
+        with (tool.states.directory / ("ui_approval_" + approval_id + ".json")).open("x", encoding="utf-8") as stream:
             json.dump(proof, stream, sort_keys=True)
-        return result
 
     def next(self, name, *, expected_stage, expected_revision, approval_id=None):
         if type(expected_stage) is not str or type(expected_revision) is not int or expected_revision < 0:
@@ -153,8 +205,26 @@ class CsvWorkflowService:
         native_requested = self.module_id != "csv_local_handoff" and approval_id is not None and expected_stage != "review_eda"
         return {**result, "worker_started": None if native_requested else False, "local_only": True}
 
+    def recorded_results(self, name, recorded_code_id):
+        """과거 실행 결과를 실행 당시 코드 지문 기준으로 읽기 전용 검증한다. 실행·승인 표면을 열지 않는다."""
+        if self.module_id != "csv_local_handoff":
+            raise ValueError("읽기 전용 검증을 지원하지 않는 작업입니다.")
+        from . import csv_handoff_workflow
+
+        tool, checker = csv_handoff_workflow.open_recorded(name, recorded_code_id)
+        result = self._collect(name, tool, checker)
+
+        if result["status"] != "completed":
+            raise ValueError("완료된 실행만 읽기 전용으로 검증합니다.")
+
+        return dict(result, recorded_code_id=recorded_code_id)
+
     def results(self, name):
         cli, tool, manager = self._open(name)
+        return self._collect(name, tool, manager)
+
+    def _collect(self, name, tool, manager):
+        """커밋된 승인 작업·결과 파일 해시·도메인 검증을 통과한 결과 목록. 기존 조회와 읽기 전용 검증이 같이 쓴다."""
         state = tool.states.load()
         if state.status not in {"completed", "blocked_input"}:
             raise ValueError("완료·품질 검토 중단 작업만 조회할 수 있습니다.")

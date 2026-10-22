@@ -35,6 +35,9 @@ def render_request(st):
                "파일·통계·비밀정보를 입력하지 마세요. LangSmith 추적은 비활성화합니다.")
     settings = st.session_state["ui_settings"]
     render_source_selection(st)
+    from .profiling_view import render_input_profiling
+
+    render_input_profiling(st)
     dialogue = current_dialogue(st)
     source = selected_source(st.session_state)
 
@@ -227,7 +230,13 @@ def render_review(st):
         st.subheader(f"{index}. {step['module_id']}")
         st.text(DESCRIPTIONS[step["module_id"]])
         st.caption("버전: " + step["version"] + " / 선행 단계: " + (", ".join(step["depends_on"]) or "없음"))
-        st.json(step["settings"])
+        if step["settings"]:
+            st.json(step["settings"])
+        elif step["module_id"] == "tabular_quality":
+            st.caption("제안에서 바꾼 설정 없음 — 3번에서 선택한 프로파일의 품질 기준(없으면 기본값)을 그대로 적용합니다. "
+                       "실제 적용 값은 4번 승인 범위에서 확인하세요.")
+        else:
+            st.caption("설정 없음 — 이 모듈은 추가 설정을 받지 않고 고정된 기본 동작만 수행합니다.")
 
     with st.expander("제안 원문·계획 서명"):
         st.json(checked)

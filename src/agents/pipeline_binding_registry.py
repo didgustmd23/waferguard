@@ -2,6 +2,7 @@
 
 from .reviewed_csv_pipeline_contract import bind_reviewed_csv_pipeline
 from .pipeline_csv_execution import build_csv_pipeline_execution
+from .input_profile_pipeline import ADAPTER_ID as INPUT_PROFILE_ADAPTER_ID, build_input_profile_execution
 
 
 # 등록 ID만 고정 구현에 연결한다. profile 값으로 임의 모듈을 import하지 않는다.
@@ -10,8 +11,11 @@ _PIPELINE_BINDERS = {
 }
 
 # 실행 어댑터도 정적 허용 목록으로 관리한다. 입력 JSON에서 import 경로를 받지 않는다.
+# 입력 진단은 프로파일 adapter_id로 고르는 바인더에 넣지 않는다. 바인딩 객체의 고정 ID로만
+# 실행기를 찾고, 각 실행기는 자기 바인딩 타입만 받는다.
 _PIPELINE_EXECUTORS = {
     "tabular_csv_v1": build_csv_pipeline_execution,
+    INPUT_PROFILE_ADAPTER_ID: build_input_profile_execution,
 }
 
 

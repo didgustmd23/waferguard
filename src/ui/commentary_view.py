@@ -80,6 +80,11 @@ def render_policy(st):
     st.caption("외부 API는 실제 전달 자료 확인·건별 승인이 필수입니다. 현재 외부 API 연결은 미지원이며 전송하지 않습니다. LangSmith 추적도 비활성화입니다.")
 
 
+def diagnostic_blocked(controller):
+    """입력 진단 작업은 해설(LLM) 대상이 아니다. 정책·민감도 설정과 관계없이 거부한다."""
+    return getattr(controller, "diagnostic_only", False) is True
+
+
 def scope(controller):
     return fingerprint({"module": getattr(controller, "module_id", "proposal_execution"),
                         "name": controller.name})
@@ -104,6 +109,9 @@ def freeze_classification(st, controller):
 def after_completion(st, controller, *, workflow):
     """명시적 실행 명령이 완료된 직후에만 호출한다. 해설 실패는 실행 상태와 분리한다."""
     key = "commentary_result_" + scope(controller)
+    if diagnostic_blocked(controller):
+        return
+
     try:
         policy = load_policy()
         model = st.session_state["ui_settings"]["model"]
@@ -132,6 +140,10 @@ def after_completion(st, controller, *, workflow):
 
 def render_commentary(st, controller, result):
     st.subheader("로컬 결과 해설")
+    if diagnostic_blocked(controller):
+        st.info("입력 진단 결과는 LLM 해설 대상이 아닙니다. 모델에 보내지 않습니다.")
+        return
+
     st.caption("해설 화면 코드 버전: pairs-v2")
     key = "commentary_result_" + scope(controller)
     stored = st.session_state.get(key)

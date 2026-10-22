@@ -8,6 +8,9 @@ from .progress_view import show_operation_progress
 from .runtime_notice import render_permissions, require_execution_permissions
 from .submit_state import clear_unsubmitted_execution
 from .approval_flow_view import render_approval_flow
+from .dialogue_service import fingerprint
+from .profiling_service import linked_profile
+from .source_selection import selected_source
 from .creation_submit import mark_creation_pending, creation_submission
 from .workflow_feedback import (STATE_LABELS, STAGE_LABELS, diagnose_paths, render_paths,
                                 show_error)
@@ -126,6 +129,18 @@ def _field(st, field, prefix):
     raise ValueError("등록되지 않은 설정 표시 자료형입니다.")
 
 
+def linked_split_profile(st):
+    """같은 입력 선택에서 저장한 분할 검토 프로파일 경로만 반환한다. 선택이 바뀌면 연결하지 않는다."""
+    source = selected_source(st.session_state)
+    linked = st.session_state.get("ui_linked_profile")
+
+    # 분할 검토는 원본 CSV를 다시 복사하므로 파생 입력의 정비된 이름과 맞지 않는다. 연결하지 않는다.
+    if source is None or (isinstance(linked, dict) and linked.get("derived_input") is True):
+        return ""
+
+    return linked_profile(st.session_state, source["selection_id"], "split_review_v1")
+
+
 def inputs(st):
     st.header("3 입력 선택")
     workflow = current(st)
@@ -158,6 +173,11 @@ def inputs(st):
     with st.form("workflow_creation_" + workflow.module_id):
         defaults = getattr(workflow, "creation_defaults", {})
         prefix = getattr(workflow, "creation_widget_prefix", "workflow_" + workflow.module_id + "_")
+        linked = linked_split_profile(st) if workflow.module_id == "csv_split_review" and "profile" not in defaults else ""
+        if linked:
+            # 1번에서 저장한 분할 프로파일을 기본값으로만 연결한다. 새 연결은 새 위젯 키로 표시한다.
+            defaults = {**defaults, "profile": linked}
+            prefix += fingerprint(linked)[:8] + "_"
         values = {field["name"]: _field(st, dict(field, default=defaults.get(field["name"], field["default"])),
                                       prefix) for field in schema["fields"]}
         uses_job = schema.get("uses_job", True)

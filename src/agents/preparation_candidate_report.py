@@ -30,6 +30,21 @@ def candidate_markdown(report):
     if not report["removed"]:
         lines.append("| 없음 | 제거 후보가 없습니다. |")
 
+    impact = report.get("impact")
+
+    if impact is not None:
+        lost = [item for item in impact if item["constant_after"] and item["distinct_before"] > 1]
+        lines.extend(["", "## 예상 처리 영향 (Train 후보 계산)", "",
+                      f"- clipping으로 바뀌는 값: {sum(item['clipped'] or 0 for item in impact)}개 "
+                      f"(특징 {sum(1 for item in impact if item['clipped'])}개)",
+                      f"- 변환 후 값이 하나뿐인 특징: {sum(1 for item in impact if item['constant_after'])}개 "
+                      f"(그중 변환 전에는 값이 여러 개였던 특징 {len(lost)}개)", "",
+                      "| 정보 손실 특징 | 변환 전 고유값 | clipping 변경 값 |", "| --- | --- | --- |"])
+        lines.extend(f"| {cell(item['column'])} | {item['distinct_before']} | {cell(item['clipped'])} |" for item in lost)
+
+        if not lost:
+            lines.append("| 없음 | - | - |")
+
     lines.extend(["", "유지 특징의 정확한 순서와 처리 기준은 로컬 JSON에서 확인하세요.",
                   "변경 예정 목록일 뿐입니다. 실제 적용은 별도 승인이 필요합니다."])
     return "\n".join(lines) + "\n"

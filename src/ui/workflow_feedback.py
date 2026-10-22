@@ -83,6 +83,9 @@ def render_approval_summary(st, summary, *, executes=False):
     if "stage" in summary:
         st.text("승인 단계: " + STAGE_LABELS.get(summary["stage"], summary["stage"]))
 
+    if summary.get("input_change"):
+        st.warning(summary["input_change"])
+
     limits = summary.get("limits", {})
     for key, title, unit in (("memory_mib", "메모리 상한", " MiB"), ("processes", "프로세스 상한", "개"),
                              ("wall_seconds", "실행 시간 상한", "초")):

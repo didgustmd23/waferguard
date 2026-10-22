@@ -15,6 +15,14 @@ from .contracts import ColumnRoles, TabularInput
 from .split import validate_proposal
 
 
+class PreparationInputError(ValueError):
+    """입력 데이터 때문에 후보를 만들 수 없는 경우. 진단에는 고정 코드만 남기고 메시지·값·컬럼명은 남기지 않는다."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
 @dataclass(frozen=True)
 class PreparationRules:
     """방법은 명시적으로 선택한다. 이상치 행 삭제·자동 최적화는 제공하지 않는다."""
@@ -265,7 +273,7 @@ class TabularPreprocessor(TransformerMixin, BaseEstimator):
             categories.sort()
 
         if len(categories) > self.rules.max_categories:
-            raise ValueError("범주 특징의 원핫 범주 수 상한을 초과했습니다.")
+            raise PreparationInputError("CATEGORY_LIMIT_EXCEEDED", "범주 특징의 원핫 범주 수 상한을 초과했습니다.")
 
         return {"column": column, "kind": "categorical", "fill": fill, "categories": categories, "width": len(categories)}
 
@@ -278,7 +286,11 @@ class TabularPreprocessor(TransformerMixin, BaseEstimator):
         if len(frame) * width > self.rules.max_output_cells:
             raise ValueError("전처리 출력 셀 수 상한을 초과했습니다. 입력을 배치로 나누세요.")
 
-        output = np.zeros((len(frame), width), dtype=np.float64)
+        return pd.DataFrame(self._output(frame), index=frame.index, columns=self.feature_names_out_)
+
+    def _output(self, frame):
+        """저장한 기준만으로 출력 배열을 만든다. transform과 영향 집계(impact)가 같은 계산을 쓴다."""
+        output = np.zeros((len(frame), len(self.feature_names_out_)), dtype=np.float64)
         offset = 0
 
         for record in self.state_["records"]:
@@ -312,7 +324,7 @@ class TabularPreprocessor(TransformerMixin, BaseEstimator):
         if np.isinf(output).any():
             raise ValueError("변환 결과에 무한대가 발생했습니다.")
 
-        return pd.DataFrame(output, index=frame.index, columns=self.feature_names_out_)
+        return output
 
     def get_feature_names_out(self, input_features=None):
         check_is_fitted(self, "feature_names_out_")
@@ -340,6 +352,67 @@ class TabularPreprocessor(TransformerMixin, BaseEstimator):
             result.append({"column": record["column"], "missing_count": missing_count, "unknown_category_count": unknown_count})
 
         return result
+
+    def impact(self, X, transformed=None):
+        """저장한 기준을 이 배치에 적용했을 때의 특징별 영향 건수만 계산한다. 기준·출력은 바꾸지 않는다.
+
+        clipped는 결측이 아닌 관측값 중 clip 범위 밖이라 값이 바뀌는 개수(clip이 없으면 None),
+        constant_after는 해당 특징의 출력 열이 이 배치 전체에서 모두 한 값인지, missing_after는 출력에 남은 결측 칸 수다.
+        개별 값·경계는 담지 않는다.
+        transformed에 같은 배치의 transform 결과를 주면 다시 변환하지 않는다.
+        """
+        check_is_fitted(self, "state_")
+        frame = self._input(X)
+        # 후보 단계는 transform을 호출하지 않는다(변환 결과를 만들지 않는 계약). 같은 계산으로 메모리에서만 센다.
+        output = self._output(frame) if transformed is None else transformed.to_numpy(dtype=np.float64)
+
+        if output.shape != (len(frame), len(self.feature_names_out_)):
+            raise ValueError("영향 집계의 변환 결과 크기가 입력과 다릅니다.")
+
+        result = []
+        offset = 0
+
+        for record in self.state_["records"]:
+            column = frame[record["column"]]
+            block = output[:, offset:offset + record["width"]]
+            offset += record["width"]
+
+            if record["kind"] == "numeric":
+                values = _numbers(column)
+                observed = values[~np.isnan(values)]
+                missing = int(np.isnan(values).sum())
+                clipped = None if record["clip"] is None else int(((observed < record["clip"][0]) | (observed > record["clip"][1])).sum())
+                distinct = int(len(np.unique(observed)))
+                unknown = 0
+            else:
+                tokens = column.map(_category)
+                missing = int(tokens.eq("missing").sum())
+                clipped = None
+                distinct = int(tokens[tokens.ne("missing")].nunique())
+                unknown = int((~tokens.replace("missing", record["fill"]).isin(record["categories"])).sum())
+
+            # 대치하지 않은 결측(NaN)만 있는 열은 상수, 결측과 값이 섞이면 상수가 아니다.
+            constant = all(_constant(block[:, index]) for index in range(block.shape[1]))
+            result.append({"column": record["column"], "kind": record["kind"], "width": record["width"], "missing": missing,
+                           "imputed": missing if record["kind"] == "categorical" or record.get("impute") is not None else 0,
+                           "clipped": clipped, "distinct_before": distinct, "constant_after": constant, "unknown": unknown,
+                           "missing_after": int(np.isnan(block).sum())})
+
+        return result
+
+
+def _constant(values):
+    missing = np.isnan(values)
+    return bool(missing.all() or (not missing.any() and (values == values[0]).all()))
+
+
+def impact_totals(items):
+    """특징별 영향을 구간 합계 정수로 줄인다. 적용 기록의 크기 상한 안에 두기 위한 요약이다."""
+    return {"clipped_values": sum(item["clipped"] or 0 for item in items),
+            "clipped_features": sum(1 for item in items if item["clipped"]),
+            "constant_features": sum(1 for item in items if item["constant_after"]),
+            "unknown_categories": sum(item["unknown"] for item in items),
+            "missing_values": sum(item["missing_after"] for item in items)}
 
 
 def build_preparation(roles, rules):

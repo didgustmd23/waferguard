@@ -53,11 +53,26 @@ def main():
         st.session_state["ui_draft"] = ""
 
     with st.sidebar:
-        st.selectbox("작업 시작 방식", ("LLM 제안", "등록 모듈"), key="ui_workflow_mode",
-                     help="LLM 제안은 기존 대화 흐름입니다. 등록 모듈은 공통 명세로 작업을 준비하며 LLM을 호출하지 않습니다.")
+        st.selectbox("작업 시작 방식", ("LLM 제안", "등록 모듈", "통합 작업"), key="ui_workflow_mode",
+                     help="LLM 제안은 기존 대화 흐름입니다. 등록 모듈은 공통 명세로 작업을 준비하며 LLM을 호출하지 않습니다. "
+                          "통합 작업은 파일과 목표만으로 진단부터 결과까지 이어서 진행합니다.")
+        if st.session_state.get("ui_workflow_mode") == "통합 작업":
+            st.radio("화면", ("작업", "설정"), key="ui_task_screen", horizontal=True)
         if st.session_state.get("ui_workflow_mode", "LLM 제안") == "LLM 제안":
             st.selectbox("제안 범위", ("품질·EDA", "CSV 분할·전처리"), key="ui_proposal_scope",
                          help="CSV 실행안도 같은 5단계를 사용합니다. 작업 준비와 각 실행 승인은 별도입니다.")
+
+    if st.session_state.get("ui_workflow_mode") == "통합 작업":
+        # 통합 작업은 단계 메뉴 대신 요청·진행·결정·결과 네 영역만 보여 준다.
+        st.title("전처리 작업실")
+        with st.container(border=True):
+            if st.session_state.get("ui_task_screen", "작업") == "설정":
+                render_settings(st)
+            else:
+                from src.ui.task_view import render_task
+
+                render_task(st)
+        return
 
     screen = render_navigation(st)
     st.title("전처리 작업실")

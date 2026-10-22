@@ -16,6 +16,32 @@ from src.ui.workflow_service import UiWorkflow
 from tests.agents import test_snapshot_split_execution as split_fixtures
 
 
+class WorkerDiagnosticDetailTest(unittest.TestCase):
+    """worker 진단은 고정 분류와 허용 목록의 세부 코드만 기록·인정한다."""
+
+    def test_detail_code_is_allowlisted_on_write_and_read(self):
+        import tempfile
+        from src.agents.csv_workflow_service import read_worker_diagnostic
+        from src.agents.preparation_candidate_worker import _detail
+        from src.agents.snapshot_eda_worker import _diagnostic
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "scratch" / "task").mkdir(parents=True)
+            path = root / "scratch" / "task" / "diagnostic.json"
+            _diagnostic(root, "INPUT_VALIDATION", "INPUT_INVALID")
+            _detail(root, "CATEGORY_LIMIT_EXCEEDED")
+            self.assertEqual(read_worker_diagnostic(root), {"stage": "INPUT_VALIDATION", "code": "INPUT_INVALID",
+                                                            "detail": "CATEGORY_LIMIT_EXCEEDED"})
+            # 목록 밖 세부 코드는 쓰지 않고 분류만 남긴다.
+            _diagnostic(root, "INPUT_VALIDATION", "INPUT_INVALID")
+            _detail(root, "column x has 300 values")
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"stage": "INPUT_VALIDATION", "code": "INPUT_INVALID"})
+            # 목록 밖 세부 코드가 든 파일은 진단 전체를 인정하지 않는다.
+            path.write_text(json.dumps({"stage": "INPUT_VALIDATION", "code": "INPUT_INVALID", "detail": "RAW"}), encoding="utf-8")
+            self.assertIsNone(read_worker_diagnostic(root))
+
+
 class CatalogueTest(unittest.TestCase):
     def test_csv_and_wm_are_in_same_ui_list_without_changing_legacy_registry(self):
         from src.agents.agent_module_registry import build_agent_registry

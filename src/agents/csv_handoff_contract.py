@@ -182,8 +182,11 @@ def verify_bundle(directory):
     if (set(provenance) != fields or provenance["schema_version"] != "csv_handoff_provenance_v1"
             or provenance["test_used"] is not False or provenance["model_trained"] is not False
             or provenance["preprocessor_sha256"] != manifest["files"]["preprocessor.json"]["sha256"]
-            or set(report) != {"schema_version", "status", "binding", "partitions", "transformed", "refit", "test_used", "model_trained"}
-            or report["schema_version"] != "preparation_application_v1" or report["status"] != "applied"
+            # v2는 적용 검증기가 대조한 구간별 영향 합계(impact)를 더한다. v1 전달 묶음도 그대로 검증한다.
+            or set(report) - {"impact"} != {"schema_version", "status", "binding", "partitions", "transformed", "refit", "test_used", "model_trained"}
+            or type(report["schema_version"]) is not str
+            or (report["schema_version"], "impact" in report) not in {("preparation_application_v1", False), ("preparation_application_v2", True)}
+            or report["status"] != "applied"
             or report["transformed"] is not True or report["refit"] is not False or report["test_used"] is not False
             or report["model_trained"] is not False or report["binding"] != provenance["application_binding"]
             or set(report["partitions"]) != {"train", "validation"}

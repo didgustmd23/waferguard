@@ -4,6 +4,25 @@ from pathlib import Path
 import sys
 
 
+DIAGNOSTIC_DETAILS = frozenset({"CATEGORY_LIMIT_EXCEEDED"})
+
+
+def _detail(root, detail):
+    """공용 진단 기록에 허용 목록의 세부 코드만 덧붙인다. 분류 기록이 없거나 목록 밖이면 아무것도 쓰지 않는다."""
+    import json
+
+    path = root / "scratch" / "task" / "diagnostic.json"
+
+    try:
+        item = json.loads(path.read_text(encoding="utf-8"))
+
+        if detail in DIAGNOSTIC_DETAILS and type(item) is dict and set(item) == {"stage", "code"}:
+            path.write_text(json.dumps(dict(item, detail=detail)), encoding="utf-8")
+    except (OSError, ValueError):
+        # 세부 코드 기록 실패가 기존 분류·오류를 바꾸지 않는다.
+        pass
+
+
 def execute_request(request, root):
     """고정 요청과 Train 바이트를 확인하고 기존 복합 전처리 코어의 fit만 수행한다."""
     import csv
@@ -19,7 +38,7 @@ def execute_request(request, root):
     from src.agents.worker_contract import WorkerResult, _decode
     from src.preprocessing.contracts import ColumnRoles
     from src.preprocessing.split import _digest
-    from src.preprocessing.transform import PreparationRules, build_preparation, save_preparation
+    from src.preprocessing.transform import PreparationInputError, PreparationRules, build_preparation, save_preparation
 
     root = Path(root).resolve()
     source = root / "input/snapshot/input.bin"
@@ -112,10 +131,12 @@ def execute_request(request, root):
         with (candidate / "preprocessor.json").open("rb") as stream:
             digest = hashlib.sha256(stream.read(maximum + 1)).hexdigest()
 
-        report = {"schema_version": "preparation_candidate_report_v1", "status": "candidate_ready", "binding": packet,
+        # 처리 영향은 같은 Train 기준을 Train에 적용했을 때의 건수다. 변환 파일은 만들지 않고 기준도 바꾸지 않는다.
+        report = {"schema_version": "preparation_candidate_report_v2", "status": "candidate_ready", "binding": packet,
                   "preprocessor_sha256": digest, "removed": state["removed"],
                   "retained": [record["column"] for record in state["records"]],
-                  "output_feature_count": len(transformer.get_feature_names_out()), "transformed": False, "model_trained": False}
+                  "output_feature_count": len(transformer.get_feature_names_out()), "impact": transformer.impact(frame),
+                  "transformed": False, "model_trained": False}
 
         for filename, content in (("candidate.json", json.dumps(report, ensure_ascii=False, allow_nan=False)),
                                   ("candidate.md", candidate_markdown(report))):
@@ -133,6 +154,9 @@ def execute_request(request, root):
     except (ValueError, TypeError, KeyError, OSError, UnicodeError, csv.Error) as error:
         code = "ACCESS_DENIED" if isinstance(error, PermissionError) else "IO_FAILED" if isinstance(error, OSError) else "INPUT_INVALID"
         _diagnostic(root, stage, code)
+
+        if isinstance(error, PreparationInputError):
+            _detail(root, error.code)
         return WorkerResult(request.task_id, request.request_id, "blocked_input", "WORKER_INPUT_BLOCKED")
     except Exception:
         _diagnostic(root, stage, "RUNTIME_FAILED")

@@ -10,12 +10,14 @@ import re
 import secrets
 import uuid
 
+from src.preprocessing.input_profile import header_dedupe_pipeline, input_profile_pipeline
 from src.preprocessing.profiles import profile_from_dict
 from .approval_store import ApprovalStore
 from .artifacts import _root
 from .audit import append_event
 from .cli import _current_actor
 from .executor import _digest, _run_lock
+from .input_profile_pipeline import bind_input_profile
 from .input_snapshot import SNAPSHOT_VERSION, Snapshot
 from .isolated_eda import _read_file
 from .pipeline_approval import open_pipeline_approval_run
@@ -68,6 +70,11 @@ def _build_binding(selection):
     """선택 기록의 입력·프로파일·계획을 다시 검증해 승인 바인딩을 만든다."""
     snapshot_directory = selection["snapshot_directory"]
     snapshot = Snapshot(**selection["snapshot"])
+
+    # 프로파일 없는 선택은 고정 입력 진단 계획에만 결합된다. 다른 계획이면 바인더가 거부한다.
+    if selection["profile"] is None:
+        return bind_input_profile(selection["pipeline"], snapshot_directory, snapshot, _limits(selection["limits"]))
+
     profile = profile_from_dict(selection["profile"])
 
     binder = get_pipeline_binder(profile.adapter_id)
@@ -86,17 +93,7 @@ def create(name, snapshot_directory, profile_path, pipeline_path, limits, *, con
     if not confirmed:
         raise ValueError("snapshot·프로파일·파이프라인 선택을 명시적으로 확인해야 합니다.")
 
-    snapshot_dir = _path(Path(snapshot_directory).absolute(), directory=True)
-    snapshot_info = _read_json(snapshot_dir / "snapshot.json", 4096)
-
-    if set(snapshot_info) != {"version", "size_bytes", "sha256", "max_input_bytes"} or snapshot_info["version"] != SNAPSHOT_VERSION:
-        raise ValueError("지원되는 snapshot 계약이 필요합니다.")
-
-    snapshot = Snapshot(
-        size_bytes=snapshot_info["size_bytes"],
-        sha256=snapshot_info["sha256"],
-        max_input_bytes=snapshot_info["max_input_bytes"],
-    )
+    snapshot_dir, snapshot = _read_snapshot(snapshot_directory)
     profile_file = _path(Path(profile_path).absolute(), directory=False)
     pipeline_file = _path(Path(pipeline_path).absolute(), directory=False)
     profile = _read_json(profile_file, 64 * 1024)
@@ -113,6 +110,41 @@ def create(name, snapshot_directory, profile_path, pipeline_path, limits, *, con
         limits,
     )
 
+    return _save_run(name, snapshot_dir, snapshot, profile, pipeline, limits, binding)
+
+
+def create_input_profile(name, snapshot_directory, limits, *, confirmed=False, header_dedupe=False):
+    """프로파일 없이 고정 입력 진단(또는 중복 컬럼명 정비) 계획만 승인 run으로 저장한다. profile은 null이다."""
+    if not confirmed:
+        raise ValueError("snapshot·입력 진단 선택을 명시적으로 확인해야 합니다.")
+
+    if type(header_dedupe) is not bool:
+        raise TypeError("중복 컬럼명 정비 여부는 bool이어야 합니다.")
+
+    snapshot_dir, snapshot = _read_snapshot(snapshot_directory)
+    pipeline = header_dedupe_pipeline() if header_dedupe else input_profile_pipeline()
+    binding = bind_input_profile(pipeline, snapshot_dir, snapshot, limits)
+
+    return _save_run(name, snapshot_dir, snapshot, None, pipeline, limits, binding)
+
+
+def _read_snapshot(snapshot_directory):
+    """선택한 snapshot 폴더의 메타데이터를 고정 필드로 읽는다."""
+    snapshot_dir = _path(Path(snapshot_directory).absolute(), directory=True)
+    snapshot_info = _read_json(snapshot_dir / "snapshot.json", 4096)
+
+    if set(snapshot_info) != {"version", "size_bytes", "sha256", "max_input_bytes"} or snapshot_info["version"] != SNAPSHOT_VERSION:
+        raise ValueError("지원되는 snapshot 계약이 필요합니다.")
+
+    return snapshot_dir, Snapshot(
+        size_bytes=snapshot_info["size_bytes"],
+        sha256=snapshot_info["sha256"],
+        max_input_bytes=snapshot_info["max_input_bytes"],
+    )
+
+
+def _save_run(name, snapshot_dir, snapshot, profile, pipeline, limits, binding):
+    """검증된 바인딩을 새 run 폴더에 저장한다. 기존 기록은 덮어쓰지 않는다."""
     directory = _directory(name, create_parent=True)
 
     if directory.exists() or directory.is_symlink():
@@ -237,6 +269,21 @@ def record_approval(name, preview, *, confirmed=False):
     if confirmed is not True:
         raise ValueError("승인 범위를 명시적으로 확인해야 합니다.")
 
+    return _record_approval(name, preview, "PIPELINE_APPROVAL_RECORDED")
+
+
+def record_delegated_approval(name, preview, *, authorize):
+    """사용자 작업 동의 범위 안에서 조정기가 발급한다. 직접 확인 이벤트로 기록하지 않는다.
+
+    authorize는 잠금 안에서 최신 미리보기로 동의 범위를 판정하고 벗어나면 예외를 낸다.
+    """
+    if not callable(authorize):
+        raise ValueError("동의 범위 판정이 필요합니다.")
+
+    return _record_approval(name, preview, "DELEGATED_APPROVAL_RECORDED", authorize)
+
+
+def _record_approval(name, preview, code, authorize=None):
     directory = _root(_directory(name))
 
     with _run_lock(directory) as acquired:
@@ -248,6 +295,9 @@ def record_approval(name, preview, *, confirmed=False):
 
         if _approval_preview(directory, selection, run) != preview:
             raise ValueError("승인 확인 중 입력·코드·계획 또는 상태가 변경되었습니다.")
+
+        if authorize is not None:
+            authorize(preview)
 
         current_state = run.states.load()
         approval_path = directory / "approval.json"
@@ -267,7 +317,7 @@ def record_approval(name, preview, *, confirmed=False):
         current_state.approval_ids.append(record.approval_id)
         run.states.save(current_state, expected_revision=current_state.revision)
         append_event(
-            directory / "events.jsonl", "approval_requested", "PIPELINE_APPROVAL_RECORDED",
+            directory / "events.jsonl", "approval_requested", code,
             stage=current_state.current_stage, revision=current_state.revision,
         )
 

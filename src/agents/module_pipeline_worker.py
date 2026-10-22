@@ -18,6 +18,10 @@ def execute_request(request, root):
     from src.agents.worker_contract import WorkerResult, _decode
     from src.preprocessing.builtin_modules import build_builtin_registry
     from src.preprocessing.contracts import TabularInput
+    from src.preprocessing.input_profile import (
+        HEADER_DEDUPE_ID, MODULE_ID as INPUT_PROFILE_ID, bind_input_profile_plan, build_diagnostic_registry,
+        build_header_dedupe, write_input_profile,
+    )
     from src.preprocessing.profiles import profile_from_dict
     from src.preprocessing.quality import write_quality_report
 
@@ -46,12 +50,23 @@ def execute_request(request, root):
 
         config_id = hashlib.sha256(json.dumps(packet, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
         expected = Snapshot(**packet["snapshot"])
-        profile = profile_from_dict(packet["profile"])
-        _, plan = bind_pipeline(packet["pipeline"], profile)
+        # 프로파일 없는 설정은 복사된 고정 진단 계획과 전체가 같을 때만 허용하고 서명을 여기서 다시 계산한다.
+        # 그 밖의 설정은 기존 프로파일·품질 선행 검사를 그대로 거친다.
+        diagnostic = packet["profile"] is None
+
+        if diagnostic:
+            profile = None
+            _, plan = bind_input_profile_plan(packet["pipeline"])
+            registry = build_diagnostic_registry()
+        else:
+            profile = profile_from_dict(packet["profile"])
+            _, plan = bind_pipeline(packet["pipeline"], profile)
+            registry = build_builtin_registry()
 
         if (
             request.config_id != config_id or request.source_id != expected.source_id
-            or packet["limits"] != asdict(request.limits) or profile.adapter_id != "tabular_csv_v1"
+            or packet["limits"] != asdict(request.limits)
+            or (not diagnostic and profile.adapter_id != "tabular_csv_v1")
             or packet["pipeline_signature"] != plan.signature
         ):
             raise ValueError("모듈 계획·프로파일·입력이 승인 범위와 다릅니다.")
@@ -60,6 +75,25 @@ def execute_request(request, root):
 
         if not _verify_staged_snapshot(root, expected):
             raise ValueError("모듈 작업의 입력 복사본이 변경되었습니다.")
+
+        # 중복 컬럼명 정비는 CSV를 적재하지 않고 헤더 레코드만 바꾼 새 파생 입력을 만든다.
+        # 일반 분석의 중복 헤더 거부는 아래 CSV_LOAD에서 그대로 적용된다.
+        if diagnostic and plan.steps[0].module_id == HEADER_DEDUPE_ID:
+            stage = "CSV_HEADER"
+            target = output / "pipeline"
+            target.mkdir(exist_ok=False)
+            build_header_dedupe(source, target / plan.steps[0].step_id, expected.sha256)
+            stage = "SNAPSHOT_RECHECK"
+
+            if not _verify_staged_snapshot(root, expected):
+                raise ValueError("정비 중 입력이 변경되었습니다.")
+
+            (target / "pipeline_result.json").write_text(json.dumps({
+                "version": "header_dedupe_result_v1", "pipeline_signature": plan.signature,
+                "status": "passed", "completed_steps": [plan.steps[0].step_id],
+            }, ensure_ascii=False, allow_nan=False), encoding="utf-8")
+            _diagnostic(root, "COMPLETE", "PASSED")
+            return WorkerResult(request.task_id, request.request_id, "succeeded", "WORKER_EXITED_OK", ("pipeline",))
 
         stage = "CSV_LOAD"
 
@@ -74,8 +108,8 @@ def execute_request(request, root):
         if frame.empty:
             raise ValueError("실행할 입력 행이 없습니다.")
 
-        data = TabularInput(frame, profile.roles)
-        registry = build_builtin_registry()
+        # 진단은 역할 없이 원본 표를 받는다. 역할 검증은 사용자가 정한 뒤의 일반 계획에서 한다.
+        data = frame if diagnostic else TabularInput(frame, profile.roles)
         completed = []
         status = "passed"
         target = output / "pipeline"
@@ -99,6 +133,8 @@ def execute_request(request, root):
             if step.module_id == "tabular_quality":
                 write_quality_report(result, directory)
                 status = result.status
+            elif step.module_id == INPUT_PROFILE_ID and diagnostic:
+                write_input_profile(result, directory)
             else:
                 directory.mkdir(exist_ok=False)
                 tables = result if step.module_id == "eda_correlations" else {Path(MODULE_FILES[step.module_id][0]).stem: result}
