@@ -82,12 +82,12 @@ class UiShellRenderingTest(unittest.TestCase):
         self.addCleanup(models_patcher.stop)
         self.st = MagicMock()
         self.st.button.return_value = False
-        self.st.session_state = {}
+        self.st.session_state = {"ui_show_advanced_tools": True, "ui_workflow_mode": "LLM 제안"}
         self.submitted = False
         self.st.selectbox.side_effect = lambda label, options, **kwargs: options[kwargs.get("index", 0)]
         self.st.text_input.side_effect = lambda *args, **kwargs: kwargs.get("value", "")
         self.st.text_area.side_effect = lambda *args, **kwargs: kwargs.get("value", "")
-        self.st.checkbox.side_effect = lambda *args, **kwargs: kwargs.get("value", False)
+        self.st.checkbox.side_effect = lambda *args, **kwargs: self.st.session_state.get(kwargs.get("key"), kwargs.get("value", False))
         self.st.number_input.side_effect = lambda *args, **kwargs: kwargs["value"]
         self.st.form_submit_button.side_effect = lambda *args, **kwargs: self.submitted
 
@@ -215,6 +215,8 @@ class StreamlitAppTest(unittest.TestCase):
         from streamlit.testing.v1 import AppTest
 
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py")).run()
+        app.checkbox(key="ui_show_advanced_tools").check().run()
+        app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
         app.button(key="ui_settings_navigation").click().run()
         self.assertEqual(len(app.exception), 0)
 
@@ -226,6 +228,8 @@ class StreamlitAppTest(unittest.TestCase):
         from streamlit.testing.v1 import AppTest
 
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"))
+        app.session_state["ui_show_advanced_tools"] = True
+        app.session_state["ui_workflow_mode"] = "LLM 제안"
         app.run()
         self.assertEqual(len(app.exception), 0)
 
@@ -242,6 +246,8 @@ class StreamlitAppTest(unittest.TestCase):
         from streamlit.testing.v1 import AppTest
 
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py")).run()
+        app.checkbox(key="ui_show_advanced_tools").check().run()
+        app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
         self.assertEqual(len(app.radio), 0)
 
         for number in range(2, 6):

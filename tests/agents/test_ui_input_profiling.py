@@ -316,6 +316,8 @@ class InputProfilingAppTest(unittest.TestCase):
                     patch("src.agents.local_ollama.request_local_proposal") as model, \
                     patch("src.ui.commentary_service.send_once") as send:
                 app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=60).run()
+                app.checkbox(key="ui_show_advanced_tools").check().run()
+                app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
                 app.selectbox(key="ui_source_mode_widget").set_value("기존 CSV snapshot").run()
                 app.text_input(key="_widget_source_snapshot_path").set_value(str(snapshot))
                 next(item for item in app.button if item.label == "로컬 데이터 선택 확인").click().run()
@@ -394,6 +396,8 @@ class InputProfilingAppTest(unittest.TestCase):
                        side_effect=lambda name, create_parent=False: root / "runs" / name),                     patch("src.agents.module_pipeline.run_pipeline_worker", side_effect=_transport) as launch,                     patch("src.ui.runtime_notice.server_permissions",
                           return_value={"elevated": True, "pid": 1, "python": "synthetic"}):
                 app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=60).run()
+                app.checkbox(key="ui_show_advanced_tools").check().run()
+                app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
                 app.selectbox(key="ui_source_mode_widget").set_value("기존 CSV snapshot").run()
 
                 def select(name):
@@ -455,6 +459,8 @@ class InputProfilingAppTest(unittest.TestCase):
                     patch("src.ui.runtime_notice.server_permissions",
                           return_value={"elevated": True, "pid": 1, "python": "synthetic"}):
                 app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=60).run()
+                app.checkbox(key="ui_show_advanced_tools").check().run()
+                app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
                 app.selectbox(key="ui_source_mode_widget").set_value("기존 CSV snapshot").run()
                 app.text_input(key="_widget_source_snapshot_path").set_value(str(snapshot))
                 next(item for item in app.button if item.label == "로컬 데이터 선택 확인").click().run()

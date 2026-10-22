@@ -211,6 +211,8 @@ class WorkflowAppTest(unittest.TestCase):
         service = FakeService()
         with patch.object(UiWorkflow, "service", return_value=service):
             app = AppTest.from_file(str(Path(__file__).resolve().parents[2] / "src/ui/app.py"), default_timeout=30).run()
+            app.checkbox(key="ui_show_advanced_tools").check().run()
+            app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
             app.selectbox(key="ui_workflow_mode").select("등록 모듈").run()
             self.assertFalse(app.exception)
             app.selectbox(key="workflow_module_select").select("wm_canonical_eda")
@@ -239,6 +241,8 @@ class WorkflowAppTest(unittest.TestCase):
         with patch.object(UiWorkflow, "service", return_value=service):
             workflow.connect("synthetic01")
             app = AppTest.from_file(str(Path(__file__).resolve().parents[2] / "src/ui/app.py"), default_timeout=30).run()
+            app.checkbox(key="ui_show_advanced_tools").check().run()
+            app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
             app.session_state["ui_workflow_mode"] = "등록 모듈"
             app.session_state["ui_workflow"] = workflow
             app.session_state["ui_screen"] = SCREENS[3]

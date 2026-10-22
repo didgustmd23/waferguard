@@ -135,7 +135,7 @@ class ArrayScreenTest(unittest.TestCase):
         with patch("src.agents.task_store.STORE_ROOT", new=self.store), patch(
                 "src.ui.runtime_notice.server_permissions", return_value={"elevated": True, "pid": 1, "python": "synthetic"}):
             app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=120).run()
-            app.selectbox(key="ui_workflow_mode").set_value("통합 작업").run()
+            self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
             app.session_state["ui_task_id"] = task["task_id"]
             app.run()
             self.assertFalse(app.exception, [item.value for item in app.exception])
