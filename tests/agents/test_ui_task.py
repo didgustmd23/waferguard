@@ -48,7 +48,7 @@ class TaskScreenTest(unittest.TestCase):
 
         before = self.source.read_bytes()
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=180).run()
-        app.selectbox(key="ui_workflow_mode").set_value("통합 작업").run()
+        self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
         self.assertFalse(app.exception, [item.value for item in app.exception])
         self.assertTrue(any(item.value == "요청" for item in app.subheader))
         self.assertFalse(self.store.exists() and any(self.store.iterdir()))
@@ -112,7 +112,7 @@ class TaskScreenTest(unittest.TestCase):
                                  changes=[{"path": "split.strategy", "value": "time", "reason": "시간 순서"}])
         self.model_calls.side_effect = lambda payload, config: reply
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=180).run()
-        app.selectbox(key="ui_workflow_mode").set_value("통합 작업").run()
+        self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
         app.text_input(key="_widget_task_source").set_value(str(self.source))
         # 목표에 target 컬럼 이름이 없다. 기본 초안에는 target도 없다.
         app.text_area(key="task_goal").set_value("불량 예측용으로 분할·전처리해 주세요")
@@ -145,7 +145,7 @@ class TaskScreenTest(unittest.TestCase):
         frame.to_csv(source, index=False, header=["x", "zero", "zero", "label", "id", "time"])
         self.model_calls.side_effect = lambda payload, config: flow.model_reply(dict(flow.ROLES, zero_1="수치형", zero_2="수치형"))
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=180).run()
-        app.selectbox(key="ui_workflow_mode").set_value("통합 작업").run()
+        self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
         app.text_input(key="_widget_task_source").set_value(str(source))
         app.text_area(key="task_goal").set_value("label 예측용으로 분할·전처리해 주세요")
         app.checkbox(key="task_consent_a").check()
@@ -179,7 +179,7 @@ class TaskScreenTest(unittest.TestCase):
         task = flow.orchestrator.confirm_plan(task["task_id"], flow.plan(roles), root=self.store)
         self.assertEqual(task["problem"]["code"], "QUALITY_REVIEW")
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=180).run()
-        app.selectbox(key="ui_workflow_mode").set_value("통합 작업").run()
+        self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
         app.session_state["ui_task_id"] = task["task_id"]
         app.run()
         self.assertFalse(app.exception, [item.value for item in app.exception])
@@ -208,7 +208,7 @@ class TaskScreenTest(unittest.TestCase):
         task = flow.orchestrator.confirm_plan(task["task_id"], flow.plan(roles, preparation=preparation), root=self.store)
         self.assertEqual(task["problem"]["code"], "STEP_FAILED")
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=180).run()
-        app.selectbox(key="ui_workflow_mode").set_value("통합 작업").run()
+        self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
         app.session_state["ui_task_id"] = task["task_id"]
         app.run()
         self.assertFalse(app.exception, [item.value for item in app.exception])
@@ -232,7 +232,7 @@ class TaskScreenTest(unittest.TestCase):
         task = flow.orchestrator.start_task("label 예측용으로 분할·전처리해 주세요", self.source, flow.LIMITS, self.model, root=self.store)
         task = flow.orchestrator.diagnose(task["task_id"], root=self.store)
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=180).run()
-        app.selectbox(key="ui_workflow_mode").set_value("통합 작업").run()
+        self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
         app.session_state["ui_task_id"] = task["task_id"]
         app.run()
         self.assertFalse(app.exception, [item.value for item in app.exception])
@@ -277,7 +277,7 @@ class TaskScreenTest(unittest.TestCase):
         task = flow.orchestrator.start_task("label 예측용으로 분할·전처리해 주세요", self.source, flow.LIMITS, self.model, root=self.store)
         task = flow.orchestrator.diagnose(task["task_id"], root=self.store)
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=180).run()
-        app.selectbox(key="ui_workflow_mode").set_value("통합 작업").run()
+        self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
         app.session_state["ui_task_id"] = task["task_id"]
         app.run()
         self.assertFalse(app.exception, [item.value for item in app.exception])
@@ -367,7 +367,7 @@ class TaskScreenTest(unittest.TestCase):
             flow.orchestrator.approve_apply(task["task_id"], root=self.store)
 
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=180).run()
-        app.selectbox(key="ui_workflow_mode").set_value("통합 작업").run()
+        self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
         app.session_state["ui_task_id"] = task["task_id"]
         app.run()
         self.assertFalse(app.exception, [item.value for item in app.exception])
@@ -383,7 +383,7 @@ class TaskScreenTest(unittest.TestCase):
         from src.agents import task_store
 
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=60).run()
-        app.selectbox(key="ui_workflow_mode").set_value("통합 작업").run()
+        self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
         app.session_state["ui_task_id"] = "0" * 32
 
         with patch("src.agents.task_store.load_task", side_effect=task_store.TaskRecordError("RECORD_TOO_LARGE", "x")):
@@ -398,7 +398,7 @@ class TaskScreenTest(unittest.TestCase):
         with patch("src.ui.runtime_notice.server_permissions",
                    return_value={"elevated": False, "pid": 1, "python": "synthetic"}):
             app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=60).run()
-            app.selectbox(key="ui_workflow_mode").set_value("통합 작업").run()
+            self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
             app.text_input(key="_widget_task_source").set_value(str(self.source))
             app.text_area(key="task_goal").set_value("label 예측")
             app.checkbox(key="task_consent_a").check()

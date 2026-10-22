@@ -52,6 +52,8 @@ class UiWmIntegrationTest(unittest.TestCase):
             source = open_run('review-source').contract.snapshot_directory
 
         app = AppTest.from_file(str(self.project / 'src/ui/app.py'), default_timeout=60).run()
+        app.checkbox(key="ui_show_advanced_tools").check().run()
+        app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
         app.selectbox(key='ui_workflow_mode').select('등록 모듈').run()
         app.selectbox(key='workflow_module_select').select('wm_canonical_eda')
         app.button(key='FormSubmitter:workflow_select-이 모듈 선택').click().run()

@@ -688,6 +688,23 @@ def _impact_by_column(candidate):
     return None if impact is None else {item["column"]: item for item in impact}
 
 
+def _category_display(token):
+    """검증된 내부 범주 표현을 표시용 값으로 바꾼다. 처리 기준은 변경하지 않는다."""
+    if token == "missing":
+        return "별도 결측 범주"
+    try:
+        kind, value = json.loads(token)
+    except (TypeError, ValueError):
+        return MISSING
+    if kind == "str" and isinstance(value, str):
+        return value
+    if kind == "bool" and type(value) is bool:
+        return "true" if value else "false"
+    if kind == "number" and type(value) in (int, float):
+        return _number(value)
+    return MISSING
+
+
 def _processing(record, preprocessor, candidate):
     """컬럼별 역할·결정 출처·처리·제외 사유. 처리 내용은 검증된 후보 기준과 Train 영향 집계에서만 가져온다."""
     plan = _plan(record)
@@ -719,7 +736,9 @@ def _processing(record, preprocessor, candidate):
 
             action = ", ".join(parts)
         else:
-            action = f"범주 {len(item.get('categories', []))}개(결측 범주 포함) → 출력 {item.get('width', MISSING)}열, 결측은 '{item.get('fill', MISSING)}'로 채움"
+            missing_note = "(별도 결측 범주 포함)" if "missing" in item.get("categories", []) else ""
+            fill = _category_display(item.get("fill"))
+            action = f"범주 {len(item.get('categories', []))}개{missing_note} → 출력 {item.get('width', MISSING)}열, 결측 시 {fill!r}로 채움"
 
         if effect is not None:
             if effect["clipped"]:
@@ -872,7 +891,7 @@ def _problems(record, quality):
                 rows.append({"구분": label, "컬럼": name, "내용": f"{column[key]}개", "처리": "자동 수정하지 않음"})
 
         if column.get("outlier_candidate_count"):
-            rows.append({"구분": "이상치 후보(IQR 1.5, 진단용)", "컬럼": name, "내용": f"{column['outlier_candidate_count']}개",
+            rows.append({"구분": "이상치 후보(IQR 1.5, 진단용)", "컬럼": name, "내용": f"{column['outlier_candidate_count']}개 · 통계적 후보이며 오류 판정이 아닙니다. 정상 0/1 값도 포함될 수 있습니다.",
                          "처리": "Train 기준 IQR clip" if preparation["outlier"] == "iqr_clip" and role == "수치형" else "변경하지 않음(이상치 처리 미선택)"})
 
     if record["diagnostic"]["summary"].get("repeated_rows"):

@@ -251,6 +251,8 @@ class UiExecutionTest(unittest.TestCase):
                 "src.ui.navigation.review_available", return_value=True), patch(
                 "src.ui.navigation.input_available", return_value=True):
             app = AppTest.from_file(str(Path(__file__).resolve().parents[2] / "src/ui/app.py"))
+            app.session_state["ui_show_advanced_tools"] = True
+            app.session_state["ui_workflow_mode"] = "LLM 제안"
             app.session_state["ui_active_execution"] = execution
             app.session_state["ui_execution_candidate"] = None
             app.session_state["ui_screen"] = SCREENS[3]

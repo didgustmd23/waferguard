@@ -299,6 +299,8 @@ class UiDialogueAppTest(unittest.TestCase):
             with patch("src.ui.dialogue_view.UiDialogue", side_effect=lambda settings: UiDialogue(
                     settings, factory=lambda config: backend, ledger=ledger)):
                 app = AppTest.from_file(str(ROOT / "src/ui/app.py")).run()
+                app.checkbox(key="ui_show_advanced_tools").check().run()
+                app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
                 app.selectbox(key="ui_source_mode_widget").set_value("데이터 없이 제안만 검토").run()
                 app.text_area[0].set_value("품질 검사를 요청합니다.")
                 next(item for item in app.button if item.label == "요청 초안 보관").click().run()
@@ -324,6 +326,8 @@ class UiDialogueAppTest(unittest.TestCase):
 
             with patch("src.ui.dialogue_view.UiDialogue", side_effect=factory):
                 app = AppTest.from_file(str(ROOT / "src/ui/app.py")).run()
+                app.checkbox(key="ui_show_advanced_tools").check().run()
+                app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
                 app.selectbox(key="ui_source_mode_widget").set_value("데이터 없이 제안만 검토").run()
                 app.text_area[0].set_value("품질 검사 후 결측률을 확인해 주세요.")
                 next(item for item in app.button if item.label == "요청 초안 보관").click().run()
@@ -358,6 +362,8 @@ class UiDialogueAppTest(unittest.TestCase):
             with patch("src.ui.dialogue_view.UiDialogue", side_effect=factory), \
                     patch("src.ui.dialogue_view.list_saved_proposals", side_effect=lambda: list_saved_proposals(root=root)):
                 app = AppTest.from_file(str(ROOT / "src/ui/app.py")).run()
+                app.checkbox(key="ui_show_advanced_tools").check().run()
+                app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
                 app.selectbox(key="ui_source_mode_widget").set_value("데이터 없이 제안만 검토").run()
                 self.assertTrue(any("저장된 제안이 없습니다" in item.value for item in app.info))
                 self.assertTrue(next(item for item in app.button if item.label == "불러오기").disabled)
@@ -400,6 +406,8 @@ class UiDialogueAppTest(unittest.TestCase):
             with patch("src.ui.dialogue_view.UiDialogue", side_effect=factory), \
                     patch("src.ui.dialogue_view.list_saved_proposals", side_effect=lambda: list_saved_proposals(root=root)):
                 app = AppTest.from_file(str(ROOT / "src/ui/app.py")).run()
+                app.checkbox(key="ui_show_advanced_tools").check().run()
+                app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
                 app.selectbox(key="ui_source_mode_widget").set_value("데이터 없이 제안만 검토").run()
                 next(item for item in app.button if item.label == "불러오기").click().run()
                 self.assertEqual(len(app.exception), 0)
@@ -414,6 +422,8 @@ class UiDialogueAppTest(unittest.TestCase):
 
         with patch("src.ui.dialogue_view.UiDialogue", side_effect=ImportError):
             app = AppTest.from_file(str(ROOT / "src/ui/app.py")).run()
+            app.checkbox(key="ui_show_advanced_tools").check().run()
+            app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
             app.selectbox(key="ui_source_mode_widget").set_value("데이터 없이 제안만 검토").run()
             app.text_area[0].set_value("품질 검사만 요청합니다.")
             next(item for item in app.button if item.label == "요청 초안 보관").click().run()

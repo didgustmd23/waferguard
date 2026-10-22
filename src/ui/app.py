@@ -53,9 +53,17 @@ def main():
         st.session_state["ui_draft"] = ""
 
     with st.sidebar:
-        st.selectbox("작업 시작 방식", ("LLM 제안", "등록 모듈", "통합 작업"), key="ui_workflow_mode",
-                     help="LLM 제안은 기존 대화 흐름입니다. 등록 모듈은 공통 명세로 작업을 준비하며 LLM을 호출하지 않습니다. "
-                          "통합 작업은 파일과 목표만으로 진단부터 결과까지 이어서 진행합니다.")
+        advanced = st.checkbox("고급 도구 표시", key="ui_show_advanced_tools",
+                               help="기존 LLM 제안과 등록 모듈의 단계별 실행 화면을 표시합니다. 표시 변경만으로 작업·승인·모델 호출은 발생하지 않습니다.")
+        if advanced:
+            if "ui_workflow_mode" not in st.session_state:
+                st.session_state["ui_workflow_mode"] = "통합 작업"
+            st.selectbox("작업 도구", ("통합 작업", "LLM 제안", "등록 모듈"), key="ui_workflow_mode",
+                         help="통합 작업을 기본으로 사용하세요. LLM 제안과 등록 모듈은 기존 단계별 실행을 위한 고급 도구입니다.")
+        else:
+            # 이전 세션의 고급 화면 선택이 남아 있어도 기본 화면에서는 실행 경로를 노출하지 않는다.
+            # 각 화면의 초안·작업 연결·승인은 삭제하지 않는다.
+            st.session_state["ui_workflow_mode"] = "통합 작업"
         if st.session_state.get("ui_workflow_mode") == "통합 작업":
             st.radio("화면", ("작업", "설정"), key="ui_task_screen", horizontal=True)
         if st.session_state.get("ui_workflow_mode", "LLM 제안") == "LLM 제안":

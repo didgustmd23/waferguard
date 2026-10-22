@@ -208,6 +208,8 @@ class CsvPlanScreenTest(unittest.TestCase):
                 with patch.object(store, "save_workflow", side_effect=save), patch.object(store, "load_workflow", side_effect=load):
                     with patch("src.ui.dialogue_service.ModelCommandLedger", side_effect=lambda: ModelCommandLedger(root / "commands.db")):
                         app = AppTest.from_file(str(ROOT / "src/ui/app.py"), default_timeout=30).run()
+                        app.checkbox(key="ui_show_advanced_tools").check().run()
+                        app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
                         next(item for item in app.selectbox if item.label == "제안 범위").select("CSV 분할·전처리").run()
                         self.assertFalse(app.exception)
                         self.assertTrue(self.button(app, "2 제안 검토 · 잠김").disabled)

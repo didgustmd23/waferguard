@@ -128,6 +128,8 @@ class PathPickerAppTest(unittest.TestCase):
             source.write_bytes(b"x,y\n1,2\n")
             with patch.object(path_picker, "pick_local_path", return_value={"status": "selected", "path": str(source)}) as pick:
                 app = AppTest.from_file(str(ROOT / "src/ui/app.py")).run()
+                app.checkbox(key="ui_show_advanced_tools").check().run()
+                app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
                 app.selectbox(key="ui_source_mode_widget").set_value(CSV_SOURCE).run()
                 app.button(key="source_csv_path_browse").click().run()
                 self.assertEqual(app.text_input[0].value, str(source))
@@ -145,6 +147,8 @@ class PathPickerAppTest(unittest.TestCase):
 
         with patch.object(path_picker, "pick_local_path", return_value={"status": "cancelled"}) as pick:
             app = AppTest.from_file(str(ROOT / "src/ui/app.py")).run()
+            app.checkbox(key="ui_show_advanced_tools").check().run()
+            app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
             app.selectbox(key="ui_source_mode_widget").set_value(CSV_SNAPSHOT).run()
             app.text_input[0].set_value("D:/manually_entered/snapshot")
             app.button(key="source_snapshot_path_browse").click().run()

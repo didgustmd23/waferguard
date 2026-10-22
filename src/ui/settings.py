@@ -59,10 +59,12 @@ def render_settings(st):
 
     with st.form("settings_form"):
         st.subheader("모델 연결 설정")
-        mode = st.selectbox(
-            "동작 모드", MODES, index=MODES.index(current["mode"]),
-            help="로컬 LLM은 대화로 실행안을 제안합니다. 규칙 기반 화면은 준비 중이며 이 모드에서는 모델을 호출하지 않습니다. 모드 변경은 이전 전송 확인·제안을 무효화합니다.",
-        )
+        mode = current["mode"]
+        if st.session_state.get("ui_show_advanced_tools") and st.session_state.get("ui_workflow_mode") == "LLM 제안":
+            mode = st.selectbox(
+                "기존 대화 도구의 동작 모드", MODES, index=MODES.index(current["mode"]),
+                help="고급 LLM 제안 화면에만 적용됩니다. 통합 작업의 시작 방식을 선택하는 설정이 아닙니다. 규칙 기반 화면은 준비 중입니다.",
+            )
         name = st.text_input(
             "Ollama 모델명", value=model["model"],
             help="Ollama에 설치한 정확한 모델 이름과 태그입니다. 예: qwen3.5:9b. 입력만으로 모델을 설치·호출하거나 연결을 확인하지 않습니다.",

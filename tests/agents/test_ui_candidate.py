@@ -217,6 +217,8 @@ class UiCandidateAppTest(unittest.TestCase):
                 with patch("src.ui.candidate_service.create_candidate", side_effect=lambda *args, **kwargs:
                            existing.create_candidate(*args, **kwargs, root=root / "candidates")) as creator:
                     app = AppTest.from_file(str(ROOT / "src/ui/app.py")).run()
+                    app.checkbox(key="ui_show_advanced_tools").check().run()
+                    app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
                     app.selectbox(key="ui_source_mode_widget").set_value("데이터 없이 제안만 검토").run()
                     app.text_area[0].set_value("품질 검사 후 결측률을 확인해 주세요.")
                     next(item for item in app.button if item.label == "요청 초안 보관").click().run()
