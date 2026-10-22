@@ -403,6 +403,8 @@ class DedupeAppTest(unittest.TestCase):
                     patch("src.ui.runtime_notice.server_permissions",
                           return_value={"elevated": True, "pid": 1, "python": "synthetic"}):
                 app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=60).run()
+                app.checkbox(key="ui_show_advanced_tools").check().run()
+                app.selectbox(key="ui_workflow_mode").select("LLM 제안").run()
                 app.selectbox(key="ui_source_mode_widget").set_value("기존 CSV snapshot").run()
                 app.text_input(key="_widget_source_snapshot_path").set_value(str(snapshot))
                 next(item for item in app.button if item.label == "로컬 데이터 선택 확인").click().run()
