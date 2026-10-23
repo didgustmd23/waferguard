@@ -59,9 +59,9 @@ flowchart TB
     end
 
     subgraph CORE["공통 핵심 (src/agents, 유형별 계산과 분리)"]
-        OR["task_orchestrator.py<br/>단계 진행 · 위임 발급 · 복구"]
+        OR["task_orchestrator.py<br/>단계 진행 · 동의 대조 · 복구"]
         PL["task_plan.py<br/>경로 변경 · 질문 · 충돌 · 출처"]
-        CS["task_consent.py<br/>동의 A · C · D"]
+        CS["task_consent.py<br/>동의 A · C · D · 위임 판정"]
         ST["task_store.py<br/>작업 기록 · 잠금 · revision"]
         RC["task_recommend.py<br/>모델 권장안 요청 · 검증"]
         RP["task_report.py<br/>공통 보고서 조립"]
@@ -75,26 +75,36 @@ flowchart TB
     end
 
     subgraph SV["유형별 서비스 · 실행"]
+        DG["pipeline_approval_cli · module_pipeline<br/>표형 입력 진단(input_profile)"]
         CSV["CSV 작업 서비스 5종<br/>분할 · 내보내기 · 후보 · 적용 · 전달"]
         ARR["array_task_service.py<br/>진단 · 후보 · 적용"]
-        EX["executor.py + approval_store.py<br/>1회 승인 · 상태 · 커밋"]
+        DA["delegated_approval.py<br/>동의 범위 대조 후 1회 승인 기록"]
+        EX["executor.py + approval_store.py<br/>승인 소비 · 상태 · 커밋"]
         TR["*_transport.py<br/>AppContainer + Job"]
         WK["*_worker.py<br/>격리 계산"]
+        OUT["worker 출력 파일<br/>아직 신뢰하지 않은 결과"]
         RS["*_results.py<br/>부모 결과 검증"]
     end
 
-    CALC["계산 코어 (src/preprocessing)<br/>transform · split · array_dataset · input_profile"]
+    CALC["계산 코어 (src/preprocessing)<br/>input_profile · split · transform · array_dataset"]
     OL["local_ollama.py<br/>loopback Ollama"]
 
     TV --> OR
-    FM --> TV
+    TV --> FM
     OR --> PL & CS & ST & RP
     OR --> RC --> OL
     OR --> RG --> TA & AA
-    TA --> CSV
-    AA --> ARR
-    CSV & ARR --> EX --> TR --> WK --> CALC
-    WK --> RS --> EX
+    TA -->|결정 A| DG
+    TA -->|결정 C · D| CSV
+    AA -->|결정 A · C · D| ARR
+    CSV & ARR -->|동의 대조 후 위임 승인| DA -->|승인 기록 후 단계 진행| EX
+    DG -->|동의 대조 · 자체 위임 기록 후 단계 진행| EX
+    EX --> TR --> WK --> CALC
+    WK --> OUT
+    EX -->|부모에서 검증 호출| RS
+    OUT -->|부모가 출력 파일을 읽음| RS
+    RS -->|검증 통과만 완료 등록| EX
+    TA & AA -.->|검증된 report_facts 전달| RP
 ```
 
 | 결정 | 화면에서 하는 일 | 조정기가 이어서 하는 일 |
@@ -105,13 +115,13 @@ flowchart TB
 
 각 단계의 1회 승인은 해당 동의 범위·입력·계획·코드 지문과 맞을 때만 위임 발급한다. worker 출력은 부모 검증기를 통과한 것만 커밋하고, 화면·보고서는 검증된 결과만 다시 읽는다.
 
-등록부 `task_adapters.py`는 유형별 어댑터를 import하는 의도된 연결 경계다. 조정·계획·동의·저장·보고서의 공통 규칙이 유형별 계산에 직접 의존하지 않는 것과 구분한다. 구성도의 연결은 주요 호출/처리 관계이며 모든 함수 호출·반환을 나타내지는 않는다.
+등록부 `task_adapters.py`는 유형별 어댑터를 import하는 의도된 연결 경계다. 조정·계획·동의·저장·보고서의 공통 규칙이 유형별 계산에 직접 의존하지 않는 것과 구분한다. 구성도의 연결은 주요 호출/처리 관계이며 모든 함수 호출·반환을 나타내지는 않는다. 표형 진단은 `pipeline_approval_cli.record_delegated_approval`에서 동의를 대조해 자체 위임 기록을 남기고 실행기를 거친다. CSV·배열 서비스의 공통 `delegated_approval` 경로와 구분하되, 모두 승인 소비 뒤 격리 계산하고 부모가 출력을 검증한다. `task_report`는 어댑터의 `report_facts`를 호출해 검증된 결과 사실을 받아 조립하며, 점선은 그 반환 자료를 나타낸다.
 
 주요 구현은 `task_orchestrator.py`, `task_plan.py`, `task_consent.py`, `task_store.py`, `task_adapters.py`, `task_report.py`, `tabular_task.py`, `array_task.py`와 `src/ui/task_view.py`다. 등록은 고정 ID 목록을 사용하고 폴더 탐색·동적 import·새 에이전트 프레임워크를 도입하지 않는다.
 
 ### 배열·이미지 통합 작업 연결
 
-**상태: 구현, 합성 검증 및 합성 입력의 실제 격리 실행·모델 요청·사용자 화면 확인 이력 있음.** 아래 확정 결정대로 `array_task*.py`·`array_options.py`·`src/preprocessing/array_dataset.py`·`src/ui/array_task_form.py`로 구현하고 통합 작업에 등록했다. 최신 bool 라벨 보완은 관련 합성 테스트까지 확인했으며, 전체 회귀·실제 OS 재실행은 별개다. 검증 근거·모델 품질 한계·egress 미검증 등 현재 범위는 [운영 안내](GUIDE.md#검증-상태와-남은-제한)를 따른다. 웨이퍼 전용 규칙(WM-811K 필드·결함 맵 채널·lot 규칙)과 시간 처리는 이 범위가 아니다. WM-811K 매핑의 `waferMap`·`failureType`·`lotName`은 이후 웨이퍼 프로파일 안에만 둔다.
+**상태: 구현, 합성 검증 및 합성 입력의 실제 격리 실행·모델 요청·사용자 화면 확인 이력 있음.** 아래 확정 결정대로 `array_task*.py`·`array_options.py`·`src/preprocessing/array_dataset.py`·`src/ui/array_task_form.py`로 구현하고 통합 작업에 등록했다. 최신 bool 라벨 보완은 관련 합성 테스트까지 확인했으며, 전체 회귀·실제 OS 재실행은 별개다. 검증 근거·모델 품질 한계·네트워크 검증 범위 등 현재 범위는 [운영 안내](GUIDE.md#검증-상태와-남은-제한)를 따른다. 웨이퍼 전용 규칙(WM-811K 필드·결함 맵 채널·lot 규칙)과 시간 처리는 이 범위가 아니다. WM-811K 매핑의 `waferMap`·`failureType`·`lotName`은 이후 웨이퍼 프로파일 안에만 둔다.
 
 **재사용 판정(코드 확인)**
 
@@ -294,11 +304,13 @@ flowchart TB
     T -.->|거부| X["미승인 실행 · 코드 지문 불일치<br/>허용 목록 밖 경로 / 소스 · 링크 우회"]
 ```
 
+**합성 AppContainer 검사에서 시험한 외부 접속의 접근 거부는 확인했다. loopback의 OS 차단 증거는 미확인이다.** 실제 검사 `7c0922a6e2e54482a887f12298d651de`의 `result.json`에는 외부 접속 오류 `10013`·`access_denied`, `external_network: passed`가 기록돼 있다. loopback은 timeout과 `LOOPBACK_OS_DROP_EVIDENCE_MISSING`으로 검토 필요 상태다. WFP 수집 실행 `3e4d66b4156a472fae626845257a1acd`도 수집·정리는 완료했지만 `drop_evidence_verified: false`다. 따라서 네트워크 capability 0개·정상 종료·접속 timeout·수집 완료만으로 loopback 차단이나 SEC-12 전체 검증 완료를 선언하지 않는다.
+
 | 통제 | 허용하는 것 | 차단·제한하는 것과 확인 범위 |
 | --- | --- | --- |
 | 승인·계약 | 동의 범위에 맞는 고정 도구와 정확한 입력·계획 | 미승인·만료·재사용·불일치 요청 거부. AppContainer 자체가 승인 여부를 판단하는 것은 아님 |
 | 파일·환경 | 복사한 runtime/tools/input의 RX, 해당 output/scratch의 Modify·Low | 보호 영역에 작업 SID 권한을 부여하지 않음. 부모 환경 전체·API 키·상속 핸들을 전달하지 않음. Windows 기본 시스템 접근까지 모두 없어진다는 뜻은 아님 |
-| 네트워크 | 계산 worker에는 네트워크 capability를 부여하지 않음 | 외부·loopback 접속 차단을 목표로 함. 과거 합성 검사에서 외부 접근 거부는 관찰했지만 loopback timeout만으로 OS 차단을 확정하지 않으며, 실제 egress 검증은 별도 증거가 필요함 |
+| 네트워크 | 계산 worker에는 네트워크 capability를 부여하지 않음 | 합성 AppContainer 검사에서 시험한 외부 접속은 오류 10013으로 접근 거부 확인. loopback은 timeout이며 WFP 차단 증거는 미확인. 모든 목적지·worker·하위 프로세스의 SEC-12 검증 완료를 뜻하지 않음 |
 | 자원·프로세스 | 요청 한도 안에서 실행, 정지 상태로 생성 후 Job 연결·재개 | Job 메모리·동시 프로세스 수 제한, 시간 초과·취소 시 종료 및 잔존 확인. Job은 파일·네트워크 보안 경계를 대신하지 않음 |
 | 결과 반입 | 부모 검증을 통과한 결과만 등록 | 정상 종료만으로 신뢰하지 않음. 해시·형식·내부 일관성 검증은 통계가 원본과 일치한다는 독립 재계산 증명과는 다름 |
 

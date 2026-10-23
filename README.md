@@ -20,50 +20,43 @@
 
 ### 전체 구성도
 
-세 영역은 로컬에서 각각 시작하는 **독립 실행 경로**입니다. 실행 간 결과를 자동 전달하는 연결은 없습니다. 점선은 계산 코드의 참조/재사용이며 데이터 전달이나 실행 순서가 아닙니다.
+세 영역은 로컬에서 각각 시작하는 **독립 실행 경로**입니다. 실행 간 결과를 자동 전달하는 연결은 없습니다. 코드 위치는 각 영역과 아래 설명에 표시하며, 점선은 아직 실행이 연결되지 않은 향후 학습·평가 계획입니다.
 
 ```mermaid
-flowchart TB
-    subgraph AG["1. 전처리 에이전트 — 독립 실행"]
-        direction LR
-        AI["사용자 CSV / .npz<br/>고급 도구의 선택 입력"] --> UI["Streamlit 통합 작업 / 고급 도구"]
-        UI --> CO["진단 · 계획 · 질문<br/>동의 · 단계 조정"]
-        CO --> WK["AppContainer + Job<br/>격리 worker"]
-        WK --> VR["부모 결과 검증<br/>완료 등록 · 보고서"]
-        CO -->|동의 범위의 목표 · 허용 이름/구조 · 집계 · 계획/선택지| LLM["로컬 Ollama"]
-        LLM -->|검증 대상 권장안 · 질문 · 별도 정책의 해설| CO
-        VR --> AO["작업별 로컬 결과<br/>logs/agents · CSV 전달 묶음"]
+flowchart LR
+    subgraph AG["① 전처리 에이전트<br/>src/agents · src/ui"]
+        direction TB
+        AI["CSV · .npz 입력"] --> UI["통합 작업 화면"]
+        UI --> CO["진단 · 계획 · 동의"]
+        CO -->|동의 범위 자료| LLM["로컬 Ollama"]
+        LLM -->|권장안 · 질문 · 해설| CO
+        CO --> WK["격리 worker<br/>AppContainer + Job"]
+        WK --> VR["부모 결과 검증"]
+        VR --> AO["결과 · 보고서<br/>logs/agents"]
     end
 
-    subgraph ML["2. SECOM — 기존 CLI / Pipeline 독립 실행"]
-        direction LR
-        SI["SECOM 센서·라벨 입력"] --> MP["병합 · 점검 · 분할"]
-        MP --> ME["센서 선택 · 모델 실험"]
+    subgraph ML["② SECOM 머신러닝<br/>src/sensor_ml"]
+        direction TB
+        SI["센서 · 라벨 입력"] --> MP["병합 · 점검 · 분할"]
+        MP --> ME["센서 선택 · 실험"]
         ME --> MV["평가 · 추론"]
-        MV --> SO["SECOM 모델 · 로그 · 보고서"]
+        MV --> SO["모델 · 보고서"]
     end
 
-    subgraph WM["3. WM-811K — 기존 CLI / 노트북 독립 실행"]
-        direction LR
-        WI["WM-811K 원본 / 검증된 canonical"] --> DP["원본 변환 · 검증 · EDA<br/>분할 · 2채널 변환 · 캐시 · Dataset"]
-        DP --> WO["WM manifest · 캐시<br/>첫 배치 · 보고서"]
-        DM["후속 학습 · 평가: CNN / ResNet18<br/>계획 단계, 현재 실행 연결 아님"]
+    subgraph WM["③ WM-811K 딥러닝<br/>src/wafer_dl"]
+        direction TB
+        WI["웨이퍼맵 입력"] --> DP["변환 · 검증 · EDA"]
+        DP --> DS["분할 · 캐시 · Dataset"]
+        DS -.-> DM["CNN / ResNet18<br/>(계획 단계)"]
     end
 
-    subgraph CODE["계산 코드 — 실행 경로와 별개의 코드 참조 관계"]
-        PC["src/preprocessing<br/>표형·배열 계산 / 입력 계약"]
-        SP["src/modeling_preprocessing.py 등<br/>기존 SECOM 전처리 Pipeline"]
-        WC["src/wafer_dl · scripts/wm_sandbox<br/>웨이퍼 전용 계산 / 변환"]
-    end
-
-    WK -.->|코드 참조| PC
-    WK -.->|고급 WM 등록 모듈의 코드 참조| WC
-    DP -.->|코드 참조| WC
-    ME -.->|코드 참조| SP
-    MV -.->|코드 참조| SP
+    %% 보이지 않는 연결: 세 영역을 왼쪽부터 나란히 배치하기 위한 것이며 실행·데이터 흐름이 아니다.
+    AG ~~~ ML ~~~ WM
 ```
 
-- **실선:** 각 영역 내부의 주요 실행·처리 흐름. **점선:** 계산 코드 참조. 세 영역 사이의 자동 실행·데이터 전달 화살표는 없습니다.
+- **실선:** 각 영역 내부의 주요 실행·처리 흐름. **점선:** 아직 실행이 연결되지 않은 계획 단계. 세 영역 사이의 자동 실행·데이터 전달 화살표는 없습니다.
+- 에이전트 격리 worker의 계산은 `src/preprocessing`(표형·배열), 고급 WM 등록 모듈은 `src/wafer_dl`·`scripts/wm_sandbox`를 씁니다. SECOM 실험 전처리는 `src/modeling_preprocessing.py` 등 기존 Pipeline입니다.
+- 로컬 Ollama에는 동의 범위의 목표·허용 이름/구조·집계·계획/선택지만 보내고, 검증 대상 권장안·질문과 별도 정책의 해설만 받습니다.
 - 에이전트는 SECOM 저장 모델·평가 결과를 사용하지 않습니다. SECOM·WM의 기존 실행은 에이전트 없이 수행할 수 있습니다.
 - 웨이퍼 계산은 기존 WM CLI와 에이전트의 고급 WM 등록 모듈에서 재사용합니다. 이것은 아직 별도인 통합 작업의 웨이퍼 프로파일 연결 완료를 뜻하지 않습니다.
 - 모든 전처리가 하나의 엔진으로 통합된 것은 아닙니다. 표형/배열 공통 계산, 기존 SECOM Pipeline, 웨이퍼 전용 계산의 실제 위치를 구분합니다.
