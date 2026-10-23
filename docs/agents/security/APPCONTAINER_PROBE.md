@@ -54,7 +54,7 @@ compatibility_passed일 때 종료 코드 0, 검토 필요·검사 미완료일 
 - logs/agents/appcontainer_probes/096f6657f7054674b2df1618f751b2fb/result.json
 - logs/agents/appcontainer_probes/e4e4f5ddf1874d60aaba15eff5234982/result.json
 
-첫 기록은 일반 실패 코드, 두 번째 기록은 acl_setup 단계 코드까지 포함한다. 이후 도구에는 PROBE_INTEGRITY_SETUP_FAILED와 숫자 종료 코드 기록을 보완했다. 두 실행의 검사 폴더는 보존했고 원본 환경·방화벽을 변경하지 않았다. **현재 실제 OS 결과는 review_required이며 실데이터 worker는 비활성이다.**
+첫 기록은 일반 실패 코드, 두 번째 기록은 acl_setup 단계 코드까지 포함한다. 이후 도구에는 PROBE_INTEGRITY_SETUP_FAILED와 숫자 종료 코드 기록을 보완했다. 두 실행의 검사 폴더는 보존했고 원본 환경·방화벽을 변경하지 않았다. **해당 두 실행의 실제 OS 결과는 review_required이며 당시 실데이터 worker는 비활성이었다.** 이후 실행과 현재 검증 범위는 아래 이력과 GUIDE를 따른다.
 
 후속 사용자 실행 `logs/agents/appcontainer_probes/5d0304f6e4ba44ed9bed3c3a092f2ba2/result.json`에서는 ACL 설정과 런타임 복사를 통과했고 process_launch에서 APPCONTAINER_PROCESS_CREATE_FAILED / 오류 203으로 중단했다. 203은 ERROR_ENVVAR_NOT_FOUND이며, 최소 환경 구성에서 Windows 프로필 조회 변수가 빠져 있던 점을 확인해 allowlist로 보완했다. 환경 블록 정렬도 대소문자 무시 순서로 변경했다. 이 수정으로 실제 프로세스 생성 문제가 해결됐는지는 사용자 재실행으로 확인해야 한다. 해당 실행의 AppContainer 프로필 정리는 성공했다.
 
@@ -66,7 +66,9 @@ compatibility_passed일 때 종료 코드 0, 검토 필요·검사 미완료일 
 
 ## 로컬 통신 진단 보완
 
-후속 실행 `032b4ac3d74d469e810d483577eec305`에서 전후 부모 연결 각 1건·child 연결 0건, capability 0개, 전후 loopback 예외 없음, 런타임·파일·외부 연결 검사 통과를 확인했다. child 로컬 연결은 timeout이어서 `LOOPBACK_OS_DROP_EVIDENCE_MISSING`을 유지했다. 프로필 정리는 성공했다. 다음 단계의 선택적 [WFP 증거 수집 도구](WFP_DIAGNOSTIC.md)는 구현했으나 실제 수집은 실행하지 않았다.
+후속 실행 `032b4ac3d74d469e810d483577eec305`에서 전후 부모 연결 각 1건·child 연결 0건, capability 0개, 전후 loopback 예외 없음, 런타임·파일·외부 연결 검사 통과를 확인했다. child 로컬 연결은 timeout이어서 `LOOPBACK_OS_DROP_EVIDENCE_MISSING`을 유지했다. 프로필 정리는 성공했다. 당시에는 선택적 WFP 도구의 실제 수집 전이었으며, 이후 실제 수집과 재검토 결과는 [WFP 진단](WFP_DIAGNOSTIC.md)의 기존 ETL 재검토 절에 정리한다.
+
+2026-10-23 기존 수집 실행 `3e4d66b4156a472fae626845257a1acd`·`ef25fb95cabf40e99bc2879fa923019f`의 ETL에서 시험 포트·시각·검사 PID에 대응하는 loopback 폐기 이벤트와, 격리 실행 파일에 대응하는 외부 시험 폐기 이벤트(ID 1001)를 확인했다. loopback AppId는 수신 측 부모 실행 파일로 기록돼 특정 차단 정책의 원인 귀속은 미확정이다. 해당 시험 트래픽의 WFP 폐기 확인이지 SEC-12 전체 검증 완료가 아니며, 원본 JSON의 timeout·검토 필요·`drop_evidence_verified: false`는 보존한다. 이번 재검토에서는 새 접속·수집을 하지 않았다.
 
 `src/agents/loopback_probe.py`는 다음 증거를 수집한다. 실데이터나 LLM은 사용하지 않는다.
 
@@ -94,6 +96,6 @@ python -m unittest discover -s tests/agents -q
 
 2026-10-16: 전후 연결·child 수신·timeout 보수적 판정·증거 누락·읽기 전용 예외 조회·UTF-16 출력 처리 테스트를 추가했다. 실제 AppContainer 차단의 증명은 합성 단위 테스트와 구분한다.
 
-전체 에이전트 합성 테스트 145개 중 144개 통과, Windows 링크 생성 권한에 따른 기존 1개 건너뜀을 확인했다. 새 진단 코드로 실제 AppContainer를 다시 실행한 결과는 아직 없다.
+당시 전체 에이전트 합성 테스트 145개 중 144개 통과, Windows 링크 생성 권한에 따른 기존 1개 건너뜀을 확인했다. 당시에는 새 진단 코드의 실제 AppContainer 재실행 전이었다. 이후 실행·ETL 재검토는 위 기록과 WFP 진단을 참조한다.
 
 Microsoft 참조: [AppContainer 실행](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer), [프로필 생성](https://learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-createappcontainerprofile). 이 실험은 Microsoft 인증이나 격리 보안 검증 완료 선언이 아니다.

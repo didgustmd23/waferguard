@@ -121,7 +121,7 @@ flowchart TB
 
 ### 배열·이미지 통합 작업 연결
 
-**상태: 구현, 합성 검증 및 합성 입력의 실제 격리 실행·모델 요청·사용자 화면 확인 이력 있음.** 아래 확정 결정대로 `array_task*.py`·`array_options.py`·`src/preprocessing/array_dataset.py`·`src/ui/array_task_form.py`로 구현하고 통합 작업에 등록했다. 최신 bool 라벨 보완은 관련 합성 테스트까지 확인했으며, 전체 회귀·실제 OS 재실행은 별개다. 검증 근거·모델 품질 한계·네트워크 검증 범위 등 현재 범위는 [운영 안내](GUIDE.md#검증-상태와-남은-제한)를 따른다. 웨이퍼 전용 규칙(WM-811K 필드·결함 맵 채널·lot 규칙)과 시간 처리는 이 범위가 아니다. WM-811K 매핑의 `waferMap`·`failureType`·`lotName`은 이후 웨이퍼 프로파일 안에만 둔다.
+**상태: 구현, 합성 검증 및 합성 입력의 실제 격리 실행·모델 요청·사용자 화면 확인 이력 있음.** 아래 확정 결정대로 `array_task*.py`·`array_options.py`·`src/preprocessing/array_dataset.py`·`src/ui/array_task_form.py`로 구현하고 통합 작업에 등록했다. 최신 bool 라벨 보완은 대상 테스트·전체 회귀와 합성 입력의 실제 AppContainer 실행까지 확인했다. 배열 메모리의 기본 용량·옵션·dtype·제한 초과 시험도 확인한 범위 안에서 완료했다. 검증 근거·모델 품질 한계·네트워크 검증 범위 등 현재 범위는 [운영 안내](GUIDE.md#검증-상태와-남은-제한)를 따른다. 웨이퍼 전용 규칙(WM-811K 필드·결함 맵 채널·lot 규칙)과 시간 처리는 이 범위가 아니다. WM-811K 매핑의 `waferMap`·`failureType`·`lotName`은 이후 웨이퍼 프로파일 안에만 둔다.
 
 **재사용 판정(코드 확인)**
 
@@ -181,6 +181,7 @@ flowchart TB
 - 경고: 정보 손실(clipping·상수 채널·제외 표본), 미처리(동일 표본 유지, Test 미적용), 미검증(worker 집계 항목, 모델 학습 없음).
 - 활용: `train_samples.npy`·`validation_samples.npy`, 표본 메타데이터 JSON, 저장 기준 JSON의 용도와 Test 적용 방법.
 - 메모리: 입력 파일 크기·압축 해제 크기·원소 수 상한은 입력 검사 기준이며 실제 계산 메모리 요구량과 다르다. worker는 표본 배열을 한 번에 읽고 float64로 기준을 계산하며, 부모 검증도 출력 배열을 한 번에 읽는다. 작업 메모리 상한(Job)을 넘으면 중단하고 상한을 자동으로 늘리지 않는다. 진단 중 실행 실패는 원인을 단정하지 않는 고정 문구로 안내한다. 대용량 스트리밍 처리는 지원하지 않는다.
+  - 실제 합성 검증: 32·128 MiB float32 입력은 기본 Job 2 GiB에서 진단·후보·적용과 부모 결과 검증을 완료했다. 32 MiB 입력에 시험 전용 256 MiB 제한을 적용하면 메모리 초과 통지 후 중단·정리되고 미완성 결과는 커밋되지 않았다. 부모 메모리는 별도로 측정했으며 worker Job 제한의 대상은 아니다. 측정 조건·수치·남은 범위는 [자원 제한](security/RESOURCE_LIMITS.md#배열-통합-작업-메모리-실측)을 따른다. 입력 상한 2 GiB 전체의 처리 가능성을 입증한 것은 아니다.
 - 그래프: 구간별 클래스 분포·채널 값 분포 등 집계 그림을 둔다.
 - 표본 미리보기
   - 진단 worker가 기본 매핑의 표본 배열에서 표본 순서 앞쪽 최대 12개를 PNG로 만든다. 진단 시점에는 라벨 매핑이 정해지지 않아 클래스별로 고르지 않는다. 표시용 밝기 조정만 하고 데이터에는 적용하지 않는다. 이미지 형태(2차원, 또는 채널 1·3)가 아니면 만들지 않는다.
@@ -304,13 +305,15 @@ flowchart TB
     T -.->|거부| X["미승인 실행 · 코드 지문 불일치<br/>허용 목록 밖 경로 / 소스 · 링크 우회"]
 ```
 
-**합성 AppContainer 검사에서 시험한 외부 접속의 접근 거부는 확인했다. loopback의 OS 차단 증거는 미확인이다.** 실제 검사 `7c0922a6e2e54482a887f12298d651de`의 `result.json`에는 외부 접속 오류 `10013`·`access_denied`, `external_network: passed`가 기록돼 있다. loopback은 timeout과 `LOOPBACK_OS_DROP_EVIDENCE_MISSING`으로 검토 필요 상태다. WFP 수집 실행 `3e4d66b4156a472fae626845257a1acd`도 수집·정리는 완료했지만 `drop_evidence_verified: false`다. 따라서 네트워크 capability 0개·정상 종료·접속 timeout·수집 완료만으로 loopback 차단이나 SEC-12 전체 검증 완료를 선언하지 않는다.
+**합성 시험의 외부·loopback 트래픽에 대한 실제 WFP 폐기 증거를 확인했다. SEC-12 전체 검증 완료를 뜻하지는 않는다.** 2026-10-23 기존 ETL을 읽기 전용으로 재검토했다. 수집 실행 `3e4d66b4156a472fae626845257a1acd`와 `ef25fb95cabf40e99bc2879fa923019f`에서 Windows provider 정의상 `WFP: Packet Dropped`인 이벤트 ID `1001`(버전 2)을 확인했다. 각 실행의 loopback 이벤트는 검사 서버 포트·캡처 시간과 일치하며 첫 이벤트의 PID도 검사 프로세스와 일치한다. 외부 시험 주소 `192.0.2.1:9`의 폐기 이벤트는 격리 실행 파일과 대응한다. 다만 loopback 이벤트의 AppId는 수신 측 부모 실행 파일이므로, 특정 AppContainer 정책이 차단 원인이라는 판정이나 모든 목적지·worker·하위 프로세스로 일반화하지 않는다. 상세 대조값과 한계는 [WFP 진단](security/WFP_DIAGNOSTIC.md)의 기존 ETL 재검토 절을 따른다.
+
+원본 JSON의 `drop_evidence_verified: false`는 보존한다. 수집기는 이벤트 내용을 자동 판정하지 않으므로 이 값과 사후 ETL 검토 결과를 구분한다. 별도 실행 `7c0922a6e2e54482a887f12298d651de`의 loopback timeout·`LOOPBACK_OS_DROP_EVIDENCE_MISSING` 역시 당시 결과 그대로이며, 다른 실행의 ETL로 소급 변경하지 않는다. capability 0개·정상 종료·timeout·수집 완료만으로 차단을 증명하지 않는다.
 
 | 통제 | 허용하는 것 | 차단·제한하는 것과 확인 범위 |
 | --- | --- | --- |
 | 승인·계약 | 동의 범위에 맞는 고정 도구와 정확한 입력·계획 | 미승인·만료·재사용·불일치 요청 거부. AppContainer 자체가 승인 여부를 판단하는 것은 아님 |
 | 파일·환경 | 복사한 runtime/tools/input의 RX, 해당 output/scratch의 Modify·Low | 보호 영역에 작업 SID 권한을 부여하지 않음. 부모 환경 전체·API 키·상속 핸들을 전달하지 않음. Windows 기본 시스템 접근까지 모두 없어진다는 뜻은 아님 |
-| 네트워크 | 계산 worker에는 네트워크 capability를 부여하지 않음 | 합성 AppContainer 검사에서 시험한 외부 접속은 오류 10013으로 접근 거부 확인. loopback은 timeout이며 WFP 차단 증거는 미확인. 모든 목적지·worker·하위 프로세스의 SEC-12 검증 완료를 뜻하지 않음 |
+| 네트워크 | 계산 worker에는 네트워크 capability를 부여하지 않음 | 기존 합성 시험의 외부·loopback 트래픽에 일치하는 WFP 폐기 이벤트 확인. loopback은 수신 측 AppId로 기록돼 차단 정책의 원인 귀속은 미확정. 모든 목적지·worker·하위 프로세스의 SEC-12 검증 완료를 뜻하지 않음 |
 | 자원·프로세스 | 요청 한도 안에서 실행, 정지 상태로 생성 후 Job 연결·재개 | Job 메모리·동시 프로세스 수 제한, 시간 초과·취소 시 종료 및 잔존 확인. Job은 파일·네트워크 보안 경계를 대신하지 않음 |
 | 결과 반입 | 부모 검증을 통과한 결과만 등록 | 정상 종료만으로 신뢰하지 않음. 해시·형식·내부 일관성 검증은 통계가 원본과 일치한다는 독립 재계산 증명과는 다름 |
 
