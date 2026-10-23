@@ -10,7 +10,7 @@ import json
 from .llm_proposal import validate_request_text
 from .llm_proposal_contract import _decode_response
 from .local_ollama import LocalProposalError, request_local_proposal
-from .task_plan import MAX_TEXT, PlanError, fields_by_path, model_questions, set_path, value_allowed
+from .task_plan import MAX_TEXT, PlanError, fields_by_path, get_path, model_questions, set_path, value_allowed
 
 
 MAX_CHANGES = 30
@@ -275,6 +275,11 @@ def merge(base_plan, value, fields, validate):
 
         _texts([item["reason"]])
         seen.add(item["path"])
+
+        # 기본 계획과 같은 값은 변경이 아니다. 검사는 하되 권장 변경 목록에 넣지 않는다(화면에 '권장'으로 보이지 않게).
+        if get_path(base_plan, item["path"]) == item["value"]:
+            continue
+
         plan = set_path(plan, item["path"], item["value"])
         accepted.append(dict(item))
 

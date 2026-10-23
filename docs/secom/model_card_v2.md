@@ -101,7 +101,7 @@ V1의 AP 0.040461·ROC-AUC 0.488008보다 개선됐지만, 90% 시나리오는 2
 
 Train 유래 공통 데모 `data/processed/v2_sensor20_demo.csv`의 33행에서 90%는 33행, 80%는 30행을 선별했다. 출력은 각각 `logs/secom/demos/v2/v2_recall90_demo_predictions.csv`, `logs/secom/demos/v2/v2_recall80_demo_predictions.csv`에 저장했다. 데모에는 정답 평가를 적용하지 않으며 추가 선별 3건의 정상·불량 여부를 판단하지 않는다.
 
-실행 명령과 완료 기록은 [V2 시나리오 보존 문서](V2_SCENARIO_BUNDLES.md)를 따른다.
+실행 명령은 [V2 저장·복원 절차](USAGE.md#v2-시나리오-저장복원)를 따른다. 저장 상태·검증 결과는 이 카드의 계약과 근거를 기준으로 한다.
 
 ## 7. 보안·재현성과 사용 제한
 

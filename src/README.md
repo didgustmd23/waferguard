@@ -117,23 +117,6 @@ from src.sensor_ml.experiments.time_weight_compare import build_weight_candidate
 
 ## WM-811K 맵 처리와 딥러닝
 
-`agents/wm_dataset_cli.py`·`wm_dataset.py`·`wm_dataset_contract.py`는 완료된 개발 캐시의 Dataset·첫 배치 검사를 별도 승인으로 관리합니다. `wm_dataset_runtime.py`는 설치된 PyTorch의 제한 복사 명세를, `wm_dataset_transport.py`·`wm_dataset_worker.py`는 AppContainer·Job의 CPU 검사를, `wm_dataset_results.py`는 부모의 결과 계약 검사를 담당합니다. 기존 `wafer_dl/dataset.py`를 재사용하며 Test·모델 학습·Tensor 외부 전달은 처리하지 않습니다. [Dataset 검사 사용법](../docs/agents/guides/PICKLE_IMPORT.md#완료-캐시의-dataset첫-배치-검사)을 참고하세요.
+`src/wafer_dl/`는 canonical 검증·EDA·그룹 분할·변환·캐시·Dataset을 담당하고, `scripts/wm_sandbox/`는 원본 구조 검사/변환 진입점입니다. 에이전트는 `src/agents/`의 기존 서비스를 통해 이 코어를 호출합니다.
 
-`agents/wm_cache_cli.py`·`wm_cache.py`·`wm_cache_evidence.py`는 완료된 변환 검사와 확정 분할에 연결해 그림 확인·분할 재확인·캐시 실행 승인을 관리합니다. `wm_cache_worker.py`·`wm_cache_transport.py`는 기존 AppContainer·Job을, `wm_cache_results.py`는 숫자 전용 NPY·색인 행 연결 검증을 담당합니다. `wafer_dl/isolated_cache.py`는 기존 캐시 writer와 변환 함수를 재사용하며 명시적 scratch·출력 예산을 연결합니다. [Train·Validation 캐시 생성](../docs/agents/guides/PICKLE_IMPORT.md#확인한-변환-설정으로-trainvalidation-캐시-생성)을 참고하세요. Test 배열·모델 학습은 처리하지 않습니다.
-
-`src/wafer_dl/validate_canonical.py`는 변환된 NPZ·manifest 정합성, 중복·Lot 연결 그룹의 분할 필요조건을 검사합니다. 원본 pickle을 읽거나 데이터를 수정하지 않습니다. 실행 안내는 [Sandbox 준비·산출물 검증](../docs/WM811K/SANDBOX_SETUP.md#6-호스트에서-변환-산출물-검증)에 있습니다.
-
-`split.py`는 충돌 맵 전체 격리와 Lot·동일 맵 그룹 분할을 담당합니다. [그룹 분할 실행](../docs/WM811K/GROUP_SPLIT.md)을 참고하세요. `transform.py`는 NumPy 기반 결정적 resize·padding·2채널 생성을, `check_transform.py`는 Train/Validation의 패턴 보존 검사를 담당합니다. [변환 검사 실행](../docs/WM811K/TRANSFORM_CHECK.md)을 참고하세요. `cache.py`와 `dataset.py`는 숫자 전용 입력 캐시와 PyTorch 첫 배치 검사를 담당합니다. [캐시·Dataset 실행](../docs/WM811K/CACHE_DATASET.md)은 실제 데이터에서 별도로 수행하며, 딥러닝 학습 모듈은 아직 미구현입니다.
-
-`src/wafer_dl/eda.py`는 기존 WM 노트북·CLI용 도메인 분석입니다. `reports/wm811k/analysis.ipynb`의 결과와 사용법을 유지합니다. 새 에이전트의 기본 분석은 `preprocessing/eda.py`이며 WM metadata 어댑터가 공통 입력을 전달합니다. 맵 예시 등 특화 분석은 별도 확장으로 연결합니다. 집계·그림·경로는 외부 LLM·추적에 전달하지 않습니다.
-
-| 영역 | 예정 모듈 | 담당 |
-| --- | --- | --- |
-| 맵 데이터 준비 | ingestion, audit, split, dataset, transforms | 양현승 |
-| 딥러닝 | models, train, metrics, evaluate, predict | 이종수 |
-
-전처리 에이전트의 작업 관리 코드는 `src/agents/`에서 위 데이터 준비 함수를 재사용합니다. 여기서 다시 에이전트 실행 관리 코드를 중복 구현하지 않습니다.
-
-작은 CNN과 ResNet18, 9종 패턴 분류, Lot 비중첩 분할을 계획합니다. SECOM 이진 분류 설정·지표를 그대로 사용하지 않으며 입력 채널·클래스 매핑·맵 변환·학습 조건은 별도 계약으로 관리합니다. `config.json`의 SECOM Profile을 WM 설정으로 교체하지 않습니다.
-
-구현 전의 예정 모듈은 파일이나 실행 명령으로 제공하지 않습니다. 데이터·모델·전처리 계약과 평가 범위는 [WM-811K 기초 설계](../docs/WM811K/WM811K_BASIC_DESIGN.md)를 참고하세요.
+현재 전처리 계약과 구현 위치, 학습 담당자의 모델/평가 계획은 [WM-811K 설계](../docs/WM811K/PREPROCESSING_DESIGN.md)를 따릅니다. 명령은 [문서 목록](../docs/README.md#wm-811k-문서)의 단계별 운영 안내, 관찰 결과는 [WM 보고서](../reports/wm811k/report.md)를 기준으로 합니다. 학습 계획을 구현 완료로 표시하거나 SECOM의 성능과 합산하지 않습니다.

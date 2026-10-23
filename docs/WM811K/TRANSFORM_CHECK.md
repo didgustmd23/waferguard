@@ -2,9 +2,9 @@
 
 ## 현재 구현 범위
 
-[변환 함수](../../src/wafer_dl/transform.py), [개발 구간 검사](../../src/wafer_dl/check_transform.py), [설정](../../configs/wm811k/transform.json)을 준비했습니다. 실제 데이터 실행은 별도입니다. 캐시·PyTorch Dataset·모델 학습은 아직 수행하지 않습니다.
+[변환 함수](../../src/wafer_dl/transform.py), [개발 구간 검사](../../src/wafer_dl/check_transform.py), [설정](../../configs/wm811k/transform.json)이 구현돼 있습니다. 실제 Train·Validation 변환/캐시와 첫 배치 확인 범위는 [CACHE_DATASET](CACHE_DATASET.md)을 따릅니다. 모델 학습·Test 준비 완료를 뜻하지 않습니다.
 
-이번 단계는 PyTorch 없이 NumPy로 실행합니다. PyTorch를 설치하지 못하면 다른 보간으로 대체하는 방식이 아니라, `numpy_half_pixel_nearest_v1`을 명시한 독립 변환 구현입니다. 향후 Dataset은 저장된 categorical 맵에서 같은 2채널을 생성하도록 연결해야 합니다.
+이번 단계는 PyTorch 없이 NumPy로 실행합니다. PyTorch를 설치하지 못하면 다른 보간으로 대체하는 방식이 아니라, `numpy_half_pixel_nearest_v1`을 명시한 독립 변환 구현입니다. Dataset은 저장된 categorical 맵에서 같은 2채널을 생성합니다.
 
 ## 변환 계약
 
@@ -14,7 +14,7 @@
 4. 새 길이는 `floor(원본 길이×배율+0.5)`로 계산하고 1 이상·목표 길이 이하로 제한합니다.
 5. 최근접 좌표는 `floor((출력 인덱스+0.5)×원본 길이/새 길이)`입니다. 정수 연산으로 좌표를 고정하며 선형 보간을 하지 않습니다.
 6. 여백은 0으로 중앙 padding하고, 홀수 여백의 추가 픽셀은 아래·오른쪽에 둡니다.
-7. 채널 0=`맵==2`, 채널 1=`맵>0`으로 contiguous float32 `[2,H,W]` NumPy 배열을 생성합니다. Tensor 변환은 향후 Dataset의 역할입니다.
+7. 채널 0=`맵==2`, 채널 1=`맵>0`으로 contiguous float32 `[2,H,W]` NumPy 배열을 생성합니다. Tensor 변환은 Dataset의 역할입니다.
 
 상태별 채널값은 외부 `[0,0]`, 정상 `[0,1]`, 불량 `[1,1]`입니다. `/255`, ImageNet 평균·표준편차, 중앙값 대치, 증강은 적용하지 않습니다.
 

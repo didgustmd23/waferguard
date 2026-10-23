@@ -1,9 +1,9 @@
 """작업 유형별 계획 편집 부품 등록부와 항목 명세로 그리는 일반 양식. 공통 작업 화면이 이 등록부만 사용한다."""
 
-from . import tabular_task_form
+from . import array_task_form, tabular_task_form
 
 
-FORMS = {"tabular_csv": tabular_task_form.render}
+FORMS = {"tabular_csv": tabular_task_form.render, "array_npz": array_task_form.render}
 
 
 def generic_form(st, record, plan, fields, key):

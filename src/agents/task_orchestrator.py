@@ -245,8 +245,13 @@ def _shown_plan(record):
 def review_state(record):
     """확인 화면이 그릴 내용. 질문은 표시한 계획에서 어댑터가 다시 계산하고 모델 질문(안내용)을 덧붙인다."""
     adapter, plan = _adapter(record), _shown_plan(record)
-    questions = adapter.questions(record, plan) + list(record["draft"].get("questions", []))
-    recommended = record["draft"].get("changes", [])
+    asked = adapter.questions(record, plan)
+    owned = {item["path"] for item in asked if item["path"] is not None}
+    # 프로그램 질문이 이미 다루는 항목의 모델 질문은 보이지 않는다(같은 항목에 출처가 다른 두 질문이 생기지 않게).
+    questions = asked + [item for item in record["draft"].get("questions", []) if item["path"] is None or item["path"] not in owned]
+    # 권장 변경마다 출처와 어댑터의 확인 안내를 붙인다. 형식 검사 통과는 내용의 타당성을 뜻하지 않는다.
+    recommended = [dict(item, check=adapter.change_check(record, item) if hasattr(adapter, "change_check") else None)
+                   for item in record["draft"].get("changes", [])]
     # 옵션 설명은 표시한 계획 기준이다. 양식·답변을 반영한 최종 계획의 설명은 preview_plan이 다시 만든다.
     guide = (adapter.option_guide(record, plan, origins(adapter.base_plan(record), recommended, plan, plan, []))
              if hasattr(adapter, "option_guide") else [])

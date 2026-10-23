@@ -344,7 +344,11 @@ class PlanPreviewAndImpactFlowTest(unittest.TestCase):
         task = self.reviewed([{"path": "preparation.outlier", "value": "iqr_clip", "reason": "극단값 영향을 줄입니다"}])
         state = orchestrator.review_state(task)
         task = orchestrator.confirm_plan(task["task_id"], state["plan"], {}, root=self.store)
-        self.assertTrue(orchestrator.apply_revisable(task))
+        # 간헐 실패(여러 모듈 동시 실행에서만 1회 발생, 단독·모듈 실행 재현 안 됨) 원인 확인용으로 apply_revisable의 판정 근거를 모두 남긴다.
+        self.assertTrue(orchestrator.apply_revisable(task),
+                        {"phase": task["phase"], "problem": task.get("problem"), "steps": task.get("steps"),
+                         "candidate": task.get("candidate") is not None, "consents": sorted(task.get("consents", {})),
+                         "step_states": {key: (item.get("decision"), item.get("status")) for key, item in task.get("steps", {}).items()}})
         previous = task["consents"]["C"]["consent_id"]
         state = orchestrator.review_state(task)
         self.assertEqual(state["plan"]["preparation"]["outlier"], "iqr_clip")

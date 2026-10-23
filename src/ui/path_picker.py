@@ -9,7 +9,7 @@ from threading import Lock
 
 
 DIALOG_SCRIPT = Path(__file__).with_name("path_dialog.py")
-DIALOG_KINDS = ("csv_file", "json_file", "directory")
+DIALOG_KINDS = ("csv_file", "json_file", "npz_file", "data_file", "directory")
 DIALOG_TIMEOUT_SECONDS = 180
 _DIALOG_LOCK = Lock()
 
