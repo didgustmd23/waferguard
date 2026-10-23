@@ -4,7 +4,10 @@ import json
 import sys
 
 
-KINDS = ("csv_file", "json_file", "directory")
+KINDS = ("csv_file", "json_file", "npz_file", "data_file", "directory")
+# 통합 작업 요청 화면은 등록된 입력 형식을 함께 보여 준다. 선택 뒤 실제 유형은 서버의 어댑터 판별이 정한다.
+FILTERS = {"csv_file": (("CSV 파일", "*.csv"),), "json_file": (("JSON 파일", "*.json"),), "npz_file": (("배열 표본 파일", "*.npz"),),
+           "data_file": (("CSV·배열 표본 파일", "*.csv *.npz"), ("CSV 파일", "*.csv"), ("배열 표본 파일", "*.npz"))}
 
 
 def choose_path(kind):
@@ -24,8 +27,7 @@ def choose_path(kind):
         if kind == "directory":
             path = filedialog.askdirectory(parent=root, title="로컬 데이터 폴더 선택", mustexist=True)
         else:
-            filters = (("CSV 파일", "*.csv"), ("모든 파일", "*.*")) if kind == "csv_file" else (
-                ("JSON 파일", "*.json"), ("모든 파일", "*.*"))
+            filters = FILTERS[kind] + (("모든 파일", "*.*"),)
             path = filedialog.askopenfilename(parent=root, title="로컬 파일 선택", filetypes=filters)
 
         if not path:

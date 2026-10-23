@@ -2,7 +2,7 @@
 
 > 전처리 에이전트·센서 기반 머신러닝·웨이퍼맵 딥러닝으로 구성하는 반도체 품질 분석 프로토타입
 
-[프로젝트 문서](docs/README.md) · [에이전트 문서](docs/agents/GUIDE.md) · [WM-811K 설계](docs/WM811K/WM811K_BASIC_DESIGN.md) · [SECOM 결과](reports/README.md#secom-공개-결과-요약) · [SECOM Model Card](docs/secom/model_card_v2.md)
+[프로젝트 문서](docs/README.md) · [에이전트 문서](docs/agents/GUIDE.md) · [WM-811K 설계](docs/WM811K/PREPROCESSING_DESIGN.md) · [SECOM 결과](reports/README.md#secom-공개-결과-요약) · [SECOM Model Card](docs/secom/model_card_v2.md)
 
 ## 프로젝트 소개
 
@@ -12,18 +12,57 @@
 
 | 영역 | 역할 | 담당 | 현재 상태 |
 | --- | --- | --- | --- |
-| 전처리 에이전트 | CSV·웨이퍼맵 전처리의 모듈 선택·사용자 승인·격리 실행·결과 관리 | 양현승 | CSV 5개 작업·WM 정상 6단계 공통 UI, 로컬 LLM 실행안 제안·선택형 결과 해설 구현 |
+| 전처리 에이전트 | CSV·웨이퍼맵 전처리의 모듈 선택·사용자 승인·격리 실행·결과 관리 | 양현승 | 통합 작업(CSV 표형·`.npz` 배열) 기본 화면, 고급 도구로 CSV 5개 작업·WM 정상 6단계·로컬 LLM 실행안·선택형 결과 해설 구현 |
 | SECOM 머신러닝 | 공정 센서로 불량 위험 선별, 핵심 센서 20개 선택, OOF 문턱 비교·저장·추론 | ML: 양현승 / 데이터·EDA: 이종수 | V2 실험·저장·복원·기존 Test 비교 완료 |
 | WM-811K 딥러닝 | 검사 결과 맵의 9종 패턴 분류, 작은 CNN·ResNet18 비교, 클래스별 오류 분석 | 이종수 | 설계 단계 |
 
 에이전트는 설정으로 정한 전처리 코드를 실행·관리하는 역할입니다. 라벨·split·변환 기준을 임의로 바꾸거나 모델 판정을 대신하지 않습니다. CSV는 품질·EDA·분할부터 Train 기준 산출·적용·로컬 전달까지, WM은 canonical 이후 정상 개발 6단계를 지원합니다. 로컬 LLM은 실행안을 제안하고 별도 허용된 결과를 해설하며, 직접 실행·승인 권한은 없습니다. 기존 SECOM 전처리는 에이전트 없이도 실행할 수 있습니다. 현재 범위와 보류 항목은 [에이전트 안내](docs/agents/GUIDE.md#현재-구현-상태)를 따릅니다.
 
-```text
-SECOM 센서 → 기존 전처리 Pipeline → ML 위험 선별 → SECOM 평가 결과
-WM-811K 맵 → 전처리 에이전트 → CNN / ResNet18 패턴 분류 → WM 평가 결과
+### 전체 구성도
 
-각 과제의 평가 결과 → 공통 보고서 (데이터·성능은 별도 표시)
+세 영역은 로컬에서 각각 시작하는 **독립 실행 경로**입니다. 실행 간 결과를 자동 전달하는 연결은 없습니다. 코드 위치는 각 영역과 아래 설명에 표시하며, 점선은 아직 실행이 연결되지 않은 향후 학습·평가 계획입니다.
+
+```mermaid
+flowchart LR
+    subgraph AG["① 전처리 에이전트<br/>src/agents · src/ui"]
+        direction TB
+        AI["CSV · .npz 입력"] --> UI["통합 작업 화면"]
+        UI --> CO["진단 · 계획 · 동의"]
+        CO -->|동의 범위 자료| LLM["로컬 Ollama"]
+        LLM -->|권장안 · 질문 · 해설| CO
+        CO --> WK["격리 worker<br/>AppContainer + Job"]
+        WK --> VR["부모 결과 검증"]
+        VR --> AO["결과 · 보고서<br/>logs/agents"]
+    end
+
+    subgraph ML["② SECOM 머신러닝<br/>src/sensor_ml"]
+        direction TB
+        SI["센서 · 라벨 입력"] --> MP["병합 · 점검 · 분할"]
+        MP --> ME["센서 선택 · 실험"]
+        ME --> MV["평가 · 추론"]
+        MV --> SO["모델 · 보고서"]
+    end
+
+    subgraph WM["③ WM-811K 딥러닝<br/>src/wafer_dl"]
+        direction TB
+        WI["웨이퍼맵 입력"] --> DP["변환 · 검증 · EDA"]
+        DP --> DS["분할 · 캐시 · Dataset"]
+        DS -.-> DM["CNN / ResNet18<br/>(계획 단계)"]
+    end
+
+    %% 보이지 않는 연결: 세 영역을 왼쪽부터 나란히 배치하기 위한 것이며 실행·데이터 흐름이 아니다.
+    AG ~~~ ML ~~~ WM
 ```
+
+- **실선:** 각 영역 내부의 주요 실행·처리 흐름. **점선:** 아직 실행이 연결되지 않은 계획 단계. 세 영역 사이의 자동 실행·데이터 전달 화살표는 없습니다.
+- 에이전트 격리 worker의 계산은 `src/preprocessing`(표형·배열), 고급 WM 등록 모듈은 `src/wafer_dl`·`scripts/wm_sandbox`를 씁니다. SECOM 실험 전처리는 `src/modeling_preprocessing.py` 등 기존 Pipeline입니다.
+- 로컬 Ollama에는 동의 범위의 목표·허용 이름/구조·집계·계획/선택지만 보내고, 검증 대상 권장안·질문과 별도 정책의 해설만 받습니다.
+- 에이전트는 SECOM 저장 모델·평가 결과를 사용하지 않습니다. SECOM·WM의 기존 실행은 에이전트 없이 수행할 수 있습니다.
+- 웨이퍼 계산은 기존 WM CLI와 에이전트의 고급 WM 등록 모듈에서 재사용합니다. 이것은 아직 별도인 통합 작업의 웨이퍼 프로파일 연결 완료를 뜻하지 않습니다.
+- 모든 전처리가 하나의 엔진으로 통합된 것은 아닙니다. 표형/배열 공통 계산, 기존 SECOM Pipeline, 웨이퍼 전용 계산의 실제 위치를 구분합니다.
+- `logs/agents`에는 작업 기록·보고서와 배열 적용 결과가 있고, CSV 전달 묶음은 `data/processed/agents/handoffs`에 있습니다.
+- LLM에는 요청 계약이 허용한 자료만 전달합니다. 원본 행·이미지/배열·로컬 경로·승인 정보는 자동 첨부하지 않으며 실행·승인 권한도 없습니다.
+- 에이전트 내부 구조는 [에이전트 설계](docs/agents/DESIGN.md#내부-구조), WM 학습 계획은 [도메인 설계](docs/WM811K/PREPROCESSING_DESIGN.md#학습평가-계획)를 따릅니다.
 
 두 데이터셋에는 동일 웨이퍼 대응 관계가 없으므로 **독립 학습·평가**를 수행합니다. 향후 `센서 위험 선별 → 검사맵 확보 가정 → 패턴 진단` 연결은 가상 흐름 데모이며 실제 통합 검출 성능을 뜻하지 않습니다. WM-811K는 광학 사진이 아닌 다이별 검사 결과 맵이고, `None` 패턴도 최종 양품 판정과 같지 않습니다.
 
@@ -80,7 +119,7 @@ AP는 V1 **0.040461 → V2 0.075077**, ROC-AUC는 **0.488008 → 0.682330**으�
 
 데이터 출처는 [UCI SECOM](https://archive.ics.uci.edu/dataset/179/secom)입니다. 센서 파일과 label·timestamp 파일을 병합하며, label은 `-1`(정상), `1`(불량)입니다. 원본 데이터는 저장소에 포함하지 않습니다.
 
-WM-811K는 [Kaggle 배포본](https://www.kaggle.com/datasets/qingyi/wm811k-wafer-map)을 사용할 예정입니다. 맵·라벨·Lot 검사, 미라벨 분리와 Lot 비중첩 분할을 거쳐 딥러닝 입력을 준비합니다. 데이터 계약·모델 후보·평가 지표·예정 모듈은 [기초 설계](docs/WM811K/WM811K_BASIC_DESIGN.md)에 기록했으며 아직 데이터 준비·학습 완료를 뜻하지 않습니다.
+WM-811K의 출처·데이터 계약·전처리와 학습 계획은 [전처리·학습 설계](docs/WM811K/PREPROCESSING_DESIGN.md), 실제 관찰한 수치와 그림은 [결과 보고서](reports/wm811k/report.md)를 따릅니다. 데이터 준비와 모델 학습/평가의 완료 범위를 구분하며 SECOM과 통합 성능으로 합산하지 않습니다.
 
 ![SECOM 클래스 분포](reports/secom/figures/eda/step3/class_distribution.png)
 
@@ -115,7 +154,7 @@ python -m src.sensor_ml.data_pipeline.step3_split
 python -m unittest discover -s tests -v
 ```
 
-설정은 `config.json`(공통 실험 조건)과 `configs/datasets/secom.json`(데이터셋 입력 계약)으로 분리합니다. [상세 실행 안내](docs/secom/USAGE.md), [Dataset Profile 작성법](docs/secom/DATASET_PROFILE.md), [V2 모델 보존·추론 절차](docs/secom/V2_SCENARIO_BUNDLES.md)를 참고하세요. 데이터·전체 로그·모델 묶음은 로컬 산출물이므로 저장소 복제만으로 제공되지 않습니다.
+설정은 `config.json`(공통 실험 조건)과 `configs/datasets/secom.json`(데이터셋 입력 계약)으로 분리합니다. [상세 실행 안내](docs/secom/USAGE.md), [Dataset Profile 작성법](docs/secom/DATASET_PROFILE.md), [V2 모델 보존·추론 절차](docs/secom/USAGE.md#v2-시나리오-저장복원)를 참고하세요. 데이터·전체 로그·모델 묶음은 로컬 산출물이므로 저장소 복제만으로 제공되지 않습니다.
 
 ## 주요 폴더
 
@@ -123,19 +162,21 @@ python -m unittest discover -s tests -v
 configs/          데이터셋별 Profile·실험 설정
 src/              재사용 코어 (저장 모델 클래스 경로 유지)
   sensor_ml/      센서 ML 데이터·실험·진단·평가·추론 실행기
-  agents/         전처리 작업 관리 예정 영역
-  wafer_dl/       맵 처리·딥러닝 예정 영역
+  preprocessing/  공통 전처리 코어(역할 계약·품질·EDA·분할·변환·배열)
+  agents/         전처리 작업 조정·승인·격리·결과 검증
+  ui/             Streamlit 화면(통합 작업·고급 도구)
+  wafer_dl/       맵 전처리·캐시·Dataset (모델 학습은 별도 계획)
 tests/            입력 계약·전처리·평가·추론 검증
-docs/secom/       계획·결정·실험 보고서·Model Card·실행 안내
+docs/secom/       실험 보고서·재현 조건·Model Card·실행 안내
 reports/secom/    공개 결과 요약·그림·분석 노트북
 data/             로컬 원본·병합 데이터·split
 logs/             로컬 실행 기록과 상세 결과
 models/           로컬 후보 모델 묶음
 ```
 
-소스별 역할은 [src/README.md](src/README.md), 진행 체크와 팀 역할은 [PLAN](docs/secom/PLAN.md), 실험별 재현 조건은 [실험 노트](docs/secom/EXPERIMENT_NOTES.md)에서 관리합니다.
+소스별 역할은 [src/README.md](src/README.md), SECOM 실행과 남은 제출 확인은 [USAGE](docs/secom/USAGE.md), 프로젝트 일정은 [PROJECT_SCHEDULE](docs/PROJECT_SCHEDULE.md), 실험별 재현 조건은 [실험 노트](docs/secom/EXPERIMENT_NOTES.md)에서 관리합니다.
 
-SECOM 실행기는 `src/sensor_ml/`으로 구분했습니다. `src/agents/`와 `src/wafer_dl/`는 구현 전 예약 영역이며, 역할 안내는 [src/README.md](src/README.md)에 통합했습니다. 추가 역할과 입력 계약은 [WM-811K 설계](docs/WM811K/WM811K_BASIC_DESIGN.md)를 따릅니다.
+SECOM 실행기는 `src/sensor_ml/`, 전처리 실행 관리는 `src/agents/`, 웨이퍼 계산은 `src/wafer_dl/`로 구분합니다. 현재 지원 범위는 [에이전트 안내](docs/agents/GUIDE.md), 웨이퍼 도메인·학습 계약은 [WM-811K 설계](docs/WM811K/PREPROCESSING_DESIGN.md)를 따릅니다.
 
 ## 한계와 확장
 

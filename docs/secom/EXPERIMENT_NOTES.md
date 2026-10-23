@@ -2,7 +2,7 @@
 
 Top-20 개선 계획·V2 시간순 개선·고정 센서 검증 노트를 통합한 실행 조건과 판단 이력이다. **실험 완료 기록이며 새 실험 실행 지시가 아니다.** 수치표는 [실험 보고서](report.md)와 [ML 결과 요약](SECOM_ML_SUMMARY.md)에 보존하고 여기서는 설정·범위·근거 경로를 정리한다.
 
-현재 산출물은 고정 센서 20개·XGBoost 깊이 2·규제 1의 90%/80% 시나리오 묶음이다. 모델 계약은 [V2 Model Card](model_card_v2.md), 저장·복원 명령은 [시나리오 보존 기록](V2_SCENARIO_BUNDLES.md), 남은 작업은 [PLAN](PLAN.md)을 따른다. 문서마다 별도 완료 체크리스트를 반복하지 않는다.
+현재 산출물은 고정 센서 20개·XGBoost 깊이 2·규제 1의 90%/80% 시나리오 묶음이다. 모델 계약은 [V2 Model Card](model_card_v2.md), 저장·복원 명령은 [저장·복원 절차](USAGE.md#v2-시나리오-저장복원), 남은 제출 확인은 [실행 안내](USAGE.md#기존-v1-동결-평가와-남은-제출-확인)를 따른다. 문서마다 별도 완료 체크리스트를 반복하지 않는다.
 
 ## 1. 공통 비교 기준
 
@@ -143,7 +143,7 @@ python -m src.sensor_ml.experiments.fixed_sensor_compare --train data/splits/int
 python -m src.sensor_ml.experiments.fixed_sensor_oof --train data/splits/integrated/time_train.csv --candidate-dir logs/reproduce_v2_fixed_later --n-jobs 2 --output-dir logs/reproduce_v2_fixed_oof
 ```
 
-S0~S3·M0~M3의 상세 실행과 조건은 보고서 28~31절에 유지한다. 90%/80% 묶음 저장·복원·CSV 추론 명령은 [시나리오 보존 기록](V2_SCENARIO_BUNDLES.md)에만 둔다.
+S0~S3·M0~M3의 상세 실행과 조건은 보고서 28~31절에 유지한다. 90%/80% 묶음 저장·복원·CSV 추론 명령은 [저장·복원 절차](USAGE.md#v2-시나리오-저장복원)에만 둔다.
 
 ## 7. 진단 그림과 결과 확인
 
@@ -163,7 +163,7 @@ python -m src.sensor_ml.diagnostics.sensor_importance --train data/splits/integr
 
 수치형 median의 센서별 독립성은 PCA·범주형 인코딩·센서 간 파생 연산으로 자동 확장되지 않는다. 선택기를 추론에서 제외해도 현재 모듈의 LightGBM import 등 라이브러리 의존성이 사라지는 것은 아니다. 저장 환경은 manifest를 따른다. Agent·외부 LLM API는 코어 학습·추론의 필수 의존성이 아니다.
 
-저장 전후 확률·판정 일치는 구현 검증이고 일반화 성능이 아니다. 개발 구간, OOF, Train 유래 데모, 독립 Test의 수치를 서로 대체하지 않는다. WM-811K 확장 설계는 [별도 문서](../WM811K/WM811K_BASIC_DESIGN.md)에 유지한다.
+저장 전후 확률·판정 일치는 구현 검증이고 일반화 성능이 아니다. 개발 구간, OOF, Train 유래 데모, 독립 Test의 수치를 서로 대체하지 않는다. WM-811K 확장 설계는 [별도 문서](../WM811K/PREPROCESSING_DESIGN.md)에 유지한다.
 
 ## 9. 팀원 LightGBM gain 후보 비교 — 2026-10-09
 

@@ -5,8 +5,8 @@ WaferGuard는 전처리 에이전트, SECOM 머신러닝, WM-811K 딥러닝의 �
 | 영역 | 문서 | 상태 |
 | --- | --- | --- |
 | SECOM 머신러닝 | [SECOM 문서 목록](README.md#secom-문서), [실행 안내](secom/USAGE.md) | 개발 결과·후보 모델 계약·실행 방법 기록 |
-| 범용 전처리 에이전트 | [문서 안내·현재 상태](agents/GUIDE.md), [구성도](agents/ARCHITECTURE.md) | CSV 5개 작업·WM 정상 6단계 공통 UI, EDA/CSV LLM 제안·선택형 로컬 결과 해설·저장 제안 복원 구현. 2026-10-22: 표형 통합 작업(기본 화면) 구현·합성 검증, 최신 전체 회귀는 오류 1개로 미통과. 후속: 배열·이미지 통합 연결 → 웨이퍼 프로파일 연결 → 시간 처리 지원. 사용자 모듈 일반화는 보류 |
-| WM-811K 딥러닝 | [WM-811K 기초 설계 7절](WM811K/WM811K_BASIC_DESIGN.md#7-wm-딥러닝--이종수) | 작은 CNN·ResNet18 학습·평가 설계 |
+| 범용 전처리 에이전트 | [사용 안내·현재 상태](agents/GUIDE.md), [단일 설계](agents/DESIGN.md) | 지원·검증·후속 범위는 사용 안내 한 곳에서 관리 |
+| WM-811K 딥러닝 | [전처리·학습 설계](WM811K/PREPROCESSING_DESIGN.md) | 전처리 계약과 학습/평가 계획을 구분 |
 
 WM 전처리의 검증·분할·변환·캐시·Dataset 코드는 구현했으며, 사용자 실행 결과 기준 Train·Validation 캐시와 첫 배치 검사를 완료했다. Test 캐시와 WM 모델 학습·평가는 아직 진행하지 않았으며 두 데이터셋의 학습·평가는 독립적으로 수행한다. 예정 기능은 구현된 것으로 취급하지 않는다.
 
@@ -14,25 +14,22 @@ WM 전처리의 검증·분할·변환·캐시·Dataset 코드는 구현했으�
 
 ## 에이전트 문서
 
-에이전트의 현재 상태·읽는 순서·전체 문서 목록은 [문서 안내](agents/GUIDE.md) 한 곳에서 관리합니다. 처음에는 [구성도](agents/ARCHITECTURE.md)를, 구현 기준은 [기초 설계](agents/AGENT_BASIC_DESIGN.md)와 [상세 설계](agents/AGENT_DETAILED_DESIGN.md)를 참고합니다.
+- [사용 안내·현재 상태](agents/GUIDE.md): 통합 작업·고급 도구 사용법, 검증 범위와 현재 제한
+- [단일 설계 기준](agents/DESIGN.md): 구성도·공통/유형별 책임·입력/모듈 계약·동의/복구·LLM 전달·SEC-01~16
+- `agents/guides/`: 기능별 CLI 실행·승인·결과 확인 절차
+- `agents/security/`: AppContainer·Job·파일 권한·네트워크 실측 절차
 
-| 분류 | 내용 |
-| --- | --- |
-| `agents/design/` | 범용 입력·모듈·설정·분할·변환 계약과 확장 계획 |
-| `agents/guides/` | 현재 CLI 실행·승인·결과 확인 방법 |
-| `agents/security/` | AppContainer·Job·자원 제한·WFP 증거 확인 |
-| `agents/history/` | 초기 합성 시연·단계별 구현·검증 이력 |
-
-CSV의 승인·격리 EDA와 분할·전처리 후보·적용·전달 경로는 구현되어 있습니다. pickle은 구조 판별 후 일반 표·숫자 배열·WM canonical 변환을 지원합니다. WM canonical은 별도 승인 CLI로 기존 품질 검사·통과 시 격리 EDA에 연결했습니다. 공통 모듈 조합 CLI 통합과 LLM 연결은 후속 범위입니다. 상세 상태는 위 안내를 따르며 이전 기록을 현재 완료 상태로 취급하지 않습니다.
+현재 상태를 여러 문서에 복제하거나 날짜별 구현 기록을 추가하지 않습니다. SECOM·WM의 실험/도메인 문서는 아래에서 별도로 관리합니다.
 
 ## WM-811K 문서
+- [전처리·학습 설계](WM811K/PREPROCESSING_DESIGN.md): 역할·canonical·분할·변환·전달 계약과 아직 진행하지 않은 모델 계획
 - [입력 캐시·PyTorch Dataset](WM811K/CACHE_DATASET.md): 처리 흐름·분할 컬럼·학습 연결·실행 명령. 사용자 실행 기준 Train·Validation 첫 배치 통과 기록과 Test 별도 준비 방법을 포함합니다.
 - [입력 변환·패턴 보존 검사](WM811K/TRANSFORM_CHECK.md): 128 입력·2채널·Train/Validation 검사·노트북 결과 확인. Test 배열은 검사 대상에서 제외합니다.
-- [충돌 제외·그룹 분할 실행](WM811K/GROUP_SPLIT.md): 설정·명시적 승인·실행 명령·파생 manifest 계약. 코드와 합성 테스트 준비 완료, 실제 분할 실행은 별도입니다.
+- [충돌 제외·그룹 분할 실행](WM811K/GROUP_SPLIT.md): 설정·명시적 승인·실행 명령·파생 manifest 계약. 실제 실행 결과는 결과 보고서와 구분해 확인합니다.
 - [EDA 해설 보고서](../reports/wm811k/report.md): analysis.ipynb의 분포·상관관계·패턴 예시 해석.
 - [Sandbox 오프라인 환경 준비](WM811K/SANDBOX_SETUP.md): 최초 읽기를 위한 설치 파일·wheel·읽기 전용 공유 설정의 준비 이력.
 
-WM 전처리를 새로 시작할 때는 [전처리 상세 설계](WM811K/PREPROCESSING_DESIGN.md)를 먼저 참고한다. 원본 읽기·품질 검사·중복/Lot 분할·2채널 입력·캐시·학습 담당자 전달 규격을 정리했으며, 실제 구현 범위와 실행 방법은 위 단계별 문서를 따른다. 전체 역할과 딥러닝 모델 범위는 [기초 설계](WM811K/WM811K_BASIC_DESIGN.md)에 유지한다.
+설계는 전처리·학습 설계 한 곳, 실행은 단계별 안내, 관찰한 수치·그림은 결과 보고서를 기준으로 합니다. 완료된 초기 계획·코드 리뷰 순서는 Git에서 확인하고 새 작업마다 갱신하지 않습니다.
 
 ## SECOM 문서
 
@@ -44,24 +41,20 @@ WM 전처리를 새로 시작할 때는 [전처리 상세 설계](WM811K/PREPROC
 
 - [머신러닝 결과 요약](secom/SECOM_ML_SUMMARY.md): V2 비교 실험·고정 센서 후보·90%/80% 시나리오의 결과와 한계
 - [V2 Model Card](secom/model_card_v2.md): 저장 모델의 센서 목록·학습 범위·성능·입력 계약·환경
-- [V2 시나리오 보존 기록](secom/V2_SCENARIO_BUNDLES.md): 저장·복원·20개 센서 추론 데모 절차와 완료 기록
 - [실험 보고서](secom/report.md): 초기 탐색부터 V2까지의 이력. 고정 센서 개발 결과는 35.4절, 기존 Test 비교는 35.5절, 팀원 후보 대조는 36절
 
-### 계획과 의사결정
+### 실행과 재현 조건
 
-- [상세 실행 안내](secom/USAGE.md): 환경 준비·데이터 생성·개별 실험·V2 추론·분석 노트북
+- [상세 실행 안내](secom/USAGE.md): 환경·데이터 생성·실험·V2 저장/복원·추론·분석 노트북과 남은 제출 확인
 - [Dataset Profile 작성법](secom/DATASET_PROFILE.md): 공통 설정과 데이터셋별 JSON 입력 계약
 
-- [실행 계획·완료 체크](secom/PLAN.md)
-- [공동 결정 사항](secom/JOINT_DECISIONS.md)
 - [통합 실험 노트](secom/EXPERIMENT_NOTES.md): V1 S/M 설정, V2 가중치·결측·센서 축소, 고정 센서 선택 시점과 OOF, 재현 명령
 
-문서 역할은 PLAN의 작업 상태, 실험 노트의 조건·근거 경로, 보고서의 상세 수치, ML 요약의 결론, Model Card의 저장 모델 계약으로 나눈다. 완료 체크와 실행 안내를 여러 노트에 중복 작성하지 않는다.
+실행 명령은 USAGE, 비교 조건·근거 경로는 실험 노트, 상세 결과는 보고서, 현재 후보 계약은 버전별 Model Card를 기준으로 합니다. ML 요약은 독자용 결론이며 모델 계약을 대체하지 않습니다. 완료된 계획·회의·평가 준비 과정은 Git에서 확인하고 반복 갱신하지 않습니다.
 
 ### V1 보존 이력
 
 - [V1 Model Card](secom/model_card.md)
-- [V1 최종 평가 점검](secom/FINAL_EVALUATION_REVIEW.md)
 
 V1의 성능·문턱을 V2 저장 모델의 값으로 사용하지 않는다. 구간별 센서 재선택 실험과 고정 센서 모델의 평가 범위도 구분한다.
 

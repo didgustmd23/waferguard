@@ -24,6 +24,11 @@ DETAIL_LABELS = {"duplicated_names": "중복된 이름 수", "affected_columns":
 DIAGNOSTIC_LABELS = {"INPUT_INVALID": "입력 검증 실패", "ACCESS_DENIED": "파일 접근 거부", "IO_FAILED": "파일 입출력 실패",
                      "RUNTIME_FAILED": "실행 중 오류", "PASSED": "통과"}
 NO_ANSWER = "(답하지 않음)"
+MODEL_LIMITATION_NOTICE = (
+    "현재 로컬 모델의 한계: 확인한 사례에서 진단 수치 해석, 라벨·그룹 구분, 전처리 권장 이유에 오류가 관찰됐습니다. "
+    "응답 형식 검사를 통과해도 내용의 타당성을 보장하지 않습니다. 계산 결과와 모델 의견을 구분해 확인하세요. "
+    "이 한계를 모든 모델에 일반화하지 않으며, 다른 로컬·API 모델의 품질은 별도 평가가 필요합니다."
+)
 RECORD_ERRORS = {
     "RECORD_NOT_FOUND": "작업 기록을 찾지 못했습니다. 기록 폴더가 옮겨졌거나 지워졌을 수 있습니다. 새 작업으로 시작하세요.",
     "RECORD_TOO_LARGE": "작업 기록이 크기 상한(512 KiB)을 넘어 열지 않았습니다. 기록은 그대로 두었습니다. 컬럼이 매우 많은 입력이면 관리자에게 알려 주세요.",
@@ -115,13 +120,17 @@ def _render_request(st):
     specs = task_adapters.input_specs()
 
     with st.form("task_request_form"):
-        spec = specs[0]
-        source = path_input(st, spec["label"], key="task_source", kind=spec["picker"], help=spec["help"])
+        # 등록된 입력 형식을 모두 안내한다. 실제 유형은 제출 뒤 선택 파일로 서버가 판별하고, 동의 내용도 그 유형으로 고정한다.
+        label = "입력 파일 (" + " · ".join(spec["label"] for spec in specs) + ")"
+        source = path_input(st, label, key="task_source", kind=specs[0]["picker"] if len(specs) == 1 else "data_file",
+                            help=" / ".join(spec["help"] for spec in specs))
         goal = st.text_area("목표", key="task_goal", max_chars=4000,
                             placeholder="예: 생존 여부(Survived) 예측용으로 분할·전처리해 주세요")
-        lines = task_adapters.adapter(spec["kind_id"]).consent_a_text(model["model"])
-        st.info("작업 동의 범위(결정 A)\n" + "\n".join("- " + line for line in lines) +
-                f"\n- 자원 상한: 메모리 {limits['memory_mib']} MiB · 프로세스 {limits['processes']}개 · 시간 {limits['wall_seconds']}초")
+
+        for spec in specs:
+            lines = task_adapters.adapter(spec["kind_id"]).consent_a_text(model["model"])
+            st.info("작업 동의 범위(결정 A) — " + spec["label"] + "을(를) 고른 경우\n" + "\n".join("- " + line for line in lines) +
+                    f"\n- 자원 상한: 메모리 {limits['memory_mib']} MiB · 프로세스 {limits['processes']}개 · 시간 {limits['wall_seconds']}초")
         agreed = st.checkbox("위 범위에 동의하고 작업을 시작합니다", key="task_consent_a")
         submitted = st.form_submit_button("작업 시작", type="primary", disabled=not permission_ok)
 
@@ -307,7 +316,9 @@ def _question_widgets(st, questions, key):
     answers = {}
 
     for number, item in _numbered(questions):
-        st.text(f"질문 {number}. " + ("[필수] " if item["level"] == "required" else "[안내] ") + item["text"])
+        # 출처를 함께 보인다. 모델 질문의 문장·수치는 확인된 사실이 아니다.
+        source = "(모델 질문 · 확인된 사실 아님) " if item["source"] == "model" else "(진단 계산 기준 질문) "
+        st.text(f"질문 {number}. " + ("[필수] " if item["level"] == "required" else "[안내] ") + source + item["text"])
 
         if item["subjects"]:
             st.text("관련 항목: " + ", ".join(item["subjects"]))
@@ -372,9 +383,10 @@ def _render_review(st, task):
                     "새 시도를 진행합니다(같은 계획 자동 재실행 없음).")
             _render_hint(st, adapter, problem)
     # 작업 기록 값은 마크다운으로 해석하지 않는다. 사유는 고정 코드의 설명만 보여 준다.
-    st.text("권장안: " + ("로컬 LLM 권장안" if draft["source"] == "model"
+    st.text("권장안: " + ("로컬 LLM 권장안 (형식·허용값 검사 통과. 내용의 타당성은 확인되지 않았습니다)" if draft["source"] == "model"
                        else "기본 계획 (로컬 LLM 권장안을 사용할 수 없었습니다: "
                        + (code_label(task, draft.get("code")) or "사유 코드 확인 불가") + ")"))
+    st.text(MODEL_LIMITATION_NOTICE)
 
     coverage = draft.get("coverage")
 
@@ -389,10 +401,10 @@ def _render_review(st, task):
                 _rows(st, [{"대상": name} for name in coverage["summarized_ids"]])
 
     for text in draft.get("summary", []):
-        st.text("- " + text)
+        st.text("- 모델 요약(확인된 사실 아님): " + text)
 
     for text in draft.get("notes", []):
-        st.text("확인: " + text)
+        st.text("- 모델 메모(확인된 사실 아님): " + text)
 
     view = adapter.diagnosis_view(task)
 
@@ -402,11 +414,14 @@ def _render_review(st, task):
     with st.expander("진단 요약 표"):
         _rows(st, view["rows"])
 
+    if hasattr(adapter, "preview_images"):
+        _render_previews(st, task, adapter)
+
     if state["recommended"]:
         st.markdown("#### 권장 변경 (기본 계획 대비)")
         before = {item["path"]: item["before"] for item in state["changes"]}
-        _rows(st, [{"항목": item["path"], "기본값": before.get(item["path"]), "권장값": item["value"], "이유": item["reason"]}
-                   for item in state["recommended"]])
+        _rows(st, [{"항목": item["path"], "기본값": before.get(item["path"]), "권장값": item["value"], "근거": "모델 의견: " + item["reason"],
+                    "확인": item.get("check") or "-"} for item in state["recommended"]])
 
     _render_guide(st, state.get("guide") or [], "옵션 설명 (현재 표시한 계획 기준)")
     key = "task_review_" + task["task_id"][:8] + str(task["attempt"]) + ("r" if task["phase"] == "awaiting_apply" else "")
@@ -434,6 +449,23 @@ def _render_review(st, task):
         return
 
     _render_final_plan(st, task, adapter, state, key, draft)
+
+
+def _render_previews(st, task, adapter):
+    """입력 확인용 미리보기. 표시할 때마다 결과 검증을 거친 이미지만 연다. 모델에는 보내지 않는다."""
+    with st.expander("입력 미리보기 (로컬 전용, 처리 결과 아님)"):
+        try:
+            images = adapter.preview_images(task)
+        except Exception:
+            images = []
+            st.text("미리보기를 결과 검증으로 다시 확인하지 못해 표시하지 않습니다.")
+
+        if not images:
+            st.text("(표시할 미리보기 없음: 표본 형상이 이미지 형태가 아니거나 표본 배열이 정해지지 않았습니다)")
+
+        for image in images:
+            # 캡션은 고정 문구와 숫자만 담는다. 입력 유래 문자열은 넣지 않는다.
+            st.image(image["data"], caption=image["label"])
 
 
 def _render_guide(st, guide, title):
@@ -683,6 +715,7 @@ def _render_result(st, task):
     recommendation = facts["recommendation"]
     st.text("처리: 완료 · 로컬 LLM 권장안: " + ("사용함" if recommendation["source"] == "model" else
                                          "사용 못 함(" + (code_label(task, recommendation["code"]) or "사유 코드 확인 불가") + ") — 기본 계획에서 시작"))
+    st.text(MODEL_LIMITATION_NOTICE)
     # 2026-10-22 이전에 저장한 보고서 사실에는 경고 절이 없다. 새 보고서는 공통 조립에서 항상 경고 목록을 둔다.
     legacy = "warnings" not in facts
 

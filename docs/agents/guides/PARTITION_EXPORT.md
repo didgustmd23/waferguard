@@ -56,7 +56,7 @@ exports/
 
 이는 파일·계약의 정합성 확인이다. 악성 worker가 모든 기록을 일관되게 위조했을 때 원본 대비 모든 필드의 정답까지 독립적으로 인증하지 않는다. 추출의 실제 정답은 합성 입력과 기대 위치의 필드를 비교하는 테스트로 확인한다. 일반 데이터의 의미적 파생 관계는 검토된 내보내기 구현과 승인된 실행 경계를 전제로 한다.
 
-기존 [구간 입력 계약](../design/PARTITION_INPUT_CONTRACT.md)에 필요한 출력 형식을 그대로 유지한다. 완료 attempt에는 partition_exports.json·train·validation·AGENT_COMPLETE.json만 둔다. 요청·응답·운송 증거는 별도 workers 폴더에 보존하고 커밋 직전 및 완료 상태 조회 시 재확인한다. 로컬 관리자에 의한 DB·증거 동시 변조를 인증하는 기능은 아니다.
+기존 [구간 입력 계약](../DESIGN.md#분할내보내기train-기준)에 필요한 출력 형식을 그대로 유지한다. 완료 attempt에는 partition_exports.json·train·validation·AGENT_COMPLETE.json만 둔다. 요청·응답·운송 증거는 별도 workers 폴더에 보존하고 커밋 직전 및 완료 상태 조회 시 재확인한다. 로컬 관리자에 의한 DB·증거 동시 변조를 인증하는 기능은 아니다.
 
 계산 테스트의 커밋 이력은 fixture이며, 연결 테스트에서는 선행 분할 이력만 fixture로 준비하고 내보내기 승인의 소비·예약·검증·커밋은 실제 RulesExecutor로 수행한다. 실제 AppContainer 실행과 OS 제한 강제는 별도 확인이 필요하다.
 

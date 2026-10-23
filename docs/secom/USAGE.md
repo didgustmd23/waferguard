@@ -1,6 +1,6 @@
 # SECOM 실행 안내
 
-환경 준비·데이터 생성·개별 실험의 실행 방법입니다. 아래 일반 Step 명령은 실행 예시이며 최신 V2 결과를 그대로 재현하는 설정은 아닙니다. V2 실험별 조건과 명령은 [통합 실험 노트](EXPERIMENT_NOTES.md), 고정 센서 모델 보존 절차는 [시나리오 기록](V2_SCENARIO_BUNDLES.md)을 따릅니다.
+환경 준비·데이터 생성·개별 실험의 실행 방법입니다. 아래 일반 Step 명령은 실행 예시이며 최신 V2 결과를 그대로 재현하는 설정은 아닙니다. V2 실험별 조건과 명령은 [통합 실험 노트](EXPERIMENT_NOTES.md), 고정 센서 모델 보존 절차는 아래 [V2 시나리오 저장·복원](#v2-시나리오-저장복원)을 따릅니다.
 
 설정 파일 작성법은 [Dataset Profile 안내](DATASET_PROFILE.md), 과거 실험 수치는 [보고서](report.md)에 분리했습니다.
 
@@ -168,3 +168,60 @@ python -m src.sensor_ml.inference.predict_cli --bundle-dir models/candidates/v2_
 `--n-jobs`를 지원하는 실험은 모델 내부 계산의 병렬 수를 조절합니다. 자원이 제한되면 `1` 또는 `2`를 사용합니다. 출력 보존을 위해 새 출력 폴더와 파일 경로를 지정하세요.
 
 [소스 역할 안내](../../src/README.md) · [문서 목록](../README.md#secom-문서) · [프로젝트 소개](../../README.md)
+
+## V2 시나리오 저장·복원
+
+이미 완료한 저장 작업의 재현 절차입니다. 기존 폴더를 덮어쓰거나 기록 정리를 위해 재학습·재평가하지 마세요. 새 저장은 사용자 요청과 새 출력 폴더가 필요합니다. 현재 모델·문턱·환경·평가 범위·복원 결과는 [V2 Model Card](model_card_v2.md) 한 곳을 기준으로 합니다.
+
+90% 저장은 기존 학습 범위로 재학습하고, 80%는 신뢰한 90% 묶음의 분류기·전처리를 복사해 문턱만 바꿉니다. 원본 OOF 기록과 묶음의 experiment 사본은 보존하며 두 시나리오는 연구용·배포 미승인입니다.
+
+### 1. 90% 시나리오 저장
+
+```powershell
+python -m src.sensor_ml.inference.save_v2_scenario `
+  --train data/splits/integrated/time_train.csv `
+  --oof-dir logs/v2_fixed_sensor20_oof `
+  --target-recall 0.9 `
+  --bundle-dir models/candidates/v2_fixed20_recall90 `
+  --n-jobs 2
+```
+
+기존 마지막 개발 구간의 확률과 새 학습 확률이 일치해야 저장한다. 문턱은 저장된 CSV의 정확한 값으로 읽으며 출력의 반올림값을 입력하지 않는다. 원래 검증 범위인 824행만 학습하고 마지막 272행을 학습에 추가하지 않는다. 새 독립 Test나 추가 성능 개선을 수행하는 명령이 아니다.
+
+### 2. 별도 프로세스로 90% 복원 확인
+
+```powershell
+python -m src.sensor_ml.inference.sensor_bundle `
+  --bundle-dir models/candidates/v2_fixed20_recall90 `
+  --trusted-local-bundle
+```
+
+`status: passed`를 확인한다. joblib은 임의 코드 실행 위험이 있으므로 직접 생성한 신뢰한 파일에만 이 옵션을 사용한다. 저장·복원 정합성과 탐지 성능은 별도다.
+
+### 3. 90% 확인 후 80% 분기 저장
+
+```powershell
+python -m src.sensor_ml.inference.save_v2_scenario `
+  --oof-dir logs/v2_fixed_sensor20_oof `
+  --target-recall 0.8 `
+  --base-bundle-dir models/candidates/v2_fixed20_recall90 `
+  --trusted-local-bundle `
+  --bundle-dir models/candidates/v2_fixed20_recall80
+```
+
+80%는 90%를 덮어쓰지 않는다. 같은 OOF 실행 기록과 센서 순서를 확인하고 분류기·통계는 유지한 채 문턱만 바꾼다. 추가 실험은 먼저 이 두 저장 시나리오를 기준으로 비교하고, 모델·전처리 변경이 필요하면 별도 버전으로 진행한다.
+
+### 4. 80% 복원 확인
+
+```powershell
+python -m src.sensor_ml.inference.sensor_bundle `
+  --bundle-dir models/candidates/v2_fixed20_recall80 `
+  --trusted-local-bundle
+```
+
+
+## 기존 V1 동결 평가와 남은 제출 확인
+
+V1 S0·M3는 사용 중단된 연구용 모델입니다. 동결 조건·평가·미사용 여부 한계는 [V1 Model Card](model_card.md), 상세 결과는 [보고서 34절](report.md#34-동결-저장-모델의-후속-시간-구간-평가-2026-10-07)을 따릅니다. 평가 실행기는 `src/sensor_ml/evaluation/evaluate_frozen_model.py`입니다. 완료 기록을 재현하려고 실행 표식을 삭제하거나 다른 폴더로 복사해 다시 평가하지 않습니다. V1 문턱/지표를 V2에 승계하지 않습니다.
+
+남은 제출 확인은 프로젝트 실행 안내의 처음부터 재현 여부, 공개 산출물/데이터 범위, 딥러닝 완료 후 발표자료의 수치·표현 점검입니다. 새 독립 데이터 평가·현장 적용·실제 센서/맵 대응 평가는 별도 확장 범위입니다. 프로젝트 전체 일정은 [PROJECT_SCHEDULE](../PROJECT_SCHEDULE.md)을 따릅니다. 완료된 작업을 새 체크리스트로 반복하지 않습니다.

@@ -4,10 +4,10 @@ pipeline_binding_registry와 같이 고정 dict로 등록한다. 플러그인 �
 각 어댑터가 제공하는 이름은 설계 문서 7.3절(공통/유형 책임)에 따른다.
 """
 
-from . import tabular_task
+from . import array_task, tabular_task
 
 
-ADAPTERS = {tabular_task.KIND: tabular_task}
+ADAPTERS = {tabular_task.KIND: tabular_task, array_task.KIND: array_task}
 
 
 def adapter(kind):
