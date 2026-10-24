@@ -4,7 +4,7 @@ from dataclasses import fields
 
 from src.preprocessing.split import SplitRules
 from src.preprocessing.transform import PreparationRules
-from .workflow_service_registry import csv_workflow_records
+from .workflow_service_registry import TABULAR_VERSION, csv_workflow_records, tabular_workflow_records
 
 
 VERSION = "1.0.0"
@@ -49,8 +49,11 @@ def settings_schema(module_id):
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
-def workflow_proposal_specifications():
-    """공개 정보만 새 dict로 반환한다. 이 목록은 승인이나 실행 가능 증거가 아니다."""
+def workflow_proposal_specifications(*, include_tabular=False):
+    """공개 정보만 새 dict로 반환한다. 이 목록은 승인이나 실행 가능 증거가 아니다.
+
+    기본값은 기존 CSV 명세만 돌려준다. 표형 v2 명세는 로컬 계약 검증·결합에서만 명시적으로 포함한다.
+    """
     ports = {
         "csv_split_review": ({"data": "source.selected_input"}, "split.confirmed"),
         "csv_partition_export": ({"split": "split.confirmed"}, "export.development"),
@@ -81,4 +84,17 @@ def workflow_proposal_specifications():
                        "execution_approval": "separate_explicit_approval", "test_application_allowed": False,
                        "criteria_policy": "derive_on_train" if module_id == "csv_prepare_candidate"
                        else "apply_saved_without_rederivation" if module_id == "csv_prepare_apply" else "none"})
+
+    if not include_tabular:
+        return result
+
+    # v2는 같은 역할의 승인 경계·설정 명세를 쓰고, 논리 참조 이름을 구분해 CSV 결과와 섞이지 않게 한다.
+    legacy = {item["module_id"].split("_", 1)[1]: item for item in result}
+    for item in tabular_workflow_records():
+        base = legacy[item["module_id"].split("_", 1)[1]]
+        rename = lambda reference: reference if reference == "source.selected_input" else "tabular_" + reference
+        result.append({**base, **item, "version": TABULAR_VERSION,
+                       "inputs": {key: rename(value) for key, value in base["inputs"].items()},
+                       "output": rename(base["output"]),
+                       "required_local_checks": base["required_local_checks"] + ["same_tabular_source_contract"]})
     return result

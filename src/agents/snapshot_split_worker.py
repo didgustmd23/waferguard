@@ -21,6 +21,7 @@ def execute_request(request, root):
     from src.preprocessing.profiles import profile_from_dict, _unique_pairs
     from src.preprocessing.quality import inspect_quality, write_quality_report
     from src.preprocessing.split import propose_split, _digest
+    from src.agents.tabular_worker_input import SPLIT_POLICY, table_files, source_id, check_staged, load_staged
 
     root = Path(root).resolve()
     source = root / "input/snapshot/input.bin"
@@ -28,17 +29,20 @@ def execute_request(request, root):
     output = root / "output/result"
     stage = "REQUEST_PATHS"
     old_limit = csv.field_size_limit(1024 * 1024)
+    typed = request.policy_version == SPLIT_POLICY
 
     try:
         actions = {"audit": "run_audit", "run_eda": "run_eda", "propose_split": "propose_split", "commit_split": "commit_split"}
         expected_files = [str(source), str(source.parent / "snapshot.json"), str(settings)]
+        if typed:
+            expected_files = list(table_files(root, "split_task.json"))
 
         if request.stage == "commit_split":
             expected_files.append(str(root / "input/preview.json"))
 
         if (
             request.task_id != root.name or actions.get(request.stage) != request.action_id
-            or request.policy_version != "snapshot_split_v1" or request.dependency_directories
+            or request.policy_version not in ("snapshot_split_v1", SPLIT_POLICY) or request.dependency_directories
             or request.input_files != tuple(expected_files)
             or request.output_directory != str(output) or request.scratch_directory != str(root / "scratch/task")
         ):
@@ -49,15 +53,16 @@ def execute_request(request, root):
         with settings.open("rb") as stream:
             packet = _decode(stream.read(65537).decode("utf-8"))
 
-        if set(packet) != {"snapshot", "profile", "limits", "code_id", "proposal_sha256"} or _digest(packet) != request.config_id:
+        keys = {"version", "source", "profile", "limits", "code_id", "proposal_sha256"} if typed else {"snapshot", "profile", "limits", "code_id", "proposal_sha256"}
+        if set(packet) != keys or _digest(packet) != request.config_id or (typed and packet["version"] != SPLIT_POLICY):
             raise ValueError("분할 요청 설정이 일치하지 않습니다.")
 
-        snapshot = Snapshot(**packet["snapshot"])
+        snapshot = None if typed else Snapshot(**packet["snapshot"])
         profile = profile_from_dict(packet["profile"])
 
         if (
-            profile.adapter_id != "tabular_csv_v1" or profile.workflow_id != "split_review_v1"
-            or profile.split_rules is None or request.source_id != "csv:" + snapshot.sha256
+            profile.adapter_id != ("tabular_canonical_v2" if typed else "tabular_csv_v1") or profile.workflow_id != "split_review_v1"
+            or profile.split_rules is None or request.source_id != (source_id(packet["source"]) if typed else "csv:" + snapshot.sha256)
             or packet["limits"] != asdict(request.limits)
             or (request.stage != "commit_split" and packet["proposal_sha256"] is not None)
         ):
@@ -65,35 +70,33 @@ def execute_request(request, root):
 
         stage = "SNAPSHOT"
 
-        if not _verify_staged_snapshot(root, snapshot):
+        if not (check_staged(root, packet["source"]) if typed else _verify_staged_snapshot(root, snapshot)):
             raise ValueError("원본 복사본이 변경되었습니다.")
 
         # 먼저 제한된 CSV 파서로 행·열·레코드를 검사한다. 부모는 원본을 파싱하지 않는다.
         stage = "CSV_HEADER"
 
-        with source.open(encoding="utf-8-sig", newline="") as stream:
-            reader = iter_csv_rows(stream)
-            header = next(reader, [])
-
-            if not header or any(not value for value in header) or len(header) != len(set(header)) or not set(profile.roles.required_columns).issubset(header):
-                raise ValueError("CSV 헤더와 역할 계약이 다릅니다.")
-
-            count = 0
-
-            for row in reader:
-                count += 1
-
-                if count > 1_000_000 or len(row) != len(header):
-                    raise ValueError("CSV 행·열 계약 또는 크기 제한을 벗어났습니다.")
-
-        stage = "CSV_LOAD"
-        # ID·그룹·범주·시간의 문자열 표현을 수치로 추정하여 합치지 않는다.
-        text_columns = set(profile.roles.identifiers + profile.roles.categorical)
-        text_columns.update(value for value in (profile.roles.group, profile.roles.timestamp) if value is not None)
-        frame = pd.read_csv(source, encoding="utf-8-sig", dtype={name: "string" for name in text_columns})
-
-        if len(frame) != count or list(frame.columns) != header:
-            raise ValueError("안전 파서와 표형 로더의 행·컬럼 결과가 다릅니다.")
+        if typed:
+            frame = load_staged(root, packet["source"])
+            count = len(frame)
+        else:
+            with source.open(encoding="utf-8-sig", newline="") as stream:
+                reader = iter_csv_rows(stream)
+                header = next(reader, [])
+                if not header or any(not value for value in header) or len(header) != len(set(header)) or not set(profile.roles.required_columns).issubset(header):
+                    raise ValueError("CSV 헤더와 역할 계약이 다릅니다.")
+                count = 0
+                for row in reader:
+                    count += 1
+                    if count > 1_000_000 or len(row) != len(header):
+                        raise ValueError("CSV 행·열 계약 또는 크기 제한을 벗어났습니다.")
+            stage = "CSV_LOAD"
+            # v1의 텍스트 자료형 강제와 CSV 재검사 규칙은 유지한다.
+            text_columns = set(profile.roles.identifiers + profile.roles.categorical)
+            text_columns.update(value for value in (profile.roles.group, profile.roles.timestamp) if value is not None)
+            frame = pd.read_csv(source, encoding="utf-8-sig", dtype={name: "string" for name in text_columns})
+            if len(frame) != count or list(frame.columns) != header:
+                raise ValueError("안전 파서와 표형 로더의 행·컬럼 결과가 다릅니다.")
 
         data = TabularInput(frame, profile.roles)
         artifact = {"audit": "quality", "run_eda": "eda", "propose_split": "proposal", "commit_split": "split"}[request.stage]
@@ -154,7 +157,7 @@ def execute_request(request, root):
 
         stage = "SNAPSHOT_RECHECK"
 
-        if not _verify_staged_snapshot(root, snapshot):
+        if not (check_staged(root, packet["source"]) if typed else _verify_staged_snapshot(root, snapshot)):
             raise ValueError("작업 중 원본 복사본이 변경되었습니다.")
     except (ValueError, TypeError, KeyError, OSError, UnicodeError, csv.Error) as error:
         code = "ACCESS_DENIED" if isinstance(error, PermissionError) else "IO_FAILED" if isinstance(error, OSError) else "INPUT_INVALID"

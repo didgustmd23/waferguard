@@ -55,9 +55,12 @@ class PreparationCandidateContract:
     rules: PreparationRules
     limits: WorkerLimits
     max_candidate_bytes: int = 4 * 1024 * 1024
+    schema_version: str = POLICY_VERSION
 
     def __post_init__(self):
-        if not isinstance(self.train, PartitionInputContract) or self.train.partition != "train":
+        from .tabular_source_contract import TabularPartitionInputContract
+        expected_type = {POLICY_VERSION: PartitionInputContract, "preparation_candidate_v2": TabularPartitionInputContract}.get(self.schema_version)
+        if expected_type is None or type(self.train) is not expected_type or self.train.partition != "train":
             raise ValueError("승인·커밋된 Train 구간 계약만 후보 산출에 사용할 수 있습니다.")
 
         if not isinstance(self.rules, PreparationRules) or not isinstance(self.limits, WorkerLimits):
@@ -67,13 +70,41 @@ class PreparationCandidateContract:
             raise ValueError("후보 파일 상한은 1~8 MiB 범위의 양의 정수 바이트여야 합니다.")
 
     def check(self):
-        return self.train.check()
+        self._checked_warnings()
+        return True
+
+    def _checked_warnings(self):
+        """Train 구간을 한 번 검사하고 같은 검사 결과로 v2 자료형 경고를 만든다. 결과를 객체에 저장하지 않는다."""
+        self.train.check()
+        if self.schema_version == "preparation_candidate_v2":
+            from .tabular_preparation import checked_feature_types
+            return checked_feature_types(self.train)
+        return []
+
+    @property
+    def source_id(self):
+        return self.train.source_id if self.schema_version == "preparation_candidate_v2" else self.train.snapshot.source_id
+
+    @property
+    def input_warnings(self):
+        if self.schema_version == "preparation_candidate_v2":
+            from .tabular_preparation import check_feature_types
+            return check_feature_types(self.train)
+        return []
 
     def packet(self, code_id):
         if type(code_id) is not str or len(code_id) != 64 or any(char not in "0123456789abcdef" for char in code_id):
             raise ValueError("후보 산출 코드의 SHA-256 식별값이 필요합니다.")
 
-        self.check()
+        # 검사는 packet 호출마다 한 번 수행하고, 같은 검사 결과로 참조와 경고를 만든다.
+        warnings = self._checked_warnings()
+        if self.schema_version == "preparation_candidate_v2":
+            from .tabular_preparation import checked_partition_packet
+            return {"version": self.schema_version, "train_contract_id": self.train.contract_id,
+                    "split_evidence_id": self.train.split.signature, "export_marker_sha256": self.train.export.marker_sha256,
+                    "input": checked_partition_packet(self.train), "roles": asdict(self.train.roles), "train_rows": len(self.train.row_positions),
+                    "rules": asdict(self.rules), "limits": asdict(self.limits), "max_candidate_bytes": self.max_candidate_bytes,
+                    "input_warnings": warnings, "code_id": code_id}
         return {
             "version": POLICY_VERSION, "train_contract_id": self.train.contract_id,
             "split_evidence_id": self.train.split.signature,

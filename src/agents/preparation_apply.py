@@ -34,7 +34,7 @@ class PreparationApplyTool(SnapshotEdaTool):
         _decode(json.dumps(self.arguments))
         self.config_id = _digest(self.arguments)
         self.plan = ExecutionPlan(
-            source_id=contract.train.snapshot.source_id, config_id=self.config_id, policy_version=POLICY_VERSION,
+            source_id=contract.source_id, config_id=self.config_id, policy_version=contract.schema_version,
             steps=(ExecutionStep("preflight", "run_preflight"),
                    ExecutionStep("apply_preparation", "apply_preparation", json.dumps(self.arguments))),
         )
@@ -44,13 +44,14 @@ class PreparationApplyTool(SnapshotEdaTool):
             raise ValueError("Train 출처·후보 규칙·코드·한도가 승인 범위와 다릅니다.")
 
     def _request(self, task_id):
+        from .tabular_preparation_worker import input_files
         root = self._work_root(task_id)
         state = self.states.load()
         return WorkerRequest(
             task_id=task_id, run_id=state.run_id, actor_id=state.actor_id,
             stage="apply_preparation", action_id="apply_preparation", source_id=self.plan.source_id,
-            config_id=self.config_id, plan_id=self.plan.plan_id, policy_version=POLICY_VERSION, limits=self.limits,
-            input_files=tuple(str(root / "input" / name) for name in (
+            config_id=self.config_id, plan_id=self.plan.plan_id, policy_version=self.contract.schema_version, limits=self.limits,
+            input_files=input_files(root, applying=True) if self.contract.schema_version == "preparation_apply_v2" else tuple(str(root / "input" / name) for name in (
                 "train/input.bin", "train/snapshot.json", "validation/input.bin", "validation/snapshot.json",
                 "preprocessor.json", "positions.json", "apply_task.json",
             )),
@@ -59,6 +60,9 @@ class PreparationApplyTool(SnapshotEdaTool):
 
     def _stage(self, request):
         """별도 적용 승인 소비·예약 뒤 두 구간과 정확한 후보 상태만 복사한다."""
+        if self.contract.schema_version == "preparation_apply_v2":
+            from .tabular_preparation import stage_parts
+            return stage_parts(self, request, applying=True)
         root = self._work_root(request.task_id)
         root.parent.mkdir(exist_ok=True)
         _root(root.parent)

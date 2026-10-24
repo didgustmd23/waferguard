@@ -63,6 +63,17 @@ def _child_identity(tool):
 
 def create(name, pipeline, split_run, split_scope, export_run, limits, candidate_bytes, partition_bytes, *, confirmed=False):
     """설정과 입력 선택을 결합하고 후보 작업만 만든다. 승인·worker 실행은 하지 않는다."""
+    return _create(name, pipeline, limits, candidate_bytes, partition_bytes, confirmed=confirmed,
+                   legacy=(split_run, split_scope, export_run))
+
+
+def create_from_tabular(name, pipeline, train, limits, candidate_bytes, partition_bytes, *, confirmed=False):
+    """typed Train을 기존 후보 검토·별도 적용 승인 경로에 연결한다."""
+    return _create(name, pipeline, limits, candidate_bytes, partition_bytes, confirmed=confirmed, train=train)
+
+
+def _create(name, pipeline, limits, candidate_bytes, partition_bytes, *, confirmed, legacy=None, train=None):
+    """입력 선택만 버전별로 나누고 기존 통합 기록과 검토 절차는 공유한다."""
     if not confirmed:
         raise ValueError("전처리 계획과 입력 선택을 명시적으로 확인하세요.")
 
@@ -78,6 +89,16 @@ def create(name, pipeline, split_run, split_scope, export_run, limits, candidate
 
     if type(partition_bytes) is not int or not 0 < partition_bytes <= 1024 ** 3:
         raise ValueError("구간 출력 상한은 1 바이트~1 GiB 사이여야 합니다.")
+    if legacy is None:
+        from .tabular_source_contract import TabularPartitionInputContract
+        from .preparation_candidate_contract import PreparationCandidateContract
+        from src.preprocessing.transform import PreparationRules
+        if type(train) is not TabularPartitionInputContract:
+            raise ValueError("고정된 typed Train 계약이 필요합니다.")
+        if train.split.artifact.scope.actor_id != _current_actor() or train.export.scope.actor_id != _current_actor():
+            raise ValueError("분할·내보내기 계정이 다릅니다.")
+        PreparationCandidateContract(train, PreparationRules(**json.loads(plan.rules_json)), limits, candidate_bytes,
+                                     schema_version="preparation_candidate_v2").check()
 
     directory = _directory(name, create_parent=True)
     directory.mkdir()  # 기존 실행·불완전한 초기화는 덮어쓰지 않는다.
@@ -85,8 +106,11 @@ def create(name, pipeline, split_run, split_scope, export_run, limits, candidate
     apply_name = name + "-apply"
     _save_new(directory / "pipeline.json", config)
     _save_new(directory / "rules.json", json.loads(plan.rules_json))
-    candidate.create(candidate_name, split_run, split_scope, export_run, directory / "rules.json",
-                     limits, candidate_bytes, confirmed=True)
+    if legacy is None:
+        candidate.create_from_tabular(candidate_name, train, PreparationRules(**json.loads(plan.rules_json)),
+                                      limits, candidate_bytes, confirmed=True)
+    else:
+        candidate.create(candidate_name, *legacy, directory / "rules.json", limits, candidate_bytes, confirmed=True)
     tool = candidate.open_run(candidate_name)
     record = {"schema_version": "preparation_pipeline_run_v1", "actor": _current_actor(),
               "plan_signature": plan.signature, "code_id": _code_id(),

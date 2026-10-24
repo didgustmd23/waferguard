@@ -62,6 +62,50 @@ target 컬럼명은 preprocessor.json의 roles.target에서 확인합니다. tar
 """
 
 
+TYPED_HANDOFF_README = """# 표형 v2 전처리 전달 묶음
+
+승인·생성된 typed 표의 Train에서 산출하고 별도 승인한 저장 기준을 Train·Validation에 적용한 결과입니다.
+원본 파일·Test·승인 DB·실행 가능한 스크립트·pickle·모델은 포함하지 않습니다.
+
+## 파일 읽기
+
+- prepared/train_features.csv와 validation_features.csv: 수치 특징과 고정된 출력 컬럼 순서.
+- prepared/train_rows.json과 validation_rows.json: 원래 행 위치·인덱스와 라벨·ID·그룹·시간. 값마다 자료형 태그와 컬럼 스키마가 있어
+  `True`(bool)·`"True"`(문자열)·`1`(정수), `"0012"`(문자열)·`12`(정수)를 구분합니다.
+- preprocessor.json: Train에서 산출한 제거·대치·스케일·범주 기준. 적용 시 다시 산출하지 않습니다.
+- feature_mapping.json: 출력 컬럼과 원본 특징의 연결. 순위·중요도를 뜻하지 않습니다.
+- provenance.json과 prepared/application.json: 표형 출처 ID(source_contract_id)·후보·적용 식별값과 적용 기록.
+- HANDOFF_COMPLETE.json: 파일 목록·크기·SHA-256. 인증서나 외부 승인 증거가 아닙니다.
+
+rows.json을 일반 JSON으로 읽어 문자열로 바꾸지 마세요. 아래 reader는 묶음을 먼저 검사한 뒤 원래 자료형으로 복원합니다.
+
+```python
+from pathlib import Path
+from src.agents.csv_handoff_contract import load_handoff_partition
+
+bundle = Path("data/processed/agents/handoffs/선택한_묶음_이름")
+X_train, rows_train = load_handoff_partition(bundle, "train")
+X_valid, rows_valid = load_handoff_partition(bundle, "validation")
+assert len(X_train) == len(rows_train)
+```
+
+특징 표의 i번째 행과 rows의 i번째 행이 대응합니다. rows의 인덱스는 원래 입력의 인덱스이므로 재정렬하지 마세요.
+target 컬럼명은 preprocessor.json의 roles.target에서 확인합니다. target이 null이면 라벨이 없습니다.
+라벨 값을 다른 형식으로 바꿔야 하면 담당 프로젝트의 허용 값·매핑을 확인하고 명시적으로 변환하세요.
+큰 정수 특징은 기존 float64 계산에서 정밀도를 잃을 수 있습니다. 해당 경고는 후보 보고서에 있습니다.
+
+## 검사와 보안 범위
+
+같은 프로젝트 환경에서 python -m src.agents.csv_handoff_cli verify --name 선택한_묶음_이름 을 실행합니다.
+검사는 파일 해시·수치 형식·특징 순서·행 연결·메타데이터 자료형 복원의 정합성을 확인합니다. 원본 대비 통계의 정답,
+라벨 진실성·최종 성능·배포 승인·원래 승인 이력 전체를 독립 인증하지 않습니다.
+로컬 관리자가 파일과 완료 기록을 함께 고칠 수 있으므로 해시는 암호학적 진본 인증이 아닙니다.
+
+이 묶음에는 실제 특징·라벨·식별자·처리 통계가 포함됩니다. 로컬 데이터로 관리하고 LLM·외부
+추적 서비스·Git에 보내지 마세요. 팀원 전달도 별도의 허용된 공유 방식으로 수행하세요.
+"""
+
+
 def _directory(name, *, create_parent=False):
     """자동 공유를 피하고 프로젝트의 데이터 폴더 아래에만 내보낸다."""
     if type(name) is not str or re.fullmatch(r"[a-z][a-z0-9_-]{0,47}", name) is None:
@@ -123,10 +167,15 @@ def _copy_checked(source, destination, budget):
     return copied
 
 
-def export_bundle(pipeline_name, name, maximum, *, confirmed=False):
-    """완료 증거를 재검증한 후 새 로컬 묶음만 생성한다. worker를 시작하지 않는다."""
+def export_bundle(pipeline_name, name, maximum, *, confirmed=False, source_contract_id=None):
+    """완료 증거를 재검증한 후 새 로컬 묶음만 생성한다. worker를 시작하지 않는다.
+
+    source_contract_id가 있으면 typed v2 적용 결과만 받아 v2 묶음을 만든다. 없으면 기존 CSV v1 결과만 받는다.
+    """
     if not confirmed:
         raise ValueError("실제 데이터가 포함된 로컬 전달 묶음 생성을 명시적으로 확인하세요.")
+
+    typed = source_contract_id is not None
 
     if type(maximum) is not int or not 0 < maximum <= MAX_BUNDLE_BYTES:
         raise ValueError("전달 합계 상한은 1 바이트~2 GiB 사이여야 합니다.")
@@ -152,6 +201,10 @@ def export_bundle(pipeline_name, name, maximum, *, confirmed=False):
         if status.get("application_status") != "applied" or status["status"] != "completed":
             raise ValueError("적용 완료·파일 검증을 통과한 실행만 전달할 수 있습니다.")
 
+        if ((tool.contract.schema_version == "preparation_apply_v2") is not typed
+                or typed and tool.contract.train.parent_source_id != source_contract_id):
+            raise ValueError("전달 형식 또는 표형 출처가 적용 결과와 다릅니다.")
+
         prepared = _root(status["local_result_directory"])
         target = _directory(name, create_parent=True)
 
@@ -173,19 +226,24 @@ def export_bundle(pipeline_name, name, maximum, *, confirmed=False):
         report = read_metadata(partial / "prepared/application.json")
         total += _write_json(partial / "feature_mapping.json", {"schema_version": "feature_mapping_v1",
                     "features": feature_mapping(saved["state"], saved["output_columns"])}, min(maximum - total, 8 * 1024 * 1024))
-        total += _write_json(partial / "provenance.json", {
-            "schema_version": "csv_handoff_provenance_v1", "pipeline_name": pipeline_name,
+        provenance = {
+            "schema_version": "tabular_handoff_provenance_v2" if typed else "csv_handoff_provenance_v1",
+            "pipeline_name": pipeline_name,
             "pipeline_signature": record["plan_signature"], "candidate_id": tool.contract.candidate.signature,
             "apply_run_id": tool.states.load().run_id, "apply_plan_id": tool.plan.plan_id,
             "preprocessor_sha256": tool.contract.candidate.state_sha256, "application_binding": report["binding"],
             "test_used": False, "model_trained": False,
-        }, min(maximum - total, 8 * 1024 * 1024))
+        }
+        if typed:
+            provenance["source_contract_id"] = source_contract_id
+        total += _write_json(partial / "provenance.json", provenance, min(maximum - total, 8 * 1024 * 1024))
+        readme = TYPED_HANDOFF_README if typed else HANDOFF_README
 
-        if total + len(HANDOFF_README.encode("utf-8")) > maximum:
+        if total + len(readme.encode("utf-8")) > maximum:
             raise ValueError("안내서를 포함한 전달 크기 상한을 초과했습니다.")
 
         with (partial / "README.md").open("x", encoding="utf-8", newline="") as stream:
-            stream.write(HANDOFF_README)
+            stream.write(readme)
 
         files = {relative: _fingerprint(partial / relative) for relative in PAYLOAD_FILES}
         total = sum(value["size"] for value in files.values())
@@ -197,7 +255,8 @@ def export_bundle(pipeline_name, name, maximum, *, confirmed=False):
         if application.status(tool) != status or (source_root / "CANCEL_REQUESTED").exists():
             raise ValueError("내보내기 중 실행 상태 또는 취소 여부가 변경되었습니다.")
 
-        _write_json(partial / "HANDOFF_COMPLETE.json", {"schema_version": "csv_preparation_handoff_v1",
+        _write_json(partial / "HANDOFF_COMPLETE.json", {
+                    "schema_version": "tabular_preparation_handoff_v2" if typed else "csv_preparation_handoff_v1",
                     "files": files, "payload_bytes": total, "max_bundle_bytes": maximum}, min(maximum - total, 65536))
         verify_bundle(partial)
 

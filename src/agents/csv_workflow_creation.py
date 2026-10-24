@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
+import re
 
 from . import snapshot_split_cli as split_cli
 from . import partition_export_cli as export_cli
@@ -50,16 +51,36 @@ class CsvCreationPreview:
         return json.loads(self.payload_json)
 
 
-def _split(name):
+def typed_run(tool):
+    """실행의 고정 정책·계약 버전으로 v2 typed 실행인지 판정한다. 알 수 없는 도구는 거부한다."""
+    contract = getattr(tool, "contract", None)
+    version = getattr(contract, "schema_version", None)
+    if version in ("preparation_candidate_v2", "preparation_apply_v2"):
+        return True
+    if version in ("preparation_candidate_v1", "preparation_apply_v1"):
+        return False
+    policy = tool.plan.policy_version
+    if policy in ("tabular_split_v2", "partition_export_v2"):
+        return True
+    if policy in (split_cli.POLICY_VERSION, export_cli.POLICY_VERSION):
+        return False
+    raise ValueError("작업 버전을 확인할 수 없는 실행입니다.")
+
+
+def _split(name, *, typed=False):
     tool = split_cli.open_run(name)
+    if typed_run(tool) is not typed:
+        raise ValueError("이 작업 버전의 확정 분할이 아닙니다.")
     tool._check_arguments(tool.arguments)
     scope = split_cli.executor(tool).scope_for("commit_split")
     evidence = read_confirmed_split(tool.states.directory, scope)
     return tool, scope, evidence
 
 
-def _pipeline(name, *, applied=False):
+def _pipeline(name, *, applied=False, typed=False):
     directory, record, candidate = pipeline_cli.open_run(name)
+    if typed_run(candidate) is not typed:
+        raise ValueError("이 작업 버전의 전처리 통합 작업이 아닙니다.")
     evidence = read_candidate_evidence(candidate.states.directory, _current_actor())
     application = pipeline_cli._application(directory, record, candidate)
     if (directory / "CANCEL_REQUESTED").exists():
@@ -69,11 +90,10 @@ def _pipeline(name, *, applied=False):
     return directory, record, candidate, evidence, application
 
 
-def preview_creation(module_id, values, limits):
-    """현재 파일·부모 증거를 재검증하고 고정한다. 파일 생성·승인 발급은 없다."""
+def checked_values(schema, values, limits):
+    """생성 명세의 필드 종류·범위만 검사하고 파일 경로를 정규화한다. 선행 증거 검사는 호출자가 한다."""
     if not isinstance(limits, WorkerLimits):
         raise TypeError("검증된 자원 계약이 필요합니다.")
-    schema = creation_schema(module_id)
     if type(values) is not dict or set(values) != {field["name"] for field in schema["fields"]}:
         raise ValueError("생성 명세와 입력 필드가 다릅니다.")
 
@@ -95,7 +115,16 @@ def preview_creation(module_id, values, limits):
                 raise ValueError("설정 JSON은 64 KiB 이하여야 합니다.")
             if kind == "json_file" and Path(selected[field["name"]]).stat().st_size > 65536:
                 raise ValueError("설정 JSON은 64 KiB 이하여야 합니다.")
+        elif kind == "run_directory":
+            selected[field["name"]] = str(_path(Path(value).absolute(), directory=True))
+        elif kind == "source_contract_id" and re.fullmatch(r"tabular_source:[0-9a-f]{64}", value) is None:
+            raise ValueError("검증된 표형 출처 ID 형식이 필요합니다.")
+    return selected
 
+
+def preview_creation(module_id, values, limits):
+    """현재 파일·부모 증거를 재검증하고 고정한다. 파일 생성·승인 발급은 없다."""
+    selected = checked_values(creation_schema(module_id), values, limits)
     name = selected.get("name", selected.get("pipeline_name"))
     files, parents = {}, {}
     if module_id == "csv_split_review":
@@ -120,6 +149,8 @@ def preview_creation(module_id, values, limits):
         else:
             target = pipeline_cli._directory(name)
             export = export_cli.open_run(selected["export_name"])
+            if typed_run(export) is not False:
+                raise ValueError("CSV v1 내보내기 실행이 필요합니다.")
             export_status = export_cli.status(export)
             if export_status.get("partition_contracts") != "passed":
                 raise ValueError("검증된 내보내기 완료 작업이 필요합니다.")
@@ -161,6 +192,25 @@ def preview_creation(module_id, values, limits):
         "code_id": code_id(), "actor": _current_actor(), "worker_started": False}, ensure_ascii=False, sort_keys=True))
 
 
+def create_application(name, limits, *, typed=False):
+    """검토한 후보에 묶인 적용 작업과 review 기록을 만든다. v1·v2가 같은 후보 검토 계약을 쓴다."""
+    directory, record, candidate, evidence, _ = _pipeline(name, typed=typed)
+    with _run_lock(directory) as acquired:
+        if not acquired:
+            raise ValueError("다른 통합 요청이 진행 중입니다.")
+        # 기존 CLI 검토와 같은 후보 증거·하위 실행 생성·review 계약을 사용한다.
+        directory, record, candidate, current, application = _pipeline(name, typed=typed)
+        if current != evidence or application is not None:
+            raise ValueError("검토한 후보 상태가 변경됐습니다.")
+        evidence.check()
+        result = apply_cli.create(record["apply_name"], candidate.states.directory, limits,
+                                  record["max_partition_bytes"], confirmed=True)
+        application = apply_cli.open_run(record["apply_name"])
+        pipeline_cli._save_new(directory / "review.json", {"candidate_id": evidence.signature,
+                               "apply_identity": pipeline_cli._child_identity(application)})
+    return result
+
+
 def create(preview, *, confirmed=False):
     if confirmed is not True or not isinstance(preview, CsvCreationPreview):
         raise ValueError("현재 생성 범위를 명시적으로 확인해야 합니다.")
@@ -184,20 +234,7 @@ def create(preview, *, confirmed=False):
             result = pipeline_cli.create(name, values["pipeline"], exported["split_run_dir"], exported["split_scope"],
                 str(export.states.directory), limits, values["max_candidate_bytes"], values["max_partition_bytes"], confirmed=True)
     elif module == "csv_prepare_apply":
-        directory, record, candidate, evidence, _ = _pipeline(name)
-        with _run_lock(directory) as acquired:
-            if not acquired:
-                raise ValueError("다른 통합 요청이 진행 중입니다.")
-            # 기존 CLI 검토와 같은 후보 증거·하위 실행 생성·review 계약을 사용한다.
-            directory, record, candidate, current, application = _pipeline(name)
-            if current != evidence or application is not None:
-                raise ValueError("검토한 후보 상태가 변경됐습니다.")
-            evidence.check()
-            result = apply_cli.create(record["apply_name"], candidate.states.directory, limits,
-                                      record["max_partition_bytes"], confirmed=True)
-            application = apply_cli.open_run(record["apply_name"])
-            pipeline_cli._save_new(directory / "review.json", {"candidate_id": evidence.signature,
-                                   "apply_identity": pipeline_cli._child_identity(application)})
+        result = create_application(name, limits)
     else:
         from .csv_handoff_workflow import create_run
 

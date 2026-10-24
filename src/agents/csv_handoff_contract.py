@@ -2,7 +2,11 @@
 
 import csv
 from dataclasses import asdict
+import hashlib
 import math
+from pathlib import Path
+import re
+import tempfile
 
 from src.preprocessing.contracts import ColumnRoles
 from src.preprocessing.transform import PreparationRules, _validate_state
@@ -19,6 +23,16 @@ PAYLOAD_FILES = tuple("prepared/" + name for name in PREPARED_FILES) + (
     "preprocessor.json", "feature_mapping.json", "provenance.json", "README.md",
 )
 MAX_BUNDLE_BYTES = 2 * 1024 ** 3
+PROVENANCE_FIELDS = {"schema_version", "pipeline_name", "pipeline_signature", "candidate_id", "apply_run_id",
+                     "apply_plan_id", "preprocessor_sha256", "application_binding", "test_used", "model_trained"}
+# 완료 기록 형식별 고정 규칙. 묶음이 선언한 형식은 workflow 검증에서 기대 버전과 다시 대조한다.
+VERSIONS = {
+    "csv_preparation_handoff_v1": {"provenance": "csv_handoff_provenance_v1", "fields": PROVENANCE_FIELDS, "typed": False,
+                                   "applications": {("preparation_application_v1", False), ("preparation_application_v2", True)}},
+    "tabular_preparation_handoff_v2": {"provenance": "tabular_handoff_provenance_v2", "typed": True,
+                                       "fields": PROVENANCE_FIELDS | {"source_contract_id"},
+                                       "applications": {("preparation_application_v3", True)}},
+}
 
 
 def feature_mapping(state, columns):
@@ -60,7 +74,7 @@ def _saved_state(root):
     return roles, rules, state, columns
 
 
-def _partition(root, name, record, roles, rules, state, columns):
+def _partition(root, name, record, roles, rules, state, columns, *, typed=False):
     """CSV 행과 JSON 메타데이터를 순서대로 연결한다. 라벨 값은 변환하지 않는다."""
     if type(record) is not dict or set(record) != {"rows", "features", "row_contract"}:
         raise ValueError("적용 구간 기록이 올바르지 않습니다.")
@@ -82,13 +96,27 @@ def _partition(root, name, record, roles, rules, state, columns):
     row_data = read_metadata(root / "prepared" / f"{name}_rows.json")
     expected_metadata = list(dict.fromkeys(value for value in (roles.target, roles.group, roles.timestamp, *roles.identifiers) if value is not None))
 
-    if set(row_data) != {"row_positions", "metadata_columns", "metadata"} or row_data["metadata_columns"] != expected_metadata:
+    if typed:
+        from .tabular_preparation_worker import load_row_metadata
+
+        # 원래 자료형 스키마로 실제 복원되는지 확인한다. 문자열로 낮춘 메타데이터는 거부한다.
+        try:
+            frame = load_row_metadata(root / "prepared" / f"{name}_rows.json")
+        except (TypeError, KeyError, IndexError, OverflowError) as error:
+            raise ValueError("typed 행 메타데이터를 복원할 수 없습니다.") from error
+
+        if row_data["metadata_columns"] != expected_metadata or list(frame.columns) != expected_metadata or len(frame) != count:
+            raise ValueError("행 연결의 메타데이터 역할이 다릅니다.")
+    elif set(row_data) != {"row_positions", "metadata_columns", "metadata"} or row_data["metadata_columns"] != expected_metadata:
         raise ValueError("행 연결의 메타데이터 역할이 다릅니다.")
 
     positions = row_data["row_positions"]
-    metadata = row_data["metadata"]
+    metadata = [] if typed else row_data["metadata"]
 
-    if (type(positions) is not list or len(positions) != count
+    if typed and (type(positions) is not list or len(positions) != count or positions != sorted(set(positions))
+                  or any(type(value) is not int or value < 0 for value in positions)):
+        raise ValueError("행 위치 연결이 올바르지 않습니다.")
+    elif not typed and (type(positions) is not list or len(positions) != count
             or any(type(value) is not int or value < 0 for value in positions)
             or positions != sorted(set(positions)) or type(metadata) is not list or len(metadata) != count
             or any(type(row) is not list or len(row) != len(expected_metadata) or any(type(value) is not str for value in row) for row in metadata)):
@@ -139,7 +167,7 @@ def verify_bundle(directory):
     manifest = read_metadata(manifest_path)
 
     if (set(manifest) != {"schema_version", "files", "payload_bytes", "max_bundle_bytes"}
-            or manifest["schema_version"] != "csv_preparation_handoff_v1"
+            or type(manifest["schema_version"]) is not str or manifest["schema_version"] not in VERSIONS
             or type(manifest["files"]) is not dict or set(manifest["files"]) != set(PAYLOAD_FILES)
             or type(manifest["max_bundle_bytes"]) is not int or not 0 < manifest["max_bundle_bytes"] <= MAX_BUNDLE_BYTES
             or type(manifest["payload_bytes"]) is not int):
@@ -175,17 +203,22 @@ def verify_bundle(directory):
         raise ValueError("출력 특징과 원본 컬럼의 연결 기록이 다릅니다.")
 
     provenance = read_metadata(root / "provenance.json")
-    fields = {"schema_version", "pipeline_name", "pipeline_signature", "candidate_id", "apply_run_id",
-              "apply_plan_id", "preprocessor_sha256", "application_binding", "test_used", "model_trained"}
+    version = VERSIONS[manifest["schema_version"]]
     report = read_metadata(root / "prepared/application.json")
 
-    if (set(provenance) != fields or provenance["schema_version"] != "csv_handoff_provenance_v1"
+    if version["typed"] and (type(provenance.get("source_contract_id")) is not str
+                             or re.fullmatch(r"tabular_source:[0-9a-f]{64}", provenance["source_contract_id"]) is None
+                             or any(type(part) is not dict or part.get("parent_source_id") != provenance["source_contract_id"]
+                                    for part in ((report.get("binding") or {}).get("partitions") or {"": None}).values())):
+        raise ValueError("typed 전달의 출처 ID가 적용 기록과 다릅니다.")
+
+    if (set(provenance) != version["fields"] or provenance["schema_version"] != version["provenance"]
             or provenance["test_used"] is not False or provenance["model_trained"] is not False
             or provenance["preprocessor_sha256"] != manifest["files"]["preprocessor.json"]["sha256"]
             # v2는 적용 검증기가 대조한 구간별 영향 합계(impact)를 더한다. v1 전달 묶음도 그대로 검증한다.
             or set(report) - {"impact"} != {"schema_version", "status", "binding", "partitions", "transformed", "refit", "test_used", "model_trained"}
             or type(report["schema_version"]) is not str
-            or (report["schema_version"], "impact" in report) not in {("preparation_application_v1", False), ("preparation_application_v2", True)}
+            or (report["schema_version"], "impact" in report) not in version["applications"]
             or report["status"] != "applied"
             or report["transformed"] is not True or report["refit"] is not False or report["test_used"] is not False
             or report["model_trained"] is not False or report["binding"] != provenance["application_binding"]
@@ -201,7 +234,7 @@ def verify_bundle(directory):
     observed = {}
 
     for name in ("train", "validation"):
-        observed[name] = _partition(root, name, report["partitions"][name], roles, rules, state, columns)
+        observed[name] = _partition(root, name, report["partitions"][name], roles, rules, state, columns, typed=version["typed"])
 
         part = report["binding"]["partitions"][name]
 
@@ -217,7 +250,91 @@ def verify_bundle(directory):
             raise ValueError("전달 검사 중 파일이 변경되었습니다.")
 
     return {"status": "handoff_verified", "test_used": False, "model_trained": False,
-            "scope": "bundle_integrity_structure_and_row_linkage_only"}
+            "schema_version": manifest["schema_version"], "scope": "bundle_integrity_structure_and_row_linkage_only"}
+
+
+def _snapshot_bundle(root, target):
+    """완료 기록 바이트를 한 번 읽어 고정하고, 그 기록이 가리키는 파일만 해시를 확인하며 비공개 사본으로 복사한다.
+
+    이후 검사와 해석은 모두 이 사본에서 수행하므로 검사한 기록·파일과 소비하는 바이트가 같다.
+    """
+    manifest_path = _path(root / "HANDOFF_COMPLETE.json", directory=False)
+
+    with manifest_path.open("rb") as stream:
+        sealed = stream.read(65537)
+
+    if len(sealed) > 65536:
+        raise ValueError("전달 완료 기록은 64 KiB 이하여야 합니다.")
+
+    (target / "HANDOFF_COMPLETE.json").write_bytes(sealed)
+    manifest = read_metadata(target / "HANDOFF_COMPLETE.json")
+    files = manifest.get("files") if type(manifest) is dict else None
+    limit = manifest.get("max_bundle_bytes") if type(manifest) is dict else None
+
+    if (type(files) is not dict or set(files) != set(PAYLOAD_FILES) or type(limit) is not int or not 0 < limit <= MAX_BUNDLE_BYTES
+            or any(type(item) is not dict or type(item.get("size")) is not int or item["size"] < 1
+                   or type(item.get("sha256")) is not str or re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is None
+                   for item in files.values())):
+        raise ValueError("전달 묶음의 완료 기록이 올바르지 않습니다.")
+
+    # 원본 폴더의 추가·누락 파일도 사본 검사와 같은 기준으로 거부한다.
+    if ({path.name for path in root.iterdir()} != {"prepared", "preprocessor.json", "feature_mapping.json", "provenance.json", "README.md", "HANDOFF_COMPLETE.json"}
+            or {path.name for path in _root(root / "prepared").iterdir()} != set(PREPARED_FILES)):
+        raise ValueError("전달 묶음에 누락되거나 허용되지 않은 파일이 있습니다.")
+
+    (target / "prepared").mkdir()
+    total = 0
+
+    for relative in PAYLOAD_FILES:
+        expected = files[relative]
+        digest = hashlib.sha256()
+        size = 0
+
+        with _path(root / relative, directory=False).open("rb") as source, (target / relative).open("xb") as copy:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                size += len(chunk)
+                total += len(chunk)
+
+                if size > expected["size"] or total > limit:
+                    raise ValueError("전달 파일의 크기가 완료 기록과 다릅니다.")
+
+                digest.update(chunk)
+                copy.write(chunk)
+
+        if size != expected["size"] or digest.hexdigest() != expected["sha256"]:
+            raise ValueError("전달 파일의 크기 또는 해시가 완료 기록과 다릅니다.")
+
+
+def load_handoff_partition(directory, partition):
+    """typed 묶음을 검사한 뒤 특징 표와 원래 자료형의 행 메타데이터를 읽는다. 모델·승인 호출은 없다."""
+    import pandas as pd
+    from .tabular_preparation_worker import load_row_metadata
+
+    if partition not in ("train", "validation"):
+        raise ValueError("Train 또는 Validation 구간만 읽을 수 있습니다.")
+
+    root = _root(directory)
+
+    with tempfile.TemporaryDirectory() as scratch:
+        target = Path(scratch)
+        _snapshot_bundle(root, target)
+
+        if verify_bundle(target)["schema_version"] != "tabular_preparation_handoff_v2":
+            raise ValueError("자료형 보존 v2 전달 묶음이 아닙니다.")
+
+        _, _, _, columns = _saved_state(target)
+
+        # %.17g로 쓴 float64 값을 추가 반올림 없이 같은 값으로 읽는다.
+        with (target / "prepared" / f"{partition}_features.csv").open(encoding="utf-8", newline="") as stream:
+            features = pd.read_csv(stream, dtype="float64", float_precision="round_trip")
+
+        rows = load_row_metadata(target / "prepared" / f"{partition}_rows.json")
+
+    if list(features.columns) != columns or len(features) != len(rows):
+        raise ValueError("특징 표와 행 메타데이터의 연결이 다릅니다.")
+
+    # i번째 특징 행과 i번째 메타데이터 행이 대응한다. 인덱스는 원래 입력의 인덱스다.
+    return features, rows
 
 
 def json_roles(roles):

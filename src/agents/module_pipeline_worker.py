@@ -6,6 +6,9 @@ import sys
 
 def execute_request(request, root):
     """요청·설정·snapshot을 대조하고 검토 필요 시 후속 모듈을 실행하지 않는다."""
+    if request.policy_version == "tabular_diagnostic_worker_v2":
+        from src.agents.tabular_worker_input import execute_diagnostic
+        return execute_diagnostic(request, root)
     import csv
     from dataclasses import asdict
     import hashlib

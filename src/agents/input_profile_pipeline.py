@@ -160,6 +160,15 @@ def bind_input_profile(config, snapshot_directory, snapshot, limits):
     return InputProfileBinding(contract, plan, _canonical(bound), _digest(code_manifest()))
 
 
+def bind_tabular_diagnostic(source, limits):
+    """승인·생성된 v2 표에 프로파일 없는 단일 고정 진단만 결합한다."""
+    from src.preprocessing.input_profile import input_profile_pipeline
+    from .tabular_pipeline import TabularDiagnosticInput, TabularDiagnosticBinding
+    contract = TabularDiagnosticInput(source, limits)
+    bound, plan = bind_input_profile_plan(input_profile_pipeline())
+    return TabularDiagnosticBinding(contract, plan, _canonical(bound), _digest(code_manifest()))
+
+
 class InputProfileTool(ModulePipelineTool):
     """기존 모듈 worker 도구의 예약·운송·커밋을 쓰고 계획 결합과 결과 검증만 진단용으로 바꾼다."""
 

@@ -112,6 +112,33 @@ def create(name, source_path, profile_path, limits, max_input_bytes, *, confirme
             "notice": "기능 검증용 새 분할입니다. 기존 ML 실험·Test는 변경하지 않습니다."}
 
 
+def create_from_tabular(name, source, profile, limits, *, confirmed=False):
+    """승인·생성된 typed 표를 고정한다. 생성만으로 승인·worker는 시작하지 않는다."""
+    from .tabular_pipeline import check_source
+    from .tabular_source_contract import TabularEdaInputContract
+    from .tabular_split import TabularSplitTool
+    from .tabular_worker_input import SPLIT_POLICY
+    if not confirmed:
+        raise ValueError("v2 표형 입력과 새 분할 선택을 명시적으로 확인해야 합니다.")
+    check_source(source, limits)
+    contract = TabularEdaInputContract(source, json.dumps(profile.to_dict(), ensure_ascii=False), limits)
+    contract.check_input()
+    directory = _directory(name, create_parent=True)
+    if directory.exists() or directory.is_symlink():
+        raise ValueError("기존 실행은 덮어쓰지 않습니다.")
+    states = LocalStateStore(directory)
+    tool = TabularSplitTool(states, contract)
+    record = {"contract": contract.to_dict(), "code_id": tool.code_id, "plan_id": tool.plan.plan_id}
+    payload = json.dumps(record, ensure_ascii=False, allow_nan=False)
+    _decode(payload)
+    state = states.create(_current_actor(), policy_version=SPLIT_POLICY)
+    (directory / "selection.json").write_text(payload, encoding="utf-8")
+    (directory / "profile.json").write_text(json.dumps(profile.to_dict(), ensure_ascii=False), encoding="utf-8")
+    ApprovalStore(directory / "approvals.sqlite3")
+    append_event(directory / "events.jsonl", "run_created", "RUN_CREATED", stage=state.current_stage, revision=state.revision)
+    return {"status": "created", "run_dir": str(directory), "worker_started": False}
+
+
 def open_run(name):
     """OS 주체·snapshot·프로파일·소스·전체 계획이 바뀐 실행의 재개를 거부한다."""
     directory = _root(_directory(name))
@@ -125,8 +152,14 @@ def open_run(name):
     if states.load().actor_id != _current_actor():
         raise ValueError("실행을 생성한 OS 계정에서만 접근하세요.")
 
-    contract = EdaInputContract.from_json(json.dumps(record["contract"]))
-    tool = SnapshotSplitTool(states, contract)
+    if record["contract"].get("schema_version") == "tabular_eda_input_v2":
+        from .tabular_source_contract import TabularEdaInputContract
+        from .tabular_split import TabularSplitTool
+        contract = TabularEdaInputContract.from_dict(record["contract"])
+        tool = TabularSplitTool(states, contract)
+    else:
+        contract = EdaInputContract.from_json(json.dumps(record["contract"]))
+        tool = SnapshotSplitTool(states, contract)
     profile = profile_from_dict(_decode(_read_file(directory / "profile.json", 65536).decode("utf-8")))
 
     if profile != contract.profile or record["code_id"] != tool.code_id or record["plan_id"] != tool.plan.plan_id:
@@ -152,7 +185,7 @@ def approve(tool):
     print(json.dumps({
         "stage": state.current_stage, "rules": asdict(tool.contract.profile.split_rules),
         "quality_rules": asdict(tool.contract.profile.quality_rules),
-        "limits": asdict(tool.limits), "snapshot_bytes": tool.contract.snapshot.size_bytes,
+        "limits": asdict(tool.limits), "snapshot_bytes": (tool.contract.source.bundle.size_bytes if tool.plan.policy_version == "tabular_split_v2" else tool.contract.snapshot.size_bytes),
         "lifetime_minutes": 30, "local_reports": local_reports(tool),
         "notice": "현재 한 단계만 승인합니다. 검토 필요는 자동 해제하지 않습니다. 삭제·대치·스케일링·모델 학습·LLM 전송 없음.",
     }, ensure_ascii=False, indent=2))
@@ -202,6 +235,9 @@ def export_scope(tool):
             with path.open("x", encoding="utf-8") as stream:
                 stream.write(payload)
 
+    if tool.plan.policy_version == "tabular_split_v2":
+        return {"split_run_dir": str(tool.states.directory), "split_scope": str(path),
+                "source": tool.contract.source.to_dict(), "profile": str(tool.states.directory / "profile.json")}
     return {"split_run_dir": str(tool.states.directory), "split_scope": str(path),
             "snapshot_dir": tool.contract.snapshot_directory, "profile": str(tool.states.directory / "profile.json")}
 

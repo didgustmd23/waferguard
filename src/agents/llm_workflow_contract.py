@@ -11,7 +11,7 @@ from src.preprocessing.split import SplitRules
 from src.preprocessing.transform import PreparationRules
 from .csv_workflow_proposal_catalogue import workflow_proposal_specifications
 from .llm_proposal_contract import _decode_response
-from .workflow_service_registry import CSV_IDS
+from .workflow_service_registry import CSV_IDS, TABULAR_IDS
 
 
 SCHEMA_VERSION = "llm_workflow_proposal_v1"
@@ -49,13 +49,13 @@ def _settings(value, spec):
         if type(item) is str and len(item) > rule.get("maxLength", 256):
             raise ValueError("공개 workflow 설정 문자열이 너무 깁니다.")
 
-    module_id = spec["module_id"]
-    if module_id == "csv_split_review":
+    role = spec["module_id"].split("_", 1)[1]
+    if role == "split_review":
         SplitRules(**value)
         timestamp = value["timestamp_format"]
         if timestamp is not None and re.fullmatch(r"(?:%[aAbBcdHIjmMpSUwWxXyYZfzGVu%]|[0-9 ./:_+\-TZ])+", timestamp) is None:
             raise ValueError("시간 형식에는 지원하는 날짜 지시자와 구분자만 허용합니다.")
-    elif module_id == "csv_prepare_candidate":
+    elif role == "prepare_candidate":
         PreparationRules(**value)
     return json.loads(_canonical(value))
 
@@ -78,7 +78,7 @@ def validate_workflow_proposal(response, *, allowed_modules, selected_settings, 
     selected_settings는 사용자 명시 값 또는 사용자가 선택한 기본 규칙의 전체 유효값이다.
     이 함수는 자연어 의도·설정 출처·실제 완료 증거를 인증하지 않는다. 로컬 바인딩·검토가 별도로 필요하다.
     """
-    catalogue = workflow_proposal_specifications()
+    catalogue = workflow_proposal_specifications(include_tabular=True)
     specs = {(spec["module_id"], spec["version"]): spec for spec in catalogue}
     if (type(allowed_modules) is not tuple or not allowed_modules
             or any(type(item) is not tuple or len(item) != 2
@@ -119,17 +119,24 @@ def validate_workflow_proposal(response, *, allowed_modules, selected_settings, 
         raise ValueError("CSV workflow는 1~5개 순차 작업만 허용합니다.")
 
     available = {"source.selected_input", *existing_inputs}
-    seen, contracts, first_rank = [], [], None
+    seen, contracts, first_rank, family = [], [], None, None
     for offset, step in enumerate(steps):
         _object(step, ("step_id", "module_id", "version", "inputs", "settings", "depends_on"))
         check_id(step["step_id"])
         key = (step["module_id"], step["version"])
         if any(type(part) is not str for part in key) or key not in allowed_modules:
             raise ValueError("미허용 CSV 작업 또는 버전입니다.")
-        rank = CSV_IDS.index(step["module_id"])
+        # CSV v1과 표형 v2는 서로의 결과를 입력으로 쓰지 않는다. 한 제안은 한 계열의 연속 단계만 허용한다.
+        if family is None:
+            family = CSV_IDS if step["module_id"] in CSV_IDS else TABULAR_IDS
+            if any(outputs[item] not in family for item in existing_inputs):
+                raise ValueError("다른 작업 계열의 기존 선행 입력은 사용할 수 없습니다.")
+        if step["module_id"] not in family:
+            raise ValueError("CSV v1과 표형 v2 작업을 한 workflow에 섞을 수 없습니다.")
+        rank = family.index(step["module_id"])
         if first_rank is None:
             first_rank = rank
-            if any(CSV_IDS.index(outputs[item]) >= first_rank for item in existing_inputs):
+            if any(family.index(outputs[item]) >= first_rank for item in existing_inputs):
                 raise ValueError("새로 생성할 결과와 기존 선행 입력을 혼합할 수 없습니다.")
         if (rank != first_rank + offset or step["step_id"] in seen or step["step_id"] == "source"
                 or type(step["depends_on"]) is not list or step["depends_on"] != seen[-1:]):

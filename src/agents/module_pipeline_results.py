@@ -286,6 +286,29 @@ def read_input_profile_result(directory, plan, columns):
         return None
 
 
+def read_tabular_profile_result(directory, plan, source):
+    """진단 컬럼 순서·행 수·분류를 승인된 canonical 스키마와 대조한다."""
+    from src.preprocessing.tabular_bundle import read_bundle_schema
+    from .tabular_source_contract import TabularSourceContract
+    if type(source) is not TabularSourceContract:
+        raise TypeError("v2 표형 출처 계약이 필요합니다.")
+    source.check_input()
+    schema = read_bundle_schema(source.bundle_directory, expected=source.bundle)
+    result = read_input_profile_result(directory, plan, tuple(item["name"] for item in schema["columns"]))
+    if result is None or result["row_count"] != source.bundle.rows:
+        return None
+    # 부모는 값 통계를 재계산하지 않는다. 명시 dtype에서 확정 가능한 분류만 대조한다.
+    child = _root(directory) / plan.steps[0].step_id
+    rows = _rows(_read_file(child / "input_profile.csv", MAX_FILE_BYTES))[1:]
+    for item, row in zip(schema["columns"], rows):
+        dtype = item["dtype"].get("dtype", "")
+        expected = ("boolean" if dtype in ("bool", "boolean") else "numeric" if dtype.lower().startswith(("int", "uint", "float"))
+                    else "text" if dtype in ("object", "string") else "other" if item["dtype"]["kind"] == "timestamp" else None)
+        if expected is not None and row[1] != expected:
+            return None
+    return result
+
+
 def _same_tail(derived, original, offset_derived, offset_original):
     """두 파일의 지정 위치 이후 바이트가 같은지 스트리밍으로 비교하고 파생 파일 해시를 함께 계산한다."""
     digest = hashlib.sha256()

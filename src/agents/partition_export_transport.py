@@ -10,10 +10,11 @@ from .appcontainer_native import AppContainer
 from .appcontainer_probe import _acl, probe_environment, runtime_files
 from .artifacts import _fingerprint, _root
 from .snapshot_eda_transport import WORKER_FILES as BASE_FILES, CONTROL_FILES as BASE_CONTROLS
+from .module_pipeline_transport import WORKER_FILES as TYPED_FILES
 
 
 ENTRY = "src/agents/partition_export_worker.py"
-WORKER_FILES = tuple(dict.fromkeys(BASE_FILES + (
+WORKER_FILES = tuple(dict.fromkeys(BASE_FILES + TYPED_FILES + (
     "src/agents/snapshot_eda_worker.py", "src/agents/partition_csv.py",
 )))
 CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
@@ -21,6 +22,8 @@ CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     "src/agents/partition_export_transport.py", "src/agents/partition_export_contract.py",
     "src/agents/partition_export_results.py", "src/agents/split_evidence.py",
     "src/agents/partition_input_contract.py",
+    "src/agents/tabular_source_contract.py", "src/agents/tabular_pipeline.py", "src/agents/tabular_split.py",
+    "src/agents/tabular_input_worker.py", "src/agents/snapshot_split_cli.py", "src/agents/snapshot_split.py",
 )))
 
 

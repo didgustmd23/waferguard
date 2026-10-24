@@ -15,7 +15,7 @@ from .llm_workflow_proposal import checked_context, restore_context
 from .preparation_module_plan import validate_preparation_modules
 from .split_evidence import read_metadata
 from .worker_contract import WorkerLimits
-from .workflow_service_registry import workflow_service
+from .workflow_service_registry import service_version, workflow_service
 
 
 def _json(value):
@@ -30,7 +30,9 @@ def binding_code_id():
     """바인더·정적 제안·기존 서비스 연결 변경도 생성 전 재검사한다."""
     files = ("llm_workflow_binding.py", "csv_workflow_binding_evidence.py", "llm_workflow_contract.py",
              "llm_workflow_proposal.py", "csv_workflow_proposal_catalogue.py")
-    return _digest({"csv": csv_code_id(), "files": {
+    from .tabular_workflow_service import code_id as tabular_code_id
+
+    return _digest({"csv": csv_code_id(), "tabular": tabular_code_id(), "files": {
         name: hashlib.sha256((Path(__file__).parent / name).read_bytes()).hexdigest() for name in files}})
 
 
@@ -86,7 +88,7 @@ def bind_workflow_step(proposal, *, allowed_modules, selected_settings, step_id,
     existing = {} if existing_runs is None else existing_runs
     _run_names(completed, [item["step_id"] for item in steps[:index]])
     _run_names(existing, existing_inputs)
-    specs = {item["output"]: item for item in workflow_proposal_specifications()}
+    specs = {item["output"]: item for item in workflow_proposal_specifications(include_tabular=True)}
     references, evidence, lineage = {}, {}, {}
 
     def add(reference, module_id, name, settings=None):
@@ -112,39 +114,45 @@ def bind_workflow_step(proposal, *, allowed_modules, selected_settings, step_id,
     native = service.preview_form(values, limits)
     selected = native.packet["values"]
     module = step["module_id"]
+    # CSV v1·표형 v2는 같은 역할의 연결 규칙을 쓰고, v2 논리 참조에는 접두사가 붙는다.
+    role = module.split("_", 1)[1]
+    prefix = "tabular_" if module.startswith("tabular_") else ""
 
-    if module == "csv_split_review":
+    if role == "split_review":
         profile = profile_from_dict(read_metadata(Path(selected["profile"])))
 
         if profile.split_rules is None or asdict(profile.split_rules) != step["settings"]:
             raise ValueError("분할 프로파일 규칙이 검토한 제안과 다릅니다.")
     else:
         connections = {
-            "csv_partition_export": {"split_name": "split.confirmed"},
-            "csv_prepare_candidate": {"split_name": "split.confirmed", "export_name": "export.development"},
-            "csv_prepare_apply": {"pipeline_name": "candidate.saved"},
-            "csv_local_handoff": {"pipeline_name": "prepared.saved"},
+            "partition_export": {"split_name": "split.confirmed"},
+            "prepare_candidate": {"split_name": "split.confirmed", "export_name": "export.development"},
+            "prepare_apply": {"pipeline_name": "candidate.saved"},
+            "local_handoff": {"pipeline_name": "prepared.saved"},
         }
 
-        for field, reference in connections[module].items():
-            if selected[field] != references.get(reference):
+        for field, reference in connections[role].items():
+            if selected[field] != references.get(prefix + reference):
                 raise ValueError("생성 입력이 제안에 결합한 정확한 선행 작업과 다릅니다.")
 
         parents = native.packet["parents"]
         expected = {
-            "csv_partition_export": {"split": lineage.get("split")},
-            "csv_prepare_candidate": {"split": lineage.get("split"), "train": lineage.get("train")},
-            "csv_prepare_apply": {"candidate": lineage.get("candidate")},
-            "csv_local_handoff": {"candidate": lineage.get("candidate")},
-        }[module]
+            "partition_export": {"split": lineage.get("split")},
+            "prepare_candidate": {"split": lineage.get("split"), "train": lineage.get("train")},
+            "prepare_apply": {"candidate": lineage.get("candidate")},
+            "local_handoff": {"candidate": lineage.get("candidate")},
+        }[role]
+        if prefix:
+            # v2는 모든 선행 결과와 새 생성 입력이 같은 표형 출처 ID에 묶여야 한다.
+            expected["source"] = lineage.get("source")
 
         if any(parents.get(key) != identity or identity is None for key, identity in expected.items()):
             raise ValueError("생성 미리보기의 실제 선행 증거가 결합한 완료 기록과 다릅니다.")
 
-        if module == "csv_local_handoff" and parents["application"]["sha256"] != lineage.get("prepared"):
+        if role == "local_handoff" and parents["application"]["sha256"] != lineage.get("prepared"):
             raise ValueError("전달 대상의 적용 완료 증거가 변경됐습니다.")
 
-        if module == "csv_prepare_candidate":
+        if role == "prepare_candidate":
             plan = validate_preparation_modules(read_metadata(Path(selected["pipeline"])))
 
             if json.loads(plan.rules_json) != step["settings"]:
@@ -174,7 +182,7 @@ def create_bound_step(binding, *, confirmed=False):
     if current != binding:
         raise ValueError("제안·입력·완료 증거·후보·코드·자원이 미리보기 이후 변경됐습니다.")
 
-    service = workflow_service(packet["module_id"], "1.0.0")
+    service = workflow_service(packet["module_id"], service_version(packet["module_id"]))
     result = service.create(CsvCreationPreview(_json(packet["creation"])), confirmed=True)
     return {**result, "binding_id": binding.binding_id, "plan_signature": packet["plan_signature"],
             "step_id": packet["step_id"], "execution_approval_issued": False, "local_only": True}

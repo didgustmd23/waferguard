@@ -15,6 +15,9 @@ from .worker_paths import _path
 
 def read_partition_export(directory, contract, *, committed=False):
     """예상 구간·출처·배정·역할·바이트·CSV 구조를 확인한다. 추출 정답의 독립 인증은 아니다."""
+    from .partition_export_contract import TabularExportContract
+    if type(contract) is TabularExportContract:
+        return read_tabular_export(directory, contract, committed=committed)
     if not isinstance(contract, PartitionExportContract):
         raise TypeError("검증할 PartitionExportContract가 필요합니다.")
 
@@ -107,3 +110,45 @@ def read_partition_export(directory, contract, *, committed=False):
         return None
     finally:
         csv.field_size_limit(old_field_limit)
+
+
+def read_tabular_export(directory, contract, *, committed=False):
+    """v2 구간의 스키마·내용 지문·원래 행 위치·생성 계보를 대조한다."""
+    from src.preprocessing.tabular_bundle import BundleRef, inspect_bundle, read_bundle_schema, read_bundle_provenance, iter_bundle_rows
+    try:
+        contract.check()
+        root = _root(directory)
+        names = {"partition_exports.json", "train", "validation"} | ({"AGENT_COMPLETE.json"} if committed else set())
+        if {p.name for p in root.iterdir()} != names:
+            return None
+        receipt = read_metadata(root / "partition_exports.json")
+        source = contract.source.source
+        if (set(receipt) != {"schema_version", "source_id", "split_evidence_id", "roles", "partitions"}
+                or receipt["schema_version"] != "partition_exports_v2" or receipt["source_id"] != source.source_id
+                or receipt["split_evidence_id"] != contract.split.signature
+                or _digest(receipt["roles"]) != _digest(asdict(contract.source.profile.roles))
+                or type(receipt["partitions"]) is not dict or set(receipt["partitions"]) != {"train", "validation"}):
+            return None
+        schema = read_bundle_schema(source.bundle_directory, expected=source.bundle)
+        for name in ("train", "validation"):
+            record = receipt["partitions"][name]
+            positions = contract.split.positions(name)
+            if type(record) is not dict or set(record) != {"bundle", "row_positions_sha256"}:
+                return None
+            reference = BundleRef.from_dict(record["bundle"])
+            if reference.rows != len(positions) or reference.columns != source.bundle.columns or record["row_positions_sha256"] != _digest(list(positions)):
+                return None
+            inspect_bundle(root / name, expected=reference, max_bytes=contract.max_partition_bytes)
+            actual_schema = read_bundle_schema(root / name, expected=reference)
+            if actual_schema["columns"] != schema["columns"] or actual_schema["columns_name"] != schema["columns_name"]:
+                return None
+            if tuple(row[0] for row in iter_bundle_rows(root / name, expected=reference)) != positions:
+                return None
+            provenance = read_bundle_provenance(root / name, expected=reference)
+            if provenance != {"parent_source_id": source.source_id, "split_signature": contract.split.signature,
+                              "row_positions_sha256": record["row_positions_sha256"]}:
+                return None
+        contract.check()
+        return receipt
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError, OverflowError, RecursionError):
+        return None

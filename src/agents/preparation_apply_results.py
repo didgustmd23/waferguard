@@ -29,7 +29,8 @@ def read_application(directory, contract, code_id):
     old_limit = csv.field_size_limit(1024 * 1024)
 
     try:
-        contract.check()
+        # 후보·두 구간을 한 번 검사하고 같은 결과로 기대 binding과 Validation 계약을 얻는다. 끝에서 다시 검사한다.
+        binding, validation = contract.verified_packet(code_id)
         root = _root(directory)
         expected_files = {"train_features.csv", "validation_features.csv", "train_rows.json", "validation_rows.json", "application.json", "application.md"}
 
@@ -39,18 +40,20 @@ def read_application(directory, contract, code_id):
         report = json.loads(_read_file(root / "application.json", 65536).decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_invalid)
         expected_fields = {"schema_version", "status", "binding", "partitions", "transformed", "refit", "test_used", "model_trained"}
         # v2는 구간별 실제 적용 영향 합계를 더한다. v1(영향 집계 이전 적용)은 이전 코드로 실행한 기록일 때만 받는다.
-        versioned = type(report) is dict and report.get("schema_version") == "preparation_application_v2"
+        typed = contract.schema_version == "preparation_apply_v2"
+        impact_version = "preparation_application_v3" if typed else "preparation_application_v2"
+        versioned = type(report) is dict and report.get("schema_version") == impact_version
 
         if versioned:
             expected_fields = expected_fields | {"impact"}
-        elif code_id == _current_code_id():
+        elif typed or code_id == _current_code_id():
             return None
 
         if (type(report) is not dict or set(report) != expected_fields
-                or report["schema_version"] != ("preparation_application_v2" if versioned else "preparation_application_v1")
+                or report["schema_version"] != (impact_version if versioned else "preparation_application_v1")
                 or report["status"] != "applied" or report["transformed"] is not True or report["refit"] is not False
                 or report["test_used"] is not False or report["model_trained"] is not False
-                or report["binding"] != json.loads(json.dumps(contract.packet(code_id)))
+                or report["binding"] != json.loads(json.dumps(binding))
                 or type(report["partitions"]) is not dict or set(report["partitions"]) != {"train", "validation"}
                 or (versioned and (type(report["impact"]) is not dict or set(report["impact"]) != {"train", "validation"}))):
             return None
@@ -63,7 +66,7 @@ def read_application(directory, contract, code_id):
         roles = contract.train.roles
         metadata_columns = list(dict.fromkeys(value for value in (roles.target, roles.group, roles.timestamp, *roles.identifiers) if value is not None))
 
-        for name, part in (("train", contract.train), ("validation", contract.validation)):
+        for name, part in (("train", contract.train), ("validation", validation)):
             record = report["partitions"][name]
             count = len(part.row_positions)
 
@@ -78,7 +81,13 @@ def read_application(directory, contract, code_id):
 
             rows = read_metadata(row_path)
 
-            if (set(rows) != {"row_positions", "metadata_columns", "metadata"} or rows["row_positions"] != list(part.row_positions)
+            if typed:
+                from .tabular_preparation_worker import row_metadata, load_row_metadata
+                from src.preprocessing.split import _digest
+                if _digest(rows) != _digest(row_metadata(part.bundle_directory, part.bundle, roles)):
+                    return None
+                load_row_metadata(row_path)
+            elif (set(rows) != {"row_positions", "metadata_columns", "metadata"} or rows["row_positions"] != list(part.row_positions)
                     or any(type(value) is not int for value in rows["row_positions"])
                     or rows["metadata_columns"] != metadata_columns or type(rows["metadata"]) is not list or len(rows["metadata"]) != count
                     or any(type(row) is not list or len(row) != len(metadata_columns) or any(type(value) is not str for value in row) for row in rows["metadata"])):
@@ -120,11 +129,14 @@ def read_application(directory, contract, code_id):
                           or not _matches_candidate(contract.candidate.directory / "candidate.json", report["impact"]["train"])):
             return None
 
-            # 검사 중 파일 변경도 완료로 인정하지 않는다.
+        # 검사 중 파일 변경도 완료로 인정하지 않는다.
+        for name in ("train", "validation"):
+            record = report["partitions"][name]
+            features, row_path = root / f"{name}_features.csv", root / f"{name}_rows.json"
             if not _file_record(features, record["features"], contract.max_partition_bytes) or not _file_record(row_path, record["row_contract"], min(contract.max_partition_bytes, 8 * 1024 * 1024)):
                 return None
 
-        if _read_file(root / "application.md", 65536).decode("utf-8") != application_markdown():
+        if _read_file(root / "application.md", 65536).decode("utf-8") != application_markdown(typed=typed):
             return None
 
         contract.check()
@@ -164,7 +176,7 @@ def _matches_candidate(path, totals):
 
     candidate = read_metadata(path)
 
-    if candidate.get("schema_version") != "preparation_candidate_report_v2":
+    if candidate.get("schema_version") not in ("preparation_candidate_report_v2", "preparation_candidate_report_v3"):
         return candidate.get("schema_version") == "preparation_candidate_report_v1"
 
     return impact_totals(candidate["impact"]) == totals

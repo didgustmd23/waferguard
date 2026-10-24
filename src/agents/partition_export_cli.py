@@ -112,6 +112,44 @@ def create(name, split_run, split_scope, snapshot_directory, profile_path, limit
     return {"status": "created", "run_dir": str(directory), "worker_started": False, "partitions": ["train", "validation"]}
 
 
+def create_from_tabular(name, split_run, source, limits, max_partition_bytes, *, confirmed=False):
+    """v2 확정 분할과 생성 출처를 결합해 새 내보내기 실행만 만든다."""
+    from . import snapshot_split_cli
+    from .tabular_pipeline import check_source
+    from .tabular_source_contract import TabularEdaInputContract
+    from .tabular_split import TabularExportTool
+    from .partition_export_contract import TabularExportContract
+    from .tabular_worker_input import EXPORT_POLICY
+    if not confirmed:
+        raise ValueError("확정 분할·v2 표형 출처 선택을 명시적으로 확인해야 합니다.")
+    check_source(source, limits)
+    split_tool = snapshot_split_cli.open_run(split_run)
+    if split_tool.plan.policy_version != "tabular_split_v2":
+        raise ValueError("v2 분할 실행만 내보낼 수 있습니다.")
+    scope = snapshot_split_cli.executor(split_tool).scope_for("commit_split")
+    if scope.actor_id != _current_actor():
+        raise ValueError("분할을 승인한 계정에서만 생성할 수 있습니다.")
+    split = read_confirmed_split(split_tool.states.directory, scope)
+    contract_source = TabularEdaInputContract(source, json.dumps(split_tool.contract.profile.to_dict(), ensure_ascii=False), limits)
+    contract = TabularExportContract(split, contract_source, max_partition_bytes)
+    contract.check()
+    directory = _directory(name, create_parent=True)
+    if directory.exists() or directory.is_symlink():
+        raise ValueError("기존 실행을 덮어쓰지 않습니다.")
+    states = LocalStateStore(directory)
+    tool = TabularExportTool(states, contract)
+    record = {"split_run": split.artifact.run_directory, "split_scope": asdict(scope), "split_evidence_id": split.signature,
+              "source": contract_source.to_dict(), "max_partition_bytes": max_partition_bytes,
+              "code_id": tool.code_id, "plan_id": tool.plan.plan_id}
+    payload = json.dumps(record, ensure_ascii=False, allow_nan=False)
+    _decode(payload)
+    state = states.create(_current_actor(), policy_version=EXPORT_POLICY)
+    (directory / "selection.json").write_text(payload, encoding="utf-8")
+    ApprovalStore(directory / "approvals.sqlite3")
+    append_event(directory / "events.jsonl", "run_created", "RUN_CREATED", stage=state.current_stage, revision=state.revision)
+    return {"status": "created", "run_dir": str(directory), "worker_started": False, "partitions": ["train", "validation"]}
+
+
 def open_run(name):
     """저장된 선택과 현재 증거를 다시 결합한다. 변경된 코드는 새 실행·승인이 필요하다."""
     directory = _root(_directory(name))
@@ -128,8 +166,15 @@ def open_run(name):
         raise ValueError("실행과 분할을 승인한 OS 계정에서만 접근할 수 있습니다.")
 
     split = read_confirmed_split(record["split_run"], scope)
-    source = EdaInputContract.from_json(json.dumps(record["source"]))
-    tool = PartitionExportTool(states, PartitionExportContract(split, source, record["max_partition_bytes"]))
+    if record["source"].get("schema_version") == "tabular_eda_input_v2":
+        from .tabular_source_contract import TabularEdaInputContract
+        from .tabular_split import TabularExportTool
+        from .partition_export_contract import TabularExportContract
+        source = TabularEdaInputContract.from_dict(record["source"])
+        tool = TabularExportTool(states, TabularExportContract(split, source, record["max_partition_bytes"]))
+    else:
+        source = EdaInputContract.from_json(json.dumps(record["source"]))
+        tool = PartitionExportTool(states, PartitionExportContract(split, source, record["max_partition_bytes"]))
 
     if record["split_evidence_id"] != split.signature or record["code_id"] != tool.code_id or record["plan_id"] != tool.plan.plan_id:
         raise ValueError("분할·코드·계획이 변경되었습니다. 새 실행과 승인이 필요합니다.")
@@ -153,7 +198,7 @@ def approve(tool):
     token = "EXPORT-" + secrets.token_hex(4).upper()
     print(json.dumps({
         "partitions": ["train", "validation"], "split_evidence_id": tool.contract.split.signature,
-        "snapshot_bytes": tool.contract.source.snapshot.size_bytes,
+        "snapshot_bytes": (tool.contract.source.source.bundle.size_bytes if tool.plan.policy_version == "partition_export_v2" else tool.contract.source.snapshot.size_bytes),
         "max_partition_bytes": tool.contract.max_partition_bytes, "limits": asdict(tool.limits),
         "lifetime_minutes": 30,
         "effect": "새 AppContainer+Job에서 확정 행만 내보내고 부모 검증 후 커밋",
@@ -191,7 +236,15 @@ def status(tool):
             raise ValueError("완료 파일 또는 worker 운송 증거가 현재 계약과 다릅니다.")
 
         for name in ("train", "validation"):
-            bind_partition_input(tool.contract.split, export, name, tool.contract.source.profile.roles).check()
+            if tool.plan.policy_version == "partition_export_v2":
+                from .tabular_source_contract import TabularPartitionInputContract
+                from src.preprocessing.tabular_bundle import BundleRef
+                receipt = read_metadata(export.directory / "partition_exports.json")
+                TabularPartitionInputContract(tool.contract.split, export, name,
+                    BundleRef.from_dict(receipt["partitions"][name]["bundle"]), json.dumps(asdict(tool.contract.source.profile.roles)),
+                    tool.contract.source.source.source_id).check()
+            else:
+                bind_partition_input(tool.contract.split, export, name, tool.contract.source.profile.roles).check()
 
         result.update(partition_contracts="passed", local_result_directory=str(export.directory))
 

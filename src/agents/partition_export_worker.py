@@ -29,6 +29,9 @@ class BoundedCsvWriter:
 
 def execute_request(request, root):
     """고정 경로·원본·분할·설정을 대조하고 Train·Validation만 새 파일에 기록한다."""
+    if request.policy_version == "partition_export_v2":
+        from src.agents.tabular_worker_input import execute_export
+        return execute_export(request, root)
     from contextlib import ExitStack
     from dataclasses import asdict
     import csv
