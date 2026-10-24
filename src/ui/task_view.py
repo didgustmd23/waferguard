@@ -17,13 +17,15 @@ from .runtime_notice import render_permissions, require_execution_permissions
 from .task_forms import form_for
 
 
-PHASE_LABELS = {"created": "작업 준비", "diagnosing": "입력 확인·진단 중", "awaiting_review": "계획 확인 필요",
+PHASE_LABELS = {"created": "작업 준비", "diagnosing": "입력 확인·진단 중", "awaiting_input": "입력 해석 선택 필요",
+                "awaiting_review": "계획 확인 필요",
                 "processing": "처리 단계 진행 중", "awaiting_apply": "적용 확인 필요",
                 "applying": "적용·전달 중", "completed": "완료", "needs_attention": "확인이 필요한 문제"}
 DETAIL_LABELS = {"duplicated_names": "중복된 이름 수", "affected_columns": "영향받는 컬럼 수"}
 DIAGNOSTIC_LABELS = {"INPUT_INVALID": "입력 검증 실패", "ACCESS_DENIED": "파일 접근 거부", "IO_FAILED": "파일 입출력 실패",
                      "RUNTIME_FAILED": "실행 중 오류", "PASSED": "통과"}
 NO_ANSWER = "(답하지 않음)"
+INPUT_STATUS = {"inspecting": "검사 중", "waiting": "선택 대기", "materializing": "작업용 표 생성 중", "materialized": "완료"}
 MODEL_LIMITATION_NOTICE = (
     "현재 로컬 모델의 한계: 확인한 사례에서 진단 수치 해석, 라벨·그룹 구분, 전처리 권장 이유에 오류가 관찰됐습니다. "
     "응답 형식 검사를 통과해도 내용의 타당성을 보장하지 않습니다. 계산 결과와 모델 의견을 구분해 확인하세요. "
@@ -117,7 +119,8 @@ def _render_request(st):
     settings = st.session_state["ui_settings"]
     limits, model = settings["limits"], settings["model"]
     permission_ok = render_permissions(st)
-    specs = task_adapters.input_specs()
+    # 새 작업은 현재 세대 유형(CSV→v2 표형, NPZ→배열)으로만 만든다. 저장된 작업은 기록의 유형으로 연다.
+    specs = task_adapters.input_specs(generation="current")
 
     with st.form("task_request_form"):
         # 등록된 입력 형식을 모두 안내한다. 실제 유형은 제출 뒤 선택 파일로 서버가 판별하고, 동의 내용도 그 유형으로 고정한다.
@@ -145,7 +148,7 @@ def _render_request(st):
         return
 
     try:
-        task = orchestrator.start_task(goal, source, limits, model)
+        task = orchestrator.start_task(goal, source, limits, model, input_generation="current")
     except Exception:
         st.error("작업을 시작하지 못했습니다. 지원하는 입력 파일 경로와 목표 문장(비어 있지 않게)을 확인하세요.")
         return
@@ -167,6 +170,10 @@ def _render_progress(st, task):
     st.text("현재: " + PHASE_LABELS[task["phase"]])
     diagnostic = (task["diagnostic"] or {}).get("status")
     lines = ["입력 진단: " + ("완료" if diagnostic == "completed" else "대기" if diagnostic is None else "진행 중")]
+    selection = task.get("input_selection")
+
+    if selection:
+        lines.insert(0, "입력 해석: " + INPUT_STATUS.get(selection.get("status"), "확인 필요"))
 
     for step, label in task_adapters.adapter(task["kind"]).STEP_LABELS.items():
         status = task["steps"].get(step, {}).get("status")
@@ -178,7 +185,9 @@ def _render_progress(st, task):
 def _render_decision(st, task):
     phase, problem = task["phase"], task.get("problem") or {}
 
-    if phase == "awaiting_review" or orchestrator.revisable(task):
+    if phase == "awaiting_input":
+        _render_input(st, task)
+    elif phase == "awaiting_review" or orchestrator.revisable(task):
         _render_review(st, task)
     elif phase == "awaiting_apply":
         if st.session_state.get("task_revise_" + task["task_id"]) == task["attempt"] and orchestrator.apply_revisable(task):
@@ -213,6 +222,76 @@ def _render_decision(st, task):
     elif phase in {"diagnosing", "processing", "applying"}:
         st.warning("이전 진행이 끝나지 않은 채 중단되었습니다. 자동으로 다시 실행하지 않습니다. 결과 확인 후 새 작업으로 시작하세요.")
         st.button("새 작업 시작", key="task_new_after_interrupt", on_click=_new_task, args=(st,))
+
+
+def _render_input(st, task):
+    """입력 해석 대기. 검사 사유(고정 코드·개수)와 선택지를 보이고, 제출할 때만 새 결정 A로 검사·생성을 이어 간다."""
+    st.subheader("필요한 결정 — 입력 해석")
+    adapter = task_adapters.adapter(task["kind"])
+    view = adapter.input_review(task)
+    st.warning(view["message"])
+
+    for key, value in view["detail"].items():
+        st.text("확인된 사유: " + DETAIL_LABELS.get(key, "개수") + " " + str(value))
+
+    # 사용자가 실제로 본 것은 직전 실행에서 그린 대기 상태다. 그 revision·검사 ID로 서버와 대조해 오래된 제출을 거부한다.
+    seen_key = "task_input_seen_" + task["task_id"]
+    seen = st.session_state.get(seen_key)
+    st.session_state[seen_key] = (task["revision"], view["inspection_id"])
+    st.text("다음 행동: 아래에서 처리 방법을 고르거나, 파일의 컬럼명을 고친 뒤 새 작업으로 시작하세요.")
+
+    with st.form("task_input_form"):
+        selection = {}
+
+        for number, (name, choice) in enumerate(view["choices"].items(), start=1):
+            values = list(choice["options"])
+            labels = [choice["options"][value] for value in values]
+            current = values.index(choice["current"]) if choice["current"] in values else None
+            picked = st.selectbox(choice["label"], labels, index=current, key=f"task_input_{number}", placeholder="처리 방법 선택")
+
+            if picked is not None:
+                selection[name] = values[labels.index(picked)]
+
+        st.info(view["consent"])
+        agreed = st.checkbox("위 범위에 동의합니다", key="task_input_consent")
+        submitted = st.form_submit_button("고른 해석으로 진행", type="primary")
+
+    st.button("새 작업 시작", key="task_new_after_input", on_click=_new_task, args=(st,))
+
+    if not submitted:
+        return
+
+    if not agreed:
+        st.warning("동의 범위를 확인하고 체크해 주세요.")
+        return
+
+    if not require_execution_permissions(st):
+        return
+
+    from datetime import datetime, timezone
+
+    expires = (task["consents"].get("A") or {}).get("expires_at")
+
+    if expires is None or datetime.fromisoformat(expires) <= datetime.now(timezone.utc):
+        st.error("결정 A 동의가 만료되어 진행하지 않았습니다. 작업은 그대로입니다. 다음 행동: 새 작업으로 다시 시작하세요.")
+        return
+
+    with show_operation_progress(st, "고른 해석으로 입력을 다시 검사하고 작업용 표·진단·로컬 모델 권장안을 준비하고 있습니다."):
+        try:
+            if seen is None:
+                raise ValueError("확인한 대기 상태가 없습니다.")
+
+            orchestrator.resume_input(task["task_id"], selection, expected_revision=seen[0], expected_inspection_id=seen[1])
+        except ValueError:
+            st.error("제출을 받지 않았습니다. 새 동의·실행은 만들지 않았고 작업은 그대로입니다.")
+            st.text("원인: 화면이 오래됐거나(다른 탭에서 이미 진행), 고른 해석이 지금과 같거나, 이 검사 사유로 고를 수 없는 해석입니다. "
+                    "다음 행동: 화면을 새로 고쳐 현재 상태를 확인한 뒤 처리 방법을 다시 고르세요.")
+            return
+        except Exception:
+            st.error("입력 준비를 시작하지 못했습니다. 작업 상태를 확인하세요. 자동 재시도하지 않습니다.")
+            return
+
+    st.rerun()
 
 
 def _render_findings(st, adapter, problem):

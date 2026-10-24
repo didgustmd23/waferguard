@@ -28,6 +28,9 @@ from .worker_paths import _path
 
 
 SELECTION_VERSION = "pipeline_approval_selection_v1"
+# 승인·생성된 v2 표의 고정 진단. 원시 snapshot 대신 생성 출처 계약을 저장하고 열 때마다 다시 검증한다.
+TABULAR_SELECTION_VERSION = "pipeline_approval_selection_v2"
+TABULAR_SELECTION_FIELDS = {"schema_version", "run_id", "actor_id", "source", "limits", "binding", "execution_plan"}
 MAX_SELECTION_BYTES = 256 * 1024
 
 def _directory(name, *, create_parent=False):
@@ -68,6 +71,13 @@ def _limits(value):
 
 def _build_binding(selection):
     """선택 기록의 입력·프로파일·계획을 다시 검증해 승인 바인딩을 만든다."""
+    if selection.get("schema_version") == TABULAR_SELECTION_VERSION:
+        from .input_profile_pipeline import bind_tabular_diagnostic
+        from .tabular_source_contract import TabularSourceContract
+
+        # 생성 승인·커밋·묶음 해시를 출처 계약이 다시 확인한다. 고정 진단 계획 외에는 결합하지 않는다.
+        return bind_tabular_diagnostic(TabularSourceContract.from_dict(selection["source"]), _limits(selection["limits"]))
+
     snapshot_directory = selection["snapshot_directory"]
     snapshot = Snapshot(**selection["snapshot"])
 
@@ -128,6 +138,19 @@ def create_input_profile(name, snapshot_directory, limits, *, confirmed=False, h
     return _save_run(name, snapshot_dir, snapshot, None, pipeline, limits, binding)
 
 
+def create_tabular_diagnostic(name, source, limits, *, confirmed=False):
+    """승인·생성된 v2 표에 고정 입력 진단만 결합한 승인 run을 저장한다. worker는 시작하지 않는다."""
+    from .input_profile_pipeline import bind_tabular_diagnostic
+
+    if not confirmed:
+        raise ValueError("생성된 표의 입력 진단 선택을 명시적으로 확인해야 합니다.")
+
+    binding = bind_tabular_diagnostic(source, limits)
+    return _save_selection(name, binding, lambda run_id, actor_id: {
+        "schema_version": TABULAR_SELECTION_VERSION, "run_id": run_id, "actor_id": actor_id,
+        "source": _json_value(source.to_dict()), "limits": asdict(limits)})
+
+
 def _read_snapshot(snapshot_directory):
     """선택한 snapshot 폴더의 메타데이터를 고정 필드로 읽는다."""
     snapshot_dir = _path(Path(snapshot_directory).absolute(), directory=True)
@@ -145,6 +168,20 @@ def _read_snapshot(snapshot_directory):
 
 def _save_run(name, snapshot_dir, snapshot, profile, pipeline, limits, binding):
     """검증된 바인딩을 새 run 폴더에 저장한다. 기존 기록은 덮어쓰지 않는다."""
+    return _save_selection(name, binding, lambda run_id, actor_id: {
+        "schema_version": SELECTION_VERSION,
+        "run_id": run_id,
+        "actor_id": actor_id,
+        "snapshot_directory": str(snapshot_dir),
+        "snapshot": asdict(snapshot),
+        "profile": profile,
+        "pipeline": pipeline,
+        "limits": asdict(limits),
+    })
+
+
+def _save_selection(name, binding, fields):
+    """선택 기록 형식별 입력 필드에 바인딩·실행 계획을 더해 새 run 폴더에 저장한다."""
     directory = _directory(name, create_parent=True)
 
     if directory.exists() or directory.is_symlink():
@@ -156,18 +193,8 @@ def _save_run(name, snapshot_dir, snapshot, profile, pipeline, limits, binding):
     states = LocalStateStore(directory)
     state = states.create(actor_id, policy_version=binding.policy_version)
     run = open_pipeline_approval_run(directory, binding)
-    selection = {
-        "schema_version": SELECTION_VERSION,
-        "run_id": state.run_id,
-        "actor_id": actor_id,
-        "snapshot_directory": str(snapshot_dir),
-        "snapshot": asdict(snapshot),
-        "profile": profile,
-        "pipeline": pipeline,
-        "limits": asdict(limits),
-        "binding": _json_value(binding.to_dict()),
-        "execution_plan": _json_value(run.plan.to_dict()),
-    }
+    selection = dict(fields(state.run_id, actor_id), binding=_json_value(binding.to_dict()),
+                     execution_plan=_json_value(run.plan.to_dict()))
     payload = json.dumps(selection, ensure_ascii=False, sort_keys=True, allow_nan=False)
 
     if len(payload.encode("utf-8")) > MAX_SELECTION_BYTES:
@@ -200,7 +227,9 @@ def _open(name):
         "profile", "pipeline", "limits", "binding", "execution_plan",
     }
 
-    if type(selection) is not dict or set(selection) != expected_fields or selection["schema_version"] != SELECTION_VERSION:
+    fields = {SELECTION_VERSION: expected_fields, TABULAR_SELECTION_VERSION: TABULAR_SELECTION_FIELDS}
+
+    if type(selection) is not dict or set(selection) != fields.get(selection.get("schema_version")):
         raise ValueError("승인 선택 기록 형식이 올바르지 않습니다.")
 
     states = LocalStateStore(directory)

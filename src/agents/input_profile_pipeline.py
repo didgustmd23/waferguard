@@ -254,9 +254,13 @@ def committed_diagnostic(run, module_id):
     """완료·커밋된 진단 run의 (도구, 출력 폴더)를 현재 코드·승인 기록·부모 검증기로 다시 확인해 반환한다."""
     from .artifacts import check_artifacts
 
-    tool = run.pipeline_execution.worker_tool
+    from .tabular_pipeline import ADAPTER_ID as TABULAR_ADAPTER_ID, TabularProfileTool
 
-    if run.binding.adapter_id != ADAPTER_ID or not isinstance(tool, InputProfileTool):
+    tool = run.pipeline_execution.worker_tool
+    # CSV v1 진단과 생성된 v2 표 진단만 받는다. 바인딩 종류와 도구 종류가 서로 맞아야 한다.
+    tools = {ADAPTER_ID: InputProfileTool, TABULAR_ADAPTER_ID: TabularProfileTool}
+
+    if run.binding.adapter_id not in tools or type(tool) is not tools[run.binding.adapter_id]:
         raise ValueError("입력 진단 바인딩이 아닙니다.")
 
     if run.states.load().status != "completed":
@@ -288,13 +292,30 @@ def _profile_value(name, text):
 
 def read_profile_table(tool, output):
     """committed_diagnostic이 확인한 출력에서 요약과 컬럼별 표(자료형 변환 포함)를 읽는다."""
-    from .eda_result_validation import _rows
     from .isolated_eda import _read_file
     from .module_pipeline_results import MAX_FILE_BYTES
 
     child = _root(output / "pipeline" / tool.module_plan.steps[0].step_id)
-    rows = _rows(_read_file(child / "input_profile.csv", MAX_FILE_BYTES))
-    summary = _decode(_read_file(child / "input_summary.json", 65536).decode("utf-8"))
+    return parse_profile_table(_read_file(child / "input_profile.csv", MAX_FILE_BYTES),
+                               _read_file(child / "input_summary.json", 65536))
+
+
+def profile_table_files(tool):
+    """진단 출력 폴더 기준의 요약·컬럼 표 상대 경로. 완료 표식 결합 읽기에 쓴다."""
+    step = tool.module_plan.steps[0].step_id
+    return "pipeline/" + step + "/input_profile.csv", "pipeline/" + step + "/input_summary.json"
+
+
+def parse_profile_table(table, summary):
+    """이미 읽은 진단 표·요약 바이트를 해석한다. 파일을 다시 열지 않는다."""
+    from .eda_result_validation import _rows
+    from .module_pipeline_results import MAX_FILE_BYTES
+
+    if len(table) > MAX_FILE_BYTES or len(summary) > 65536:
+        raise ValueError("진단 결과 파일 크기 제한을 넘었습니다.")
+
+    rows = _rows(table)
+    summary = _decode(summary.decode("utf-8"))
 
     if tuple(rows[0]) != PROFILE_COLUMNS:
         raise ValueError("진단 결과 표 형식이 다릅니다.")

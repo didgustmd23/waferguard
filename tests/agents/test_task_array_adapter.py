@@ -163,5 +163,41 @@ class ArrayScreenTest(unittest.TestCase):
         self.assertEqual(task_store.load_task(task["task_id"], root=self.store)["phase"], "completed")
 
 
+
+class CommonBoundaryTest(unittest.TestCase):
+    """공통 조정기·화면이 유형별 해석·계산을 모르고 등록부와 어댑터 hook으로만 진행하는지 확인한다."""
+
+    HOOKS = ("accepts", "consent_a_content", "consent_a_text", "diagnose", "base_plan", "plan_fields", "validate_plan", "questions",
+             "prepare", "create_step", "service", "check_lineage", "review", "review_signature", "report_facts", "images",
+             "consent_c_content", "consent_d_content", "expected", "approval_stages", "blocked_problem", "failure_hint")
+
+    def test_registered_adapters_provide_common_hooks_and_input_resume_hooks_come_together(self):
+        for kind, item in task_adapters.ADAPTERS.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(item.KIND, kind)
+                self.assertFalse([name for name in self.HOOKS if not callable(getattr(item, name, None))])
+                resume = [callable(getattr(item, name, None)) for name in ("check_input_selection", "input_consent_content",
+                                                                           "resume_input", "input_review")]
+                self.assertIn(resume, ([True] * 4, [False] * 4))
+
+    def test_each_generation_maps_one_format_to_one_kind_and_rejects_unknown_generations(self):
+        for generation in ("legacy", "current"):
+            kinds = [item["kind_id"] for item in task_adapters.input_specs(generation=generation)]
+            for name in ("input.csv", "input.npz"):
+                with self.subTest(generation=generation, name=name):
+                    self.assertEqual(sum(task_adapters.adapter(kind).accepts(Path(name)) for kind in kinds), 1)
+        for generation in ("", "v2", None, ["current"]):
+            with self.subTest(generation=generation), self.assertRaises(ValueError):
+                task_adapters.input_specs(generation=generation)
+
+    def test_common_coordinator_and_screen_have_no_format_parser_or_kind_branches(self):
+        names = ("tabular_csv", "tabular_v2", "array_npz", "CsvReadSpec", "tabular_loaders", "tabular_input_flow", "read_csv",
+                 "header_repair", "empty_field", "wafer", "WM-811K")
+        for path in ("src/agents/task_orchestrator.py", "src/ui/task_view.py"):
+            text = (PROJECT_ROOT / path).read_text(encoding="utf-8")
+            with self.subTest(path=path):
+                self.assertFalse([name for name in names if name in text])
+
+
 if __name__ == "__main__":
     unittest.main()

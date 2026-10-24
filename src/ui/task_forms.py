@@ -3,7 +3,8 @@
 from . import array_task_form, tabular_task_form
 
 
-FORMS = {"tabular_csv": tabular_task_form.render, "array_npz": array_task_form.render}
+# v2 표형 작업은 진단 표·계획 구조가 CSV v1과 같아 같은 부품을 쓴다.
+FORMS = {"tabular_csv": tabular_task_form.render, "tabular_v2": tabular_task_form.render, "array_npz": array_task_form.render}
 
 
 def generic_form(st, record, plan, fields, key):
