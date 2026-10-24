@@ -2,15 +2,15 @@
 
 ## 현재 범위
 
-`src/wafer_dl/cache.py`는 확정 분할과 변환 검사를 확인한 뒤 숫자 전용 uint8 NPY 캐시를 생성합니다. `src/wafer_dl/dataset.py`는 선택 구간의 캐시를 읽어 PyTorch 입력을 구성합니다. 구현·합성 테스트에 이어 사용자가 실제 Train·Validation 첫 배치 검사를 완료했습니다. 모델 학습은 하지 않았습니다.
+`src/wafer_dl/cache.py`는 확정 분할과 변환 검사를 확인한 뒤 숫자 전용 uint8 NPY 캐시를 생성합니다. `src/wafer_dl/dataset.py`는 선택 구간의 캐시를 읽어 PyTorch 입력을 구성합니다. 실제 Train·Validation 캐시·배치 확인과 GPU CNN 학습을 마쳤으며, 동결한 checkpoint를 별도 Test에서 1회 평가했습니다.
 
 ## 처리 흐름과 분할 파일
 
 ```text
 원본 pickle → 숫자 전용 canonical → 검증·EDA → 그룹 분할
     → Train/Validation 맵 변환·형태 확인 → uint8 캐시
-    → Dataset 2채널 Tensor → 첫 배치 검사 (현재 완료)
-    → 모델 학습·Validation 비교 → 최종 Test 평가 (이후 단계)
+    → Dataset 2채널 Tensor → Train/Validation 첫 배치 검사
+    → 모델 학습·Validation 선택 → 동결 → Test 캐시·단일 평가 (완료)
 ```
 
 Train 약 70%·Validation 약 15%·Test 약 15%의 분할은 이미 확정했습니다. Test가 없는 것이 아니라 Test용 입력 캐시 준비를 미룬 상태입니다. 원본 맵을 세 폴더에 복사해서 나누는 대신, manifest에 각 행의 소속을 기록합니다.
@@ -74,9 +74,9 @@ CUDA 설치와 전처리 연산 장치는 별개입니다. WM 정상 개발 6단
 
 ```powershell
 python -m src.wafer_dl.cache `
-  --split-dir data/splits/wm811k/group_v1 `
-  --check-dir reports/wm811k/transform_v1 `
-  --output-dir data/processed/wm811k/input_cache/wm_resize_v1 `
+  --split-dir data/splits/wm811k/group_v2 `
+  --check-dir reports/wm811k/transform_v2 `
+  --output-dir data/processed/wm811k/input_cache/wm_resize_v2 `
   --confirm-visual-review
 ```
 
@@ -96,12 +96,12 @@ python -m src.wafer_dl.cache `
 
 ```powershell
 python -m src.wafer_dl.dataset `
-  --cache-dir data/processed/wm811k/input_cache/wm_resize_v1 `
+  --cache-dir data/processed/wm811k/input_cache/wm_resize_v2 `
   --split train `
   --batch-size 32
 
 python -m src.wafer_dl.dataset `
-  --cache-dir data/processed/wm811k/input_cache/wm_resize_v1 `
+  --cache-dir data/processed/wm811k/input_cache/wm_resize_v2 `
   --split validation `
   --batch-size 32
 ```
@@ -122,7 +122,7 @@ python -m src.wafer_dl.dataset `
 from torch.utils.data import DataLoader
 from src.wafer_dl.dataset import WaferDataset
 
-dataset = WaferDataset("data/processed/wm811k/input_cache/wm_resize_v1", split="train")
+dataset = WaferDataset("data/processed/wm811k/input_cache/wm_resize_v2", split="train")
 loader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=0)
 try:
     batch = next(iter(loader))
@@ -137,23 +137,84 @@ Dataset은 읽기 전용 mmap을 최대 두 파일까지 유지하고 필요한 
 
 `configs/wm811k/cache.json`의 `shard_max_rows` 기본값은 4,096, `buffer_max_bytes`는 64MiB입니다. 두 상한 중 작은 기준으로 나눕니다. Train·Validation writer 버퍼는 각각 할당되므로 버퍼 합계는 기본 최대 약 128MiB이고, 검사·변환의 추가 메모리는 별도입니다.
 
-`suggested_train_class_weights`는 Train 빈도만 사용한 `N_train/(9×클래스 표본 수)` 후보입니다. 손실 함수에 자동 적용하지 않으며 가중치 채택은 학습 실험에서 결정합니다. 증강·추가 정규화·통계 재학습도 하지 않습니다.
+`suggested_train_class_weights`는 Train 빈도만 사용한 `N_train/(9×클래스 표본 수)` 후보입니다. 학습 코드는 Train 빈도에서 같은 형태의 가중치를 계산하고 설정의 상한으로 제한해 class-weighted loss를 적용합니다. class-weighted 설정과 상한은 비교 실험으로 검증해야 합니다. 증강·추가 정규화·통계 재학습은 하지 않습니다.
 
-## Test는 이후 별도 준비
+## CNN 학습과 Validation
 
-현재 Test 캐시는 준비하지 않았습니다. 아래는 이후 별도 준비용 명령입니다. 동일하게 확정된 변환 규칙으로 Test 캐시를 미리 만들어 두는 것도 가능하며, 캐시 생성 자체는 모델 학습·성능 평가가 아닙니다. 다만 Test 결과를 보고 전처리·모델·문턱을 조정하지 않습니다. Test 표본의 시각·통계 분석을 추가로 수행하면 해당 사용 이력을 기록합니다.
+`src/wafer_dl/models.py`의 작은 CNN은 2채널 입력과 9종 logits를 사용합니다. `src/wafer_dl/train.py`는 확인된 캐시의 Train으로 학습하고 Validation으로 매 epoch 분류 지표를 계산합니다. 기본 checkpoint 선택 기준은 Validation Macro-F1이며 클래스별 Precision·Recall·F1·지원 수와 혼동행렬을 함께 기록합니다. Recall을 checkpoint 선택의 우선 기준으로 삼을 실험은 설정의 `selection_metric`을 `macro_recall`로 바꿀 수 있습니다. 이 경우에도 Precision과 클래스별 혼동을 같이 살펴야 합니다. Train 기반 class-weighted loss는 희소 패턴을 고려하는 실험 출발점이지 Recall 개선을 보장하지 않습니다. 코드 구현과 실제 모델 성능 확인은 구분합니다.
+
+먼저 Train·Validation 입력 캐시가 존재하고 GPU/PyTorch 환경이 준비되어 있어야 합니다. 프로젝트 루트에서 실행합니다.
+
+```powershell
+python -m src.wafer_dl.train `
+  --cache-dir data/processed/wm811k/input_cache/wm_resize_v2 `
+  --output-dir models/wm811k/cnn_v1 `
+  --config configs/wm811k/train.json `
+  --device auto
+```
+
+`--device auto`는 CUDA를 사용할 수 있으면 GPU를, 아니면 CPU를 선택합니다. 실행은 Test를 열지 않습니다. 완료 시 `best_model.pt`와 `training_report.json`이 출력 폴더에 저장되고, 기존 출력 폴더가 있으면 덮어쓰지 않고 실패합니다. 보고서에는 split protocol, 선택 epoch, epoch별 Macro-F1·Macro-Recall·클래스별 Recall과 혼동행렬이 들어갑니다. 같은 경로에 재실행하려면 기존 결과를 보존한 채 새 `--output-dir`을 지정하세요.
+
+### 실제 실행 기록 — 2026-10-24
+
+검증한 canonical 데이터와 새 Lot 비중첩 분할로 Train 121,261건·Validation 25,827건의 캐시를 만들었습니다. RTX 4060 Ti의 CUDA PyTorch에서 최대 30 epoch, patience 6으로 실행했고 Validation Macro-F1이 6 epoch 연속 개선되지 않아 20 epoch에서 조기 종료했습니다. 최고 Macro-F1 checkpoint는 14 epoch입니다.
+
+| Validation 지표 | 5 epoch 탐색 실행 | 최대 30 epoch 실행, 14 epoch checkpoint |
+| --- | ---: | ---: |
+| Accuracy | 92.26% | 96.07% |
+| Macro-Recall | 79.66% | 86.38% |
+| Macro-F1 | 69.95% | 77.69% |
+
+같은 split에서 Macro-Recall은 6.72%p, Macro-F1은 7.74%p 높아졌습니다. 이는 두 번의 개발 실행에 대한 Validation 비교이지 독립 Test 성능이나 현장 오류 검출률을 보장하지 않습니다. 선택 checkpoint에서 클래스별 Recall은 `None` 97.87%, `Center` 88.13%, `Donut` 79.31%, `Edge-Loc` 84.03%, `Edge-Ring` 86.46%, `Loc` 53.85%, `Near-Full` 100% (18건 중 18건), `Random` 95.51%, `Scratch` 92.31%였습니다. `Scratch` Precision은 30.08%로 낮아 해당 클래스를 많이 놓치지는 않았지만 오탐이 많습니다. `Near-Full`은 Validation 지원 수가 18건뿐이므로 점수가 불안정할 수 있습니다.
+
+선택 모델은 `models/wm811k/cnn_v2_gpu_30epoch/best_model.pt`, epoch별 결과·혼동행렬은 `models/wm811k/cnn_v2_gpu_30epoch/training_report.json`에 있습니다. Validation 결과만으로 학습·checkpoint 선택을 완료한 뒤 아래에서 별도 Test 평가를 수행했습니다.
+
+## 동결 CNN Test 단일 평가 — 2026-10-25
+
+Validation Macro-F1 기준으로 선택한 epoch 14 checkpoint와 전처리·클래스·분할 계약을 검증한 뒤 `src/wafer_dl/evaluate.py`로 Test를 한 번 평가했습니다. `weights_only=True`로 checkpoint를 읽고 학습된 모델과 Train 최빈 클래스 기준선을 같은 Test 표본에 적용했습니다. Test는 모델 선택이나 조정에 사용하지 않았습니다.
+
+| 지표 | Train 최빈 클래스 기준선 | 동결 작은 CNN | 차이 |
+| --- | ---: | ---: | ---: |
+| Accuracy | 88.38% | 96.13% | +7.75%p |
+| Macro-Recall | 11.11% | 85.61% | +74.50%p |
+| Macro-F1 | 10.43% | 77.17% | +66.74%p |
+
+Test 25,834건 중 22,831건은 `None`입니다. CNN의 클래스별 Recall은 `None` 97.99%, `Center` 88.68%, `Donut` 67.24%, `Edge-Loc` 81.39%, `Edge-Ring` 85.54%, `Loc` 58.10%, `Near-Full` 100% (18건), `Random` 93.26%, `Scratch` 98.28%였습니다. `Scratch` Precision은 30.56%로 낮아 이 패턴의 오탐이 많습니다. 희소 클래스, 특히 `Near-Full`의 작은 지원 건수로 점수 변동이 클 수 있습니다.
+
+Accuracy만으로는 불균형 영향을 가릴 수 있어 Macro 지표와 클래스별 결과를 함께 봐야 합니다. 이 결과는 현재 WM-811K 그룹 분할 안의 패턴 분류 일반화 평가이며, 실제 공정의 불량 검출률·보정된 확률·SECOM과 통합된 성능을 뜻하지 않습니다. Test 결과를 확인했으므로 이 Test로 추가 튜닝하지 않습니다. 모델 개선을 다시 시작한다면 새 독립 평가 데이터를 확보해야 합니다. ResNet18 비교, seed 변동, 운영 기준 검증은 아직 완료되지 않았습니다.
+
+전체 클래스 지표·혼동행렬·실행 시간·장치 정보는 로컬의 `reports/wm811k/test_evaluation_group_v2_macro_f1/test_evaluation.json`, 동결 checkpoint는 `models/wm811k/cnn_v2_gpu_30epoch/best_model.pt`에 있습니다. 이 실행별 보고서와 checkpoint는 저장소에 올리지 않습니다. 저장소에는 소스·설정·테스트와 요약 지표만 포함합니다.
+
+다음은 같은 절차를 재현하기 위한 명령입니다. 이미 생성된 출력 폴더는 덮어쓰지 않습니다. Test 배열을 읽는 단계임을 확인한 경우에만 승인 플래그를 사용합니다.
 
 ```powershell
 python -m src.wafer_dl.cache `
-  --split-dir data/splits/wm811k/group_v1 `
-  --check-dir reports/wm811k/transform_v1 `
-  --output-dir data/processed/wm811k/input_cache/wm_resize_v1_test `
+  --split-dir data/splits/wm811k/group_v2 `
+  --check-dir reports/wm811k/transform_v2 `
+  --output-dir data/processed/wm811k/input_cache/wm_resize_v2_test `
+  --canonical-dir data/processed/wm811k/canonical/canonical_1b2ac8be615a462786dd4d5dbcfb8b1e `
   --splits test `
   --confirm-visual-review `
   --confirm-test-preparation
 ```
 
-Dataset에서 Test를 여는 경우에도 Python의 `allow_test=True` 또는 CLI의 `--confirm-test-preparation`이 필요합니다. 승인 옵션은 실수 방지 장치이지 운영체제 보안 경계가 아닙니다. Test 준비 중 변환 소실이 발생하면 자동 보정하지 않고 중단하며 별도 검토합니다.
+첫 배치 확인과 동결 평가 예시는 다음과 같습니다.
+
+```powershell
+python -m src.wafer_dl.dataset `
+  --cache-dir data/processed/wm811k/input_cache/wm_resize_v2_test `
+  --split test `
+  --confirm-test-preparation
+
+python -m src.wafer_dl.evaluate `
+  --cache-dir data/processed/wm811k/input_cache/wm_resize_v2_test `
+  --checkpoint models/wm811k/cnn_v2_gpu_30epoch/best_model.pt `
+  --output-dir reports/wm811k/test_evaluation_reproduction `
+  --device auto `
+  --confirm-test-evaluation
+```
+
+평가기와 Dataset 모두 명시적 Test 승인 없이는 열리지 않습니다. 승인 옵션은 실수 방지 장치이지 운영체제 보안 경계가 아닙니다. Test 준비 중 변환 소실이 발생하면 자동 보정하지 않고 중단하며 별도 검토합니다. 한 번 공개한 Test 성능을 반복적인 모델 선택·개선에 사용하지 않습니다.
 
 ## 합성 테스트
 

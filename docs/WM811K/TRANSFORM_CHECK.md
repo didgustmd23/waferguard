@@ -2,7 +2,7 @@
 
 ## 현재 구현 범위
 
-[변환 함수](../../src/wafer_dl/transform.py), [개발 구간 검사](../../src/wafer_dl/check_transform.py), [설정](../../configs/wm811k/transform.json)이 구현돼 있습니다. 실제 Train·Validation 변환/캐시와 첫 배치 확인 범위는 [CACHE_DATASET](CACHE_DATASET.md)을 따릅니다. 모델 학습·Test 준비 완료를 뜻하지 않습니다.
+[변환 함수](../../src/wafer_dl/transform.py), [개발 구간 검사](../../src/wafer_dl/check_transform.py), [설정](../../configs/wm811k/transform.json)을 사용합니다. 실제 Train/Validation 맵 검사, 캐시·Dataset, CNN 학습과 동결 모델의 Test 평가는 완료했습니다. 결과와 Test 사용 범위는 [캐시·학습·평가 기록](CACHE_DATASET.md)을 확인하세요.
 
 이번 단계는 PyTorch 없이 NumPy로 실행합니다. PyTorch를 설치하지 못하면 다른 보간으로 대체하는 방식이 아니라, `numpy_half_pixel_nearest_v1`을 명시한 독립 변환 구현입니다. Dataset은 저장된 categorical 맵에서 같은 2채널을 생성합니다.
 
@@ -14,7 +14,7 @@
 4. 새 길이는 `floor(원본 길이×배율+0.5)`로 계산하고 1 이상·목표 길이 이하로 제한합니다.
 5. 최근접 좌표는 `floor((출력 인덱스+0.5)×원본 길이/새 길이)`입니다. 정수 연산으로 좌표를 고정하며 선형 보간을 하지 않습니다.
 6. 여백은 0으로 중앙 padding하고, 홀수 여백의 추가 픽셀은 아래·오른쪽에 둡니다.
-7. 채널 0=`맵==2`, 채널 1=`맵>0`으로 contiguous float32 `[2,H,W]` NumPy 배열을 생성합니다. Tensor 변환은 Dataset의 역할입니다.
+7. 변환 결과에서는 채널 0=`맵==2`, 채널 1=`맵>0`입니다. NumPy 변환기는 contiguous float32 `[2,H,W]` 배열을 제공하고 Dataset은 이를 Tensor로 연결합니다.
 
 상태별 채널값은 외부 `[0,0]`, 정상 `[0,1]`, 불량 `[1,1]`입니다. `/255`, ImageNet 평균·표준편차, 중앙값 대치, 증강은 적용하지 않습니다.
 
@@ -26,9 +26,9 @@
 
 ```powershell
 python -m src.wafer_dl.check_transform `
-  --split-dir data/splits/wm811k/group_v1 `
+  --split-dir data/splits/wm811k/group_v2 `
   --config configs/wm811k/transform.json `
-  --output-dir reports/wm811k/transform_v1
+  --output-dir reports/wm811k/transform_v2
 ```
 
 분할 산출물의 canonical_root를 사용합니다. canonical 폴더를 옮겼다면 `--canonical-dir "현재 실제 경로"`를 추가하세요. 원본 manifest 내용이 일치해야 하며 잘못 연결한 묶음은 거부합니다.

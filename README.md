@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | 전처리 에이전트 | CSV·웨이퍼맵 전처리의 모듈 선택·사용자 승인·격리 실행·결과 관리 | 양현승 | 통합 작업(CSV 표형·`.npz` 배열) 기본 화면, 고급 도구로 CSV 5개 작업·WM 정상 6단계·로컬 LLM 실행안·선택형 결과 해설 구현 |
 | SECOM 머신러닝 | 공정 센서로 불량 위험 선별, 핵심 센서 20개 선택, OOF 문턱 비교·저장·추론 | ML: 양현승 / 데이터·EDA: 이종수 | V2 실험·저장·복원·기존 Test 비교 완료 |
-| WM-811K 딥러닝 | 검사 결과 맵의 9종 패턴 분류, 작은 CNN·ResNet18 비교, 클래스별 오류 분석 | 이종수 | 설계 단계 |
+| WM-811K 딥러닝 | 검사 결과 맵의 9종 패턴 분류, 작은 CNN 학습·클래스별 Recall 분석 | 이종수 | 작은 CNN 동결·Test 1회 평가 완료; ResNet18 비교·오류 개선은 후속 |
 
 에이전트는 설정으로 정한 전처리 코드를 실행·관리하는 역할입니다. 라벨·split·변환 기준을 임의로 바꾸거나 모델 판정을 대신하지 않습니다. CSV는 품질·EDA·분할부터 Train 기준 산출·적용·로컬 전달까지, WM은 canonical 이후 정상 개발 6단계를 지원합니다. 로컬 LLM은 실행안을 제안하고 별도 허용된 결과를 해설하며, 직접 실행·승인 권한은 없습니다. 기존 SECOM 전처리는 에이전트 없이도 실행할 수 있습니다. 현재 범위와 보류 항목은 [에이전트 안내](docs/agents/GUIDE.md#현재-구현-상태)를 따릅니다.
 
@@ -47,14 +47,14 @@ flowchart LR
         direction TB
         WI["웨이퍼맵 입력"] --> DP["변환 · 검증 · EDA"]
         DP --> DS["분할 · 캐시 · Dataset"]
-        DS -.-> DM["CNN / ResNet18<br/>(계획 단계)"]
+        DS --> DM["작은 CNN<br/>학습 · 검증 · Test 평가"]
     end
 
     %% 보이지 않는 연결: 세 영역을 왼쪽부터 나란히 배치하기 위한 것이며 실행·데이터 흐름이 아니다.
     AG ~~~ ML ~~~ WM
 ```
 
-- **실선:** 각 영역 내부의 주요 실행·처리 흐름. **점선:** 아직 실행이 연결되지 않은 계획 단계. 세 영역 사이의 자동 실행·데이터 전달 화살표는 없습니다.
+- **실선:** 구현된 주요 흐름. 세 영역 사이의 자동 실행·데이터 전달 화살표는 없습니다.
 - 에이전트 격리 worker의 계산은 `src/preprocessing`(표형·배열), 고급 WM 등록 모듈은 `src/wafer_dl`·`scripts/wm_sandbox`를 씁니다. SECOM 실험 전처리는 `src/modeling_preprocessing.py` 등 기존 Pipeline입니다.
 - 로컬 Ollama에는 동의 범위의 목표·허용 이름/구조·집계·계획/선택지만 보내고, 검증 대상 권장안·질문과 별도 정책의 해설만 받습니다.
 - 에이전트는 SECOM 저장 모델·평가 결과를 사용하지 않습니다. SECOM·WM의 기존 실행은 에이전트 없이 수행할 수 있습니다.
@@ -119,7 +119,7 @@ AP는 V1 **0.040461 → V2 0.075077**, ROC-AUC는 **0.488008 → 0.682330**으�
 
 데이터 출처는 [UCI SECOM](https://archive.ics.uci.edu/dataset/179/secom)입니다. 센서 파일과 label·timestamp 파일을 병합하며, label은 `-1`(정상), `1`(불량)입니다. 원본 데이터는 저장소에 포함하지 않습니다.
 
-WM-811K의 출처·데이터 계약·전처리와 학습 계획은 [전처리·학습 설계](docs/WM811K/PREPROCESSING_DESIGN.md), 실제 관찰한 수치와 그림은 [결과 보고서](reports/wm811k/report.md)를 따릅니다. 데이터 준비와 모델 학습/평가의 완료 범위를 구분하며 SECOM과 통합 성능으로 합산하지 않습니다.
+WM-811K는 [Kaggle 배포본](https://www.kaggle.com/datasets/qingyi/wm811k-wafer-map)을 사용합니다. Lot 비중첩 분할로 학습한 작은 CNN을 동결해 Test 25,834건을 1회 평가했습니다: Accuracy **96.13%**, Macro-Recall **85.61%**, Macro-F1 **77.17%**. 기준선 대비 Macro-Recall은 **74.50%p** 높지만 `Loc` Recall은 58.10%, `Scratch` Precision은 30.56%입니다. 이는 9종 패턴 분류 결과이지 실제 현장 불량 검출률이 아닙니다. 같은 Test로 추가 튜닝하지 않습니다. 원본·가공 데이터, checkpoint, 실행별 보고서는 저장소에 포함하지 않습니다. 재현 절차와 한계는 [WM-811K 기록](docs/WM811K/CACHE_DATASET.md)에 정리했습니다.
 
 ![SECOM 클래스 분포](reports/secom/figures/eda/step3/class_distribution.png)
 
@@ -165,7 +165,7 @@ src/              재사용 코어 (저장 모델 클래스 경로 유지)
   preprocessing/  공통 전처리 코어(역할 계약·품질·EDA·분할·변환·배열)
   agents/         전처리 작업 조정·승인·격리·결과 검증
   ui/             Streamlit 화면(통합 작업·고급 도구)
-  wafer_dl/       맵 전처리·캐시·Dataset (모델 학습은 별도 계획)
+  wafer_dl/       맵 전처리·캐시·Dataset·CNN 학습·평가
 tests/            입력 계약·전처리·평가·추론 검증
 docs/secom/       실험 보고서·재현 조건·Model Card·실행 안내
 reports/secom/    공개 결과 요약·그림·분석 노트북

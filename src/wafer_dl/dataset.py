@@ -41,6 +41,7 @@ class WaferDataset(Dataset):
                 config.get('channel_order') == ['defect', 'valid'] and
                 config.get('transform_version') == 'wm_resize_v1' and
                 config.get('resize_backend') == 'numpy_half_pixel_nearest_v1', 'INVALID_CACHE_TRANSFORM')
+        self.transform_config = config
         self.size = tuple(size)
         self.split = split
         self.protocol = report['split_protocol_id']
