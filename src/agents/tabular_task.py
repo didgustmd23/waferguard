@@ -834,7 +834,13 @@ def review(record):
     candidate = _safe(lambda: _json(folder / "candidate.json"))
     preprocessor = _safe(lambda: _json(folder / "preprocessor.json"))
     report = next((item["path"] for item in verified["items"] if item["kind"] == "report" and item["label"].endswith("candidate/candidate.md")), None)
-    text = None if report is None else _path(Path(report), directory=False).read_bytes()[:MAX_REPORT_TEXT].decode("utf-8", errors="replace")
+    raw = None if report is None else _path(Path(report), directory=False).read_bytes()
+    return {"run_name": name, "signature": evidence.signature, "facts": review_facts(record, candidate, preprocessor, raw)}
+
+
+def review_facts(record, candidate, preprocessor, raw):
+    """후보·전처리 기준(검증된 JSON)과 원문 보고서 바이트로 결정 D 화면의 표·예상 영향을 만든다. 파일을 읽지 않는다."""
+    text = None if raw is None else raw[:MAX_REPORT_TEXT].decode("utf-8", errors="replace")
     binding = (candidate or {}).get("binding", {})
     expected = _expected_impact(candidate, preprocessor)
     unknown = expected.get("missing")
@@ -863,11 +869,14 @@ def review(record):
                        "정해지는 값(대치 건수·남는 결측, clip 경계가 한 값이거나 구간이 하나면 상수)만 확인했습니다. "
                        "적용하면 Train 합계를 적용 결과와 다시 대조하고, Validation 실측치는 결과 보고서에 따로 표시합니다."],
              "text": text, "text_truncated": text is not None and len(text.encode("utf-8")) >= MAX_REPORT_TEXT - 4}
-    return {"run_name": name, "signature": evidence.signature, "facts": facts}
+    return facts
 
 
-def _problems(record, quality):
-    """진단(전체 입력 기준)과 품질 검사에서 확인된 항목. 처리 방식은 확정한 역할·규칙에서만 가져온다."""
+def _problems(record, quality, renamed=None):
+    """진단(전체 입력 기준)과 품질 검사에서 확인된 항목. 처리 방식은 확정한 역할·규칙에서만 가져온다.
+
+    renamed는 중복 컬럼명 번호 부여 기록이다. 없으면 v1 작업 기록의 정비 이력을 쓴다.
+    """
     plan = _plan(record)
     roles, preparation = plan["roles"], plan["preparation"]
     rows = []
@@ -904,7 +913,7 @@ def _problems(record, quality):
     for name in rules.identifier_like(record["diagnostic"]["summary"], record["diagnostic"]["columns"], roles):
         rows.append({"구분": "식별자 의심", "컬럼": name, "내용": "관측 고유값 수가 행 수와 같음", "처리": "범주형 특징으로 유지(사용자 확정)"})
 
-    for item in record["source"].get("derived", {}).get("renamed", []):
+    for item in record["source"].get("derived", {}).get("renamed", []) if renamed is None else renamed:
         rows.append({"구분": "중복 컬럼명", "컬럼": item["original"], "내용": f"{item['count']}개 컬럼이 같은 이름",
                      "처리": f"작업용 복사본에서 {item['first']}~{item['last']}로 번호 부여(값·순서 유지)"})
 
@@ -968,6 +977,23 @@ def report_facts(record):
     application = _safe(lambda: _json(Path(verified["apply"]["outputs"]["apply_preparation"]) / "prepared" / "application.json"))
     bundle = _safe(lambda: next(item["path"] for item in verified["handoff"]["items"] if item["label"] == "handoff"))
     manifest = _safe(lambda: _json(Path(bundle) / "HANDOFF_COMPLETE.json"))
+    return report_from_sources(record, {
+        "quality": quality, "proposal": proposal, "candidate": candidate, "preprocessor": preprocessor,
+        "application": application, "files": (manifest or {}).get("files", {}), "bundle": bundle,
+        "reports": [item["path"] for values in verified.values() for item in values["items"] if item["kind"] == "report"],
+        "image_labels": [item["label"] for item in images(record)], "renamed": None, "notices": input_notices(record),
+        "input": {"source_path": record["source"]["path"], "snapshot_sha256": record["snapshot"]["snapshot"]["sha256"]}})
+
+
+def report_from_sources(record, sources):
+    """검증된 결과의 사실 묶음으로 보고서를 조립한다. 파일을 읽거나 계산·추정하지 않는다.
+
+    sources는 유형별 어댑터가 검증한 quality·proposal·candidate·preprocessor·application(JSON)과 전달 파일 목록·경로,
+    보고서 경로, 그래프 이름, 헤더 정비 기록(renamed), 입력 안내(notices), 입력 식별값(input)이다.
+    """
+    quality, proposal, candidate = sources["quality"], sources["proposal"], sources["candidate"]
+    preprocessor, application, bundle = sources["preprocessor"], sources["application"], sources["bundle"]
+    renamed = sources["renamed"]
     summary = record["diagnostic"]["summary"]
     plan = _plan(record)
     features = sum(1 for role in plan["roles"].values() if role in ("수치형", "범주형"))
@@ -1030,7 +1056,7 @@ def report_facts(record):
     if excluded:
         warnings.append({"구분": "정보 손실", "내용": f"역할이 제외인 컬럼 {len(excluded)}개는 특징으로 쓰지 않았습니다. 사유는 컬럼별 처리 표에 있습니다."})
 
-    for row in _problems(record, quality):
+    for row in _problems(record, quality, renamed):
         if row["처리"] in ("자동 수정하지 않음", "삭제하지 않음") or row["처리"].startswith("범주형 특징으로 유지"):
             warnings.append({"구분": "미처리", "내용": f"{row['구분']} — {row['컬럼']}: {row['내용']} ({row['처리']})"})
 
@@ -1045,19 +1071,19 @@ def report_facts(record):
     ]
     cautions = [
         *no_target,
-        *input_notices(record),
+        *sources["notices"],
         "진단 집계(결측률·이상치 후보 등)는 전체 입력 기준입니다. 전처리 기준(대치값 등)은 Train 구간에서만 산출했습니다.",
         "분할 EDA의 사람 검토 단계는 결정 C 동의로 위임 승인했습니다. 아래 그래프와 EDA 보고서로 확인하세요.",
     ]
     files = [{"파일": name, "용도": FILE_USES.get(name, "설명 없음"), "크기(byte)": info["size"]}
-             for name, info in sorted((manifest or {}).get("files", {}).items())]
+             for name, info in sorted(sources["files"].items())]
     lost = MISSING if unknown else len(expected["lost"])
     highlights = [
         f"입력 {summary['row_count']}행·{summary['column_count']}컬럼에서 특징 {features}개를 골라 Train 기준으로 전처리했고, "
         f"출력 {output_width}열을 만들었습니다.",
         "적용 구간: " + (", ".join(f"{name} {applied[name]['rows']}행" for name in ("train", "validation") if name in applied) or MISSING)
         + ". Test는 변환하지 않았습니다.",
-        f"주요 문제: 진단·품질 검사 지적 {len(_problems(record, quality))}건, 정보 손실 예상 특징 {lost}개, "
+        f"주요 문제: 진단·품질 검사 지적 {len(_problems(record, quality, renamed))}건, 정보 손실 예상 특징 {lost}개, "
         f"Train 기준 제거 {len(removed) if removed is not None else MISSING}개.",
     ]
     usage = [
@@ -1074,15 +1100,14 @@ def report_facts(record):
         "metrics": [{"label": "입력 행", "value": summary["row_count"]}, {"label": "입력 컬럼", "value": summary["column_count"]},
                     {"label": "특징 수 (전→후)", "value": f"{features} → {output_width}"},
                     {"label": "품질 검사", "value": (quality or {}).get("status", MISSING)}],
-        "problems": _problems(record, quality), "processing": _processing(record, preprocessor, candidate),
+        "problems": _problems(record, quality, renamed), "processing": _processing(record, preprocessor, candidate),
         "comparison": comparison, "comparison_note": f"후 (실측)은 {measured}, 예상 (후보)은 {estimate}입니다. 미산출은 괄호에 사유를 적었습니다.",
         "warnings": warnings, "usage": usage,
-        "images": [{"label": item["label"]} for item in images(record)],
+        "images": [{"label": label} for label in sources["image_labels"]],
         "cautions": cautions, "files": files, "files_title": "결과 파일 (로컬 전달 묶음)",
-        "technical": {"source_path": record["source"]["path"], "snapshot_sha256": record["snapshot"]["snapshot"]["sha256"],
-                      "bundle_path": bundle, "preprocessor_sha256": (candidate or {}).get("preprocessor_sha256"),
+        "technical": {**sources["input"], "bundle_path": bundle, "preprocessor_sha256": (candidate or {}).get("preprocessor_sha256"),
                       "candidate_schema": (candidate or {}).get("schema_version"), "application_schema": (application or {}).get("schema_version"),
                       "rules": (candidate or {}).get("binding", {}).get("rules"),
-                      "reports": [item["path"] for values in verified.values() for item in values["items"] if item["kind"] == "report"]},
+                      "reports": sources["reports"]},
         "outputs": {"bundle": bundle},
     }

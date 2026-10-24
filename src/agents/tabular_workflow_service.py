@@ -246,7 +246,15 @@ def _outputs(result):
 
 
 def _committed_json(output, relative, *, marker_sha256=None, file_sha256=None):
-    """커밋 폴더의 완료 표식을 한 번 읽고, 그 표식의 크기·해시와 같은 바이트만 한 번 읽어 해석한다.
+    """완료 표식에 묶인 바이트(_committed_bytes)를 strict JSON으로 해석한다."""
+    from .strict_json import loads
+
+    raw = _committed_bytes(output, relative, marker_sha256=marker_sha256, file_sha256=file_sha256)
+    return loads(raw.decode("utf-8"), len(raw))
+
+
+def _committed_bytes(output, relative, *, marker_sha256=None, file_sha256=None):
+    """커밋 폴더의 완료 표식을 한 번 읽고, 그 표식의 크기·해시와 같은 바이트만 한 번 읽어 돌려준다.
 
     검증 뒤 파일만 바꾸거나 바꿨다가 되돌려도 표식과 다른 바이트는 거부된다. 승인 체인에 검증 시점의
     표식 해시(marker_sha256)나 파일 해시(file_sha256)가 묶인 산출물은 그 값과도 대조해 표식 재작성 위조를 거부한다.
@@ -272,7 +280,37 @@ def _committed_json(output, relative, *, marker_sha256=None, file_sha256=None):
     raw = _read_file(_path(output / relative, directory=False), expected["size"])
     if len(raw) != expected["size"] or hashlib.sha256(raw).hexdigest() != expected["sha256"]:
         raise ValueError("보고 근거 파일이 완료 기록과 다릅니다.")
-    return loads(raw.decode("utf-8"), expected["size"])
+    return raw
+
+
+def candidate_sources(pipeline_name):
+    """결정 D 화면에 보일 후보 근거. 후보 증거의 검증 시점 표식 해시·전처리기 해시에 묶인 바이트만 읽는다.
+
+    반환한 증거 서명(signature)이 결정 D의 대상이다. 원문 보고서도 같은 표식에 묶인 바이트만 쓴다.
+    """
+    _, _, _, evidence, _ = _pipeline(pipeline_name, typed=True)
+    folder, marker = evidence.artifact.directory, evidence.artifact.marker_sha256
+    return {"signature": evidence.signature,
+            "candidate": _committed_json(folder, "candidate/candidate.json", marker_sha256=marker),
+            "preprocessor": _committed_json(folder, "candidate/preprocessor.json", marker_sha256=marker,
+                                            file_sha256=evidence.state_sha256),
+            "text": _committed_bytes(folder, "candidate/candidate.md", marker_sha256=marker)}
+
+
+def verified_images(result):
+    """검증된 단계 결과의 PNG를 완료 표식에 묶인 바이트로만 읽는다. 저장된 경로를 다시 열어 신뢰하지 않는다.
+
+    EDA 그래프는 승인 체인에 묶인 기대 해시가 없어 완료 표식의 손상 검사 수준까지만 확인한다.
+    """
+    outputs = _outputs(result)
+    found = []
+    for item in result["items"]:
+        if item["kind"] != "image":
+            continue
+        # 결과 항목의 이름은 "단계/커밋 폴더 기준 상대 경로"다. 저장된 절대 경로는 쓰지 않는다.
+        stage, relative = item["label"].split("/", 1)
+        found.append({"label": Path(item["label"]).name, "data": _committed_bytes(outputs[stage], relative)})
+    return found
 
 
 def report_sources(runs, source_contract_id):

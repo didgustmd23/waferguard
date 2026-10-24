@@ -116,13 +116,16 @@ def _allowed(record, decision):
 # 작업 시작과 결정 A (입력 진단)
 # ==========================================
 
-def start_task(goal, source_path, limits, model, *, root=None):
-    """작업 기록만 만든다. 파일 복사·worker·모델 호출은 결정 A 이후에 한다."""
+def start_task(goal, source_path, limits, model, *, root=None, input_generation="legacy"):
+    """작업 기록만 만든다. 파일 복사·worker·모델 호출은 결정 A 이후에 한다.
+
+    input_generation은 새 작업의 유형 후보 집합(legacy/current)이다. 유형은 선택한 파일의 형식으로 고정 등록부에서만 고른다.
+    """
     validate_request_text(goal)
     WorkerLimits(**limits)
     LocalModelConfig(**model)
     source = _path(Path(source_path).absolute(), directory=False)
-    kind = task_adapters.select(source)
+    kind = task_adapters.select(source, generation=input_generation)
     record = task_store.create_task(goal, {"path": str(source), "size_bytes": source.stat().st_size}, kind, root=root)
     record.update(limits=dict(limits), model=dict(model))
     return task_store.save_task(record, expected_revision=record["revision"], root=root)

@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from tests.agents import test_task_orchestrator as flow
+from tests.agents.test_tabular_task_v2 import add_v2_patches
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +43,8 @@ class TaskScreenTest(unittest.TestCase):
                          return_value={"elevated": True, "pid": 1, "python": "synthetic"})
         self.model_calls = self.start_patch("src.agents.task_recommend.request_local_proposal",
                                             side_effect=lambda payload, config: flow.model_reply())
+        # 화면에서 새로 시작한 CSV 작업은 v2 표형 작업이다. 기록을 직접 만든 테스트는 기존(legacy) 작업을 화면에서 연다.
+        add_v2_patches(self, self.store, self.handoff_runs)
 
     def test_screen_flow_from_request_to_integrated_result(self):
         from streamlit.testing.v1 import AppTest
@@ -147,12 +150,15 @@ class TaskScreenTest(unittest.TestCase):
         source = self.root / "duplicate.csv"
         frame.to_csv(source, index=False, header=["x", "zero", "zero", "label", "id", "time"])
         self.model_calls.side_effect = lambda payload, config: flow.model_reply(dict(flow.ROLES, zero_1="수치형", zero_2="수치형"))
+        # 번호 붙인 복사본 해결 동작은 기존(legacy) CSV 작업의 차단 화면이다. 새 작업의 중복 헤더는 입력 해석 대기로 간다
+        # (test_ui_tabular_v2). 저장된 기존 작업을 화면에서 열어 같은 해결 경로가 유지되는지 검사한다.
+        task = flow.orchestrator.start_task("label 예측용으로 분할·전처리해 주세요", source, flow.LIMITS, self.model, root=self.store)
+        self.assertEqual(task["kind"], "tabular_csv")
+        flow.orchestrator.diagnose(task["task_id"], root=self.store)
         app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=180).run()
         self.assertEqual(app.session_state["ui_workflow_mode"], "통합 작업")
-        app.text_input(key="_widget_task_source").set_value(str(source))
-        app.text_area(key="task_goal").set_value("label 예측용으로 분할·전처리해 주세요")
-        app.checkbox(key="task_consent_a").check()
-        next(item for item in app.button if item.label == "작업 시작").click().run()
+        app.session_state["ui_task_id"] = task["task_id"]
+        app.run()
         self.assertFalse(app.exception, [item.value for item in app.exception])
         self.assertTrue(any("같은 컬럼명이 여러 번" in item.value for item in app.error))
         self.assertTrue(any(item.value == "확인된 사유: 영향받는 컬럼 수 2" for item in app.text))
