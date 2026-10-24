@@ -19,21 +19,26 @@ def execute_request(request, root):
     from src.preprocessing.profiles import _unique_pairs
     from src.preprocessing.split import _digest
     from src.preprocessing.transform import impact_totals, load_preparation
+    from src.agents.tabular_preparation_worker import APPLY_POLICY, input_files, load_part, feature_view, row_metadata, check_part
+    from src.preprocessing.tabular_bundle import worker_filesystem, BundleRef
 
     root = Path(root).resolve()
     inputs = root / "input"
     output = root / "output/result"
     stage = "REQUEST_PATHS"
     old_limit = csv.field_size_limit(1024 * 1024)
+    typed = request.policy_version == APPLY_POLICY
 
     try:
         expected_files = tuple(str(inputs / name) for name in (
             "train/input.bin", "train/snapshot.json", "validation/input.bin", "validation/snapshot.json",
             "preprocessor.json", "positions.json", "apply_task.json",
         ))
+        if typed:
+            expected_files = input_files(root, applying=True)
 
         if (request.task_id != root.name or request.stage != "apply_preparation" or request.action_id != "apply_preparation"
-                or request.policy_version != "preparation_apply_v1" or request.dependency_directories
+                or request.policy_version not in ("preparation_apply_v1", APPLY_POLICY) or request.dependency_directories
                 or request.input_files != expected_files or request.output_directory != str(output)
                 or request.scratch_directory != str(root / "scratch/task")):
             raise ValueError("적용 작업의 고정 요청 경로가 다릅니다.")
@@ -46,7 +51,7 @@ def execute_request(request, root):
         fields = {"version", "candidate_id", "preprocessor_sha256", "max_state_bytes", "roles", "rules", "output_columns_sha256",
                   "output_feature_count", "partitions", "limits", "max_partition_bytes", "code_id"}
 
-        if set(packet) != fields or packet["version"] != "preparation_apply_v1" or _digest(packet) != request.config_id or packet["limits"] != asdict(request.limits):
+        if set(packet) != fields or packet["version"] != request.policy_version or _digest(packet) != request.config_id or packet["limits"] != asdict(request.limits):
             raise ValueError("적용 설정이 승인 범위와 다릅니다.")
 
         maximum = packet["max_partition_bytes"]
@@ -61,7 +66,11 @@ def execute_request(request, root):
         state_path = inputs / "preprocessor.json"
 
         with state_path.open("rb") as stream:
-            _, digest = _scan(stream, state_maximum)
+            state_bytes = stream.read(state_maximum + 1)
+        import hashlib
+        if len(state_bytes) > state_maximum:
+            raise ValueError("후보 상태 크기 상한을 초과했습니다.")
+        digest = hashlib.sha256(state_bytes).hexdigest()
 
         if digest != packet["preprocessor_sha256"]:
             raise ValueError("저장 후보의 정확한 바이트 해시가 다릅니다.")
@@ -83,7 +92,7 @@ def execute_request(request, root):
         for name in ("train", "validation"):
             binding = packet["partitions"][name]
 
-            if type(binding) is not dict or set(binding) != {"contract_id", "snapshot", "rows", "positions_sha256"}:
+            if not typed and (type(binding) is not dict or set(binding) != {"contract_id", "snapshot", "rows", "positions_sha256"}):
                 raise ValueError("구간 입력 계약 필드가 다릅니다.")
 
             rows = binding["rows"]
@@ -94,18 +103,29 @@ def execute_request(request, root):
                     or values != sorted(set(values)) or _digest(values) != binding["positions_sha256"]):
                 raise ValueError("적용 행 수·순서가 승인 범위와 다릅니다.")
 
-            snapshots[name] = Snapshot(**binding["snapshot"])
             all_positions.extend(values)
-
-            if not _verify_staged_snapshot(root, snapshots[name], name=name):
+            if typed:
+                with worker_filesystem(root):
+                    check_part(inputs / name, binding, partition=name)
+            else:
+                snapshots[name] = Snapshot(**binding["snapshot"])
+            if not typed and not _verify_staged_snapshot(root, snapshots[name], name=name):
                 raise ValueError("적용 입력 복사본이 변경되었습니다.")
 
-        if len(set(all_positions)) != len(all_positions) or request.source_id != snapshots["train"].source_id:
+        if typed and (packet["partitions"]["train"]["parent_source_id"] != packet["partitions"]["validation"]["parent_source_id"]
+                      or packet["partitions"]["train"]["split_signature"] != packet["partitions"]["validation"]["split_signature"]
+                      or packet["partitions"]["train"]["export_marker_sha256"] != packet["partitions"]["validation"]["export_marker_sha256"]):
+            raise ValueError("두 구간의 입력·분할·내보내기 계보가 다릅니다.")
+        if len(set(all_positions)) != len(all_positions) or request.source_id != (packet["partitions"]["train"]["source_id"] if typed else snapshots["train"].source_id):
             raise ValueError("적용 구간에 행 중복이 있거나 Train 출처가 다릅니다.")
 
         stage = "INPUT_VALIDATION"
         # 복원은 설정·통계 JSON만 사용한다. fit·fit_transform·prepare_splits는 호출하지 않는다.
-        pipeline = load_preparation(state_path)
+        # 해시를 검사한 실제 바이트를 worker 전용 scratch에 고정한 뒤 복원한다.
+        private_state = root / "scratch/task/verified_preprocessor.json"
+        with private_state.open("xb") as stream:
+            stream.write(state_bytes)
+        pipeline = load_preparation(private_state)
         transformer = pipeline.named_steps["preprocess"]
 
         if (json.loads(json.dumps(asdict(transformer.roles))) != packet["roles"] or asdict(transformer.rules) != packet["rules"]
@@ -122,65 +142,41 @@ def execute_request(request, root):
         impact = {}
 
         for name in ("train", "validation"):
-            source = inputs / name / "input.bin"
-            metadata = []
-            stage = "CSV_HEADER"
-
-            with source.open(encoding="utf-8-sig", newline="") as stream:
-                reader = iter_csv_rows(stream)
-                header = next(reader, [])
-
-                if not header or any(not value for value in header) or len(header) != len(set(header)) or not set(roles.required_columns).issubset(header):
-                    raise ValueError("적용 입력의 역할·CSV 헤더가 다릅니다.")
-
-                indices = [header.index(column) for column in metadata_columns]
-
-                for row in reader:
-                    if len(metadata) >= len(positions[name]) or len(row) != len(header):
-                        raise ValueError("적용 입력 행·열 구조가 계약과 다릅니다.")
-
-                    metadata.append([row[index] for index in indices])
-
-            if len(metadata) != len(positions[name]):
-                raise ValueError("적용 입력 행 수가 계약과 다릅니다.")
-
-            stage = "CSV_LOAD"
-            frame = pd.read_csv(source, encoding="utf-8-sig", usecols=list(roles.feature_columns),
-                                dtype={column: "string" for column in roles.categorical})
-
-            if len(frame) != len(positions[name]):
-                raise ValueError("표형 로더의 행 수가 계약과 다릅니다.")
-
+            if typed:
+                frame = feature_view(load_part(root, packet["partitions"][name], name), roles)
+                with worker_filesystem(root):
+                    typed_metadata = row_metadata(inputs / name, BundleRef.from_dict(packet["partitions"][name]["bundle"]), roles)
+                if typed_metadata["row_positions"] != positions[name]:
+                    raise ValueError("typed 구간의 실제 행 위치와 승인된 위치가 다릅니다.")
+            else:
+                frame, metadata = _load_csv_partition(inputs / name / "input.bin", roles, metadata_columns, len(positions[name]))
             stage = "INPUT_VALIDATION"
             transformed = pipeline.transform(frame)
-            # 실제 적용 결과의 영향 합계. 같은 변환 결과에서 세며 기준을 다시 산출하지 않는다.
             impact[name] = impact_totals(transformer.impact(frame, transformed))
-
             with (prepared / f"{name}_features.csv").open("xb") as stream:
                 writer = BoundedCsvWriter(stream, maximum)
                 transformed.to_csv(writer, index=False, float_format="%.17g", lineterminator="\n")
-
             row_record = write_json_bounded(prepared / f"{name}_rows.json",
-                                            {"row_positions": positions[name], "metadata_columns": metadata_columns, "metadata": metadata},
-                                            min(maximum, 8 * 1024 * 1024))
+                typed_metadata if typed else {"row_positions": positions[name], "metadata_columns": metadata_columns, "metadata": metadata},
+                min(maximum, 8 * 1024 * 1024))
             records[name] = {"rows": len(frame), "features": {"size_bytes": writer.size, "sha256": writer.digest.hexdigest()}, "row_contract": row_record}
 
         stage = "SNAPSHOT_RECHECK"
-
+        if typed:
+            with worker_filesystem(root):
+                for name in ("train", "validation"):
+                    check_part(inputs / name, packet["partitions"][name], partition=name)
         for name in snapshots:
             if not _verify_staged_snapshot(root, snapshots[name], name=name):
                 raise ValueError("적용 중 입력 복사본이 변경되었습니다.")
-
         with state_path.open("rb") as stream:
             _, digest = _scan(stream, state_maximum)
-
         if digest != packet["preprocessor_sha256"]:
             raise ValueError("적용 중 저장 기준 파일이 변경되었습니다.")
-
-        write_json_bounded(prepared / "application.json", {"schema_version": "preparation_application_v2", "status": "applied",
+        write_json_bounded(prepared / "application.json", {"schema_version": "preparation_application_v3" if typed else "preparation_application_v2", "status": "applied",
                            "binding": packet, "partitions": records, "impact": impact, "transformed": True, "refit": False,
                            "test_used": False, "model_trained": False}, 65536)
-        (prepared / "application.md").write_text(application_markdown(), encoding="utf-8", newline="")
+        (prepared / "application.md").write_text(application_markdown(typed=typed), encoding="utf-8", newline="")
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, csv.Error) as error:
         code = "ACCESS_DENIED" if isinstance(error, PermissionError) else "IO_FAILED" if isinstance(error, OSError) else "INPUT_INVALID"
         _diagnostic(root, stage, code)
@@ -193,6 +189,29 @@ def execute_request(request, root):
 
     _diagnostic(root, "COMPLETE", "PASSED")
     return WorkerResult(request.task_id, request.request_id, "succeeded", "WORKER_EXITED_OK", ("prepared",))
+
+
+def _load_csv_partition(source, roles, metadata_columns, count):
+    """기존 CSV 구간의 헤더·행 구조와 문자열 메타데이터를 읽는다."""
+    import pandas as pd
+    from src.agents.partition_csv import iter_csv_rows
+    metadata = []
+    with source.open(encoding="utf-8-sig", newline="") as stream:
+        reader = iter_csv_rows(stream)
+        header = next(reader, [])
+        if not header or any(not value for value in header) or len(header) != len(set(header)) or not set(roles.required_columns).issubset(header):
+            raise ValueError("적용 입력의 역할·CSV 헤더가 다릅니다.")
+        indices = [header.index(column) for column in metadata_columns]
+        for row in reader:
+            if len(metadata) >= count or len(row) != len(header):
+                raise ValueError("적용 입력 행·열 구조가 계약과 다릅니다.")
+            metadata.append([row[index] for index in indices])
+    if len(metadata) != count:
+        raise ValueError("적용 입력 행 수가 계약과 다릅니다.")
+    frame = pd.read_csv(source, encoding="utf-8-sig", usecols=list(roles.feature_columns), dtype={column: "string" for column in roles.categorical})
+    if len(frame) != count:
+        raise ValueError("표형 로더의 행 수가 계약과 다릅니다.")
+    return frame, metadata
 
 
 def main():

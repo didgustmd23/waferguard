@@ -20,6 +20,8 @@ WORKER_FILES = tuple(dict.fromkeys(BASE_FILES + (
     "src/preprocessing/module_contracts.py", "src/preprocessing/module_registry.py",
     "src/preprocessing/builtin_modules.py", "src/preprocessing/pipeline.py",
     "src/preprocessing/input_profile.py",
+    "src/preprocessing/canonical_data.py", "src/preprocessing/tabular_bundle.py", "src/preprocessing/tabular_loaders.py",
+    "src/agents/tabular_worker_input.py", "src/agents/strict_json.py",
 )))
 CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     ENTRY, "src/agents/module_pipeline.py", "src/agents/module_pipeline_cli.py",
@@ -39,6 +41,8 @@ CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     "src/agents/llm_task_assist.py", "src/agents/task_adapters.py", "src/agents/tabular_task.py",
     "src/agents/task_plan.py", "src/agents/task_recommend.py", "src/agents/delegated_approval.py",
     "src/agents/strict_json.py",
+    "src/agents/tabular_pipeline.py", "src/agents/tabular_source_contract.py", "src/agents/split_evidence.py",
+    "src/agents/tabular_input_worker.py", "src/agents/workflow_approval.py",
     "configs/agents/modules/missing_row_histogram.json",
     "configs/agents/modules/missing_row_histogram_settings.json",
 )))

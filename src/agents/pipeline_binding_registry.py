@@ -3,6 +3,7 @@
 from .reviewed_csv_pipeline_contract import bind_reviewed_csv_pipeline
 from .pipeline_csv_execution import build_csv_pipeline_execution
 from .input_profile_pipeline import ADAPTER_ID as INPUT_PROFILE_ADAPTER_ID, build_input_profile_execution
+from .tabular_pipeline import ADAPTER_ID as TABULAR_DIAGNOSTIC_ID, build_tabular_profile_execution
 
 
 # 등록 ID만 고정 구현에 연결한다. profile 값으로 임의 모듈을 import하지 않는다.
@@ -16,6 +17,7 @@ _PIPELINE_BINDERS = {
 _PIPELINE_EXECUTORS = {
     "tabular_csv_v1": build_csv_pipeline_execution,
     INPUT_PROFILE_ADAPTER_ID: build_input_profile_execution,
+    TABULAR_DIAGNOSTIC_ID: build_tabular_profile_execution,
 }
 
 

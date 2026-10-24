@@ -113,9 +113,55 @@ def create(name, split_run, split_scope_path, export_run, rules_path, limits, ma
             "notice": "Train 전용 후보 기준 산출입니다. 실제 변환·모델 학습은 하지 않습니다."}
 
 
+def create_from_tabular(name, train, rules, limits, maximum, *, confirmed=False):
+    """검증된 typed Train만 고정한다. 후보 산출·승인은 별도 단계다."""
+    from .tabular_source_contract import TabularPartitionInputContract
+    if not confirmed or type(train) is not TabularPartitionInputContract:
+        raise ValueError("typed Train 선택을 명시적으로 확인해야 합니다.")
+    if train.split.artifact.scope.actor_id != _current_actor() or train.export.scope.actor_id != _current_actor():
+        raise ValueError("분할·내보내기를 승인한 계정에서만 생성하세요.")
+    contract = PreparationCandidateContract(train, rules, limits, maximum, schema_version="preparation_candidate_v2")
+    contract.check()
+    directory = _directory(name, create_parent=True)
+    if directory.exists() or directory.is_symlink():
+        raise ValueError("기존 후보 실행은 덮어쓰지 않습니다.")
+    states = LocalStateStore(directory)
+    tool = PreparationCandidateTool(states, contract)
+    record = {"schema_version": contract.schema_version, "train": train.to_dict(), "rules": asdict(rules), "limits": asdict(limits),
+              "max_candidate_bytes": maximum, "code_id": tool.code_id, "plan_id": tool.plan.plan_id}
+    payload = json.dumps(record, ensure_ascii=False, allow_nan=False)
+    from .strict_json import loads
+    loads(payload, 8 * 1024 * 1024)
+    state = states.create(_current_actor(), policy_version=contract.schema_version)
+    (directory / "selection.json").write_text(payload, encoding="utf-8")
+    ApprovalStore(directory / "approvals.sqlite3")
+    append_event(directory / "events.jsonl", "run_created", "RUN_CREATED", stage=state.current_stage, revision=state.revision)
+    return {"status": "created", "run_dir": str(directory), "worker_started": False, "input_warnings": contract.input_warnings}
+
+
+def _typed_tool(directory, record):
+    from .tabular_source_contract import TabularPartitionInputContract
+    if set(record) != {"schema_version", "train", "rules", "limits", "max_candidate_bytes", "code_id", "plan_id"}:
+        raise ValueError("v2 후보 선택 필드가 다릅니다.")
+    states = LocalStateStore(directory)
+    if states.load().actor_id != _current_actor():
+        raise ValueError("후보를 만든 계정에서만 접근하세요.")
+    train = TabularPartitionInputContract.from_dict(record["train"])
+    contract = PreparationCandidateContract(train, PreparationRules(**record["rules"]), WorkerLimits(**record["limits"]),
+                                             record["max_candidate_bytes"], schema_version=record["schema_version"])
+    tool = PreparationCandidateTool(states, contract)
+    if record["code_id"] != tool.code_id or record["plan_id"] != tool.plan.plan_id or states.load().policy_version != contract.schema_version:
+        raise ValueError("v2 후보 코드·계획·정책이 바뀌었습니다.")
+    return tool
+
+
 def open_run(name):
     directory = _root(_directory(name))
-    record = _decode(_read_file(directory / "selection.json", 65536).decode("utf-8"))
+    from .strict_json import loads
+    record = loads(_read_file(directory / "selection.json", 8 * 1024 * 1024).decode("utf-8"), 8 * 1024 * 1024)
+    if record.get("schema_version") == "preparation_candidate_v2":
+        return _typed_tool(directory, record)
+    _decode(json.dumps(record, ensure_ascii=False))
     fields = {"split_run", "split_scope", "export_run", "export_scope", "train_contract_id", "rules", "limits", "max_candidate_bytes", "code_id", "plan_id"}
 
     if set(record) != fields:
@@ -150,6 +196,7 @@ def approve(tool):
     scope = manager.scope_for("derive_preparation")
     token = "CANDIDATE-" + secrets.token_hex(4).upper()
     print(json.dumps({"stage": "derive_preparation", "partition": "train", "rules": asdict(tool.contract.rules),
+                      "input_warnings": tool.contract.input_warnings,
                       "limits": asdict(tool.limits), "max_candidate_bytes": tool.contract.max_candidate_bytes,
                       "lifetime_minutes": 30,
                       "notice": "Train 기준 후보만 산출합니다. Validation·Test 전달, 데이터 변환 적용, 모델 학습, LLM 전송 없음."}, ensure_ascii=False, indent=2))

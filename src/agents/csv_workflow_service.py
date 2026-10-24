@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from .artifacts import check_artifacts
-from .csv_workflow_creation import CsvCreationPreview, code_id, create, preview_creation
+from .csv_workflow_creation import CsvCreationPreview, code_id, create, preview_creation, typed_run
 from .csv_workflow_schema import creation_schema
 from .executor import RulesExecutor
 from .delegated_approval import record_delegated
@@ -43,14 +43,15 @@ def read_worker_diagnostic(root):
 class SelectedExecutor(RulesExecutor):
     """기존 OS 잠금 안에서도 사용자가 본 단계·revision·정확한 승인을 다시 검사한다."""
 
-    def __init__(self, original, tool, stage, revision):
+    def __init__(self, original, tool, stage, revision, connection_code=code_id):
         super().__init__(original.states, original.approvals, original.plan, tuple(original.tools.values()))
         self.tool, self.stage, self.revision = tool, stage, revision
-        self.connection_code = code_id()
+        self.code = connection_code
+        self.connection_code = connection_code()
 
     def _run_step(self, state, approval_id):
         self.tool._check_arguments(self.tool.arguments)
-        if code_id() != self.connection_code:
+        if self.code() != self.connection_code:
             raise ValueError("실행 잠금 대기 중 연결 코드가 변경됐습니다.")
         if state.current_stage != self.stage or state.revision != self.revision:
             raise ValueError("사용자가 선택한 단계·revision이 변경됐습니다.")
@@ -60,6 +61,10 @@ class SelectedExecutor(RulesExecutor):
 
 
 class CsvWorkflowService:
+    # 표형 v2 서비스는 같은 승인·실행·결과 규약을 상속하고 연결 코드 지문만 바꾼다.
+    connection_code = staticmethod(code_id)
+    typed = False
+
     def __init__(self, module_id):
         from .workflow_service_registry import CSV_IDS
 
@@ -91,15 +96,17 @@ class CsvWorkflowService:
         return {**create(preview, confirmed=confirmed), "runtime": self.runtime()}
 
     def _open(self, name):
-        if self.module_id == "csv_split_review":
+        # CSV·표형 작업은 같은 역할 이름(접두사 뒤)으로 기존 CLI 실행 폴더를 연다.
+        role = self.module_id.split("_", 1)[1]
+        if role == "split_review":
             from . import snapshot_split_cli as cli
 
             tool = cli.open_run(name)
-        elif self.module_id == "csv_partition_export":
+        elif role == "partition_export":
             from . import partition_export_cli as cli
 
             tool = cli.open_run(name)
-        elif self.module_id in {"csv_prepare_candidate", "csv_prepare_apply"}:
+        elif role in {"prepare_candidate", "prepare_apply"}:
             from . import preparation_pipeline_cli as pipeline
             from . import preparation_candidate_cli as candidate
             from . import preparation_apply_cli as application
@@ -108,16 +115,19 @@ class CsvWorkflowService:
             if (directory / "CANCEL_REQUESTED").exists():
                 raise ValueError("취소된 통합 작업입니다.")
             cli, tool = candidate, source
-            if self.module_id == "csv_prepare_apply":
+            if role == "prepare_apply":
                 cli, tool = application, pipeline._application(directory, record, source)
                 if tool is None:
                     raise ValueError("후보 검토 후 적용 작업을 먼저 준비하세요.")
         else:
             from . import csv_handoff_workflow as cli
 
-            tool = cli.open_run(name)
+            tool = cli.open_run(name, typed=self.typed)
             return cli, tool, cli.manager(tool)
 
+        # 같은 실행 폴더 구조를 쓰므로 v1·v2 실행을 서로의 서비스로 열지 않는다.
+        if typed_run(tool) is not self.typed:
+            raise ValueError("이 작업 버전으로 만든 실행이 아닙니다.")
         tool._check_arguments(tool.arguments)
         return cli, tool, cli.executor(tool)
 
@@ -126,7 +136,7 @@ class CsvWorkflowService:
         reports = {stage: str(tool.states.directory / relative) for stage, relative in state.artifact_refs.items()}
         return {"stage": state.current_stage, "module_id": self.module_id,
                 "limits": asdict(tool.limits), "arguments": tool.arguments,
-                "local_reports": reports, "connection_code_id": code_id(),
+                "local_reports": reports, "connection_code_id": self.connection_code(),
                 "notice": "현재 단계만 승인합니다. 원본 덮어쓰기·모델 학습·LLM 전송·외부 공유 없음."}
 
     def status(self, name):
@@ -177,7 +187,7 @@ class CsvWorkflowService:
         return read_worker_diagnostic(tool._work_root(manager._output(task).name))
 
     def _save_proof(self, tool, manager, approval_id):
-        proof = {"code_id": code_id(), "scope": asdict(manager.scope_for(tool.states.load().current_stage))}
+        proof = {"code_id": self.connection_code(), "scope": asdict(manager.scope_for(tool.states.load().current_stage))}
         # 연결 코드 변경 후 이전 승인으로 실행하지 않는다. 기존 승인 DB 형식은 유지한다.
         with (tool.states.directory / ("ui_approval_" + approval_id + ".json")).open("x", encoding="utf-8") as stream:
             json.dump(proof, stream, sort_keys=True)
@@ -198,11 +208,12 @@ class CsvWorkflowService:
             if type(approval_id) is not str or re.fullmatch("[a-f0-9]{32}", approval_id) is None:
                 raise ValueError("고정 형식의 승인 ID가 필요합니다.")
             proof = read_metadata(tool.states.directory / ("ui_approval_" + approval_id + ".json"))
-            if proof != {"code_id": code_id(), "scope": asdict(manager.scope_for(expected_stage))}:
+            if proof != {"code_id": self.connection_code(), "scope": asdict(manager.scope_for(expected_stage))}:
                 raise ValueError("승인 후 연결 코드·범위가 변경됐습니다.")
-        selected = SelectedExecutor(manager, tool, expected_stage, expected_revision)
+        selected = SelectedExecutor(manager, tool, expected_stage, expected_revision, self.connection_code)
         result = asdict(selected.run_next(approval_id=approval_id))
-        native_requested = self.module_id != "csv_local_handoff" and approval_id is not None and expected_stage != "review_eda"
+        native_requested = (not self.module_id.endswith("_local_handoff") and approval_id is not None
+                            and expected_stage != "review_eda")
         return {**result, "worker_started": None if native_requested else False, "local_only": True}
 
     def recorded_results(self, name, recorded_code_id):
@@ -259,7 +270,7 @@ class CsvWorkflowService:
                             if child.suffix.lower() == ".png" and child.is_file():
                                 items.append({"kind": "image", "label": step.stage + "/" + child.relative_to(output).as_posix(),
                                               "path": str(_path(child, directory=False))})
-                if self.module_id == "csv_local_handoff" and step.stage == "ingest":
+                if self.module_id.endswith("_local_handoff") and step.stage == "ingest":
                     from .csv_handoff_cli import _directory
 
                     bundle = _path(_directory(name), directory=True)

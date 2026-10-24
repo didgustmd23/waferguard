@@ -67,7 +67,8 @@ def create(name, candidate_run, limits, maximum, *, confirmed=False):
 
     candidate_run = str(_root(Path(candidate_run).absolute()))
     evidence = read_candidate_evidence(candidate_run, _current_actor())
-    contract = PreparationApplyContract(evidence, limits, maximum)
+    version = "preparation_apply_v2" if evidence.derivation.schema_version == "preparation_candidate_v2" else POLICY_VERSION
+    contract = PreparationApplyContract(evidence, limits, maximum, schema_version=version)
     directory = _directory(name, create_parent=True)
 
     if directory.exists() or directory.is_symlink():
@@ -79,7 +80,7 @@ def create(name, candidate_run, limits, maximum, *, confirmed=False):
               "limits": asdict(limits), "max_partition_bytes": maximum, "code_id": tool.code_id, "plan_id": tool.plan.plan_id}
     payload = json.dumps(record, ensure_ascii=False, allow_nan=False)
     _decode(payload)
-    state = states.create(_current_actor(), policy_version=POLICY_VERSION)
+    state = states.create(_current_actor(), policy_version=contract.schema_version)
     (directory / "selection.json").write_text(payload, encoding="utf-8")
     ApprovalStore(directory / "approvals.sqlite3")
     append_event(directory / "events.jsonl", "run_created", "RUN_CREATED", stage=state.current_stage, revision=state.revision)
@@ -101,10 +102,11 @@ def open_run(name):
         raise ValueError("적용 작업을 생성한 OS 계정에서만 접근하세요.")
 
     evidence = read_candidate_evidence(record["candidate_run"], _current_actor())
-    contract = PreparationApplyContract(evidence, WorkerLimits(**record["limits"]), record["max_partition_bytes"])
+    version = "preparation_apply_v2" if evidence.derivation.schema_version == "preparation_candidate_v2" else POLICY_VERSION
+    contract = PreparationApplyContract(evidence, WorkerLimits(**record["limits"]), record["max_partition_bytes"], schema_version=version)
     tool = PreparationApplyTool(states, contract)
 
-    if evidence.signature != record["candidate_id"] or tool.code_id != record["code_id"] or tool.plan.plan_id != record["plan_id"]:
+    if states.load().policy_version != version or evidence.signature != record["candidate_id"] or tool.code_id != record["code_id"] or tool.plan.plan_id != record["plan_id"]:
         raise ValueError("후보 상태·대상 구간·코드·한도가 변경되었습니다. 새 실행과 승인이 필요합니다.")
 
     return tool

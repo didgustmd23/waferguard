@@ -4,13 +4,14 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 import re
+import tempfile
 
 from .approval_store import ApprovalStore
 from .artifacts import _fingerprint, _root
 from .cli import _current_actor
 from .contracts import ToolResult
 from .csv_handoff_cli import export_bundle, _directory, verify_bundle
-from .csv_handoff_contract import PREPARED_FILES, MAX_BUNDLE_BYTES
+from .csv_handoff_contract import PREPARED_FILES, MAX_BUNDLE_BYTES, _snapshot_bundle
 from .csv_workflow_creation import _pipeline, code_id
 from .executor import ExecutionPlan, ExecutionStep, RegisteredTool, RulesExecutor, _digest
 from .isolated_eda import _read_file
@@ -19,10 +20,23 @@ from .split_evidence import read_metadata
 from .worker_contract import WorkerLimits
 
 
-def directory_for(name):
+SELECTION_FIELDS = {"name", "pipeline_name", "max_bundle_bytes", "limits", "code_id", "actor", "parent_id"}
+
+
+def directory_for(name, *, typed=False):
     if type(name) is not str or re.fullmatch(r"[a-z][a-z0-9_-]{0,47}", name) is None:
         raise ValueError("고정 형식의 전달 작업 이름이 필요합니다.")
-    return Path(__file__).resolve().parents[2] / "logs/agents/csv_local_handoff/runs" / name
+    module = "tabular_local_handoff" if typed else "csv_local_handoff"
+    return Path(__file__).resolve().parents[2] / "logs/agents" / module / "runs" / name
+
+
+def _connection_code(typed):
+    """v1은 기존 CSV 연결 지문, v2는 표형 서비스 연결 지문을 승인·실행 기준으로 쓴다."""
+    if typed:
+        from .tabular_workflow_service import code_id as tabular_code_id
+
+        return tabular_code_id()
+    return code_id()
 
 
 class HandoffTool:
@@ -30,19 +44,25 @@ class HandoffTool:
         self.states, self.arguments = states, selection
         # 읽기 전용 검증에서만 실행 당시 코드 지문을 기준으로 삼는다. 이 값이 있으면 실행 함수는 거부한다.
         self.recorded_code_id = recorded_code_id
+        # v2 선택 기록에만 표형 출처 ID가 있다. 형식과 정책·계획 ID가 함께 바뀐다.
+        self.typed = "source_contract_id" in selection
         self.limits = WorkerLimits(**selection["limits"])
         self.cancel = states.directory / "CANCEL_REQUESTED"
-        self.plan = ExecutionPlan("csv_handoff:" + selection["parent_id"], _digest(json.dumps(selection, sort_keys=True)),
-            "csv_local_handoff_v1", (ExecutionStep("preflight", "run_preflight"),
+        prefix, policy = ("tabular_handoff:", "tabular_local_handoff_v2") if self.typed else ("csv_handoff:", "csv_local_handoff_v1")
+        self.plan = ExecutionPlan(prefix + selection["parent_id"], _digest(json.dumps(selection, sort_keys=True)),
+            policy, (ExecutionStep("preflight", "run_preflight"),
                                      ExecutionStep("ingest", "run_ingest", json.dumps(selection))))
 
     def _check_arguments(self, arguments):
-        expected = code_id() if self.recorded_code_id is None else self.recorded_code_id
+        expected = _connection_code(self.typed) if self.recorded_code_id is None else self.recorded_code_id
         if arguments != self.arguments or self.arguments["code_id"] != expected:
             raise ValueError("로컬 전달 코드·선택이 변경됐습니다.")
-        directory, record, candidate, evidence, application = _pipeline(self.arguments["pipeline_name"], applied=True)
+        directory, record, candidate, evidence, application = _pipeline(self.arguments["pipeline_name"], applied=True,
+                                                                        typed=self.typed)
         if _fingerprint(application.states.directory / "state.json")["sha256"] != self.arguments["parent_id"]:
             raise ValueError("적용 완료 증거가 변경됐습니다.")
+        if self.typed and evidence.derivation.train.parent_source_id != self.arguments["source_contract_id"]:
+            raise ValueError("적용 결과의 표형 출처가 전달 선택과 다릅니다.")
 
     def _refuse_recorded(self):
         if self.recorded_code_id is not None:
@@ -60,30 +80,57 @@ class HandoffTool:
     def execute(self, output, arguments):
         self._refuse_recorded()
         self._check_arguments(arguments)
-        result = export_bundle(arguments["pipeline_name"], arguments["name"], arguments["max_bundle_bytes"], confirmed=True)
+        result = export_bundle(arguments["pipeline_name"], arguments["name"], arguments["max_bundle_bytes"], confirmed=True,
+                               source_contract_id=arguments.get("source_contract_id"))
         (output / "handoff.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
         return ToolResult("passed", artifact_refs=("handoff.json",))
 
     def validate(self, output, arguments):
+        return self.verified_bundle(output, arguments) is not None
+
+    def verified_bundle(self, output, arguments):
+        """묶음을 비공개 사본으로 고정하고 자체 검사·승인 기록 대조를 같은 바이트에서 수행한다.
+
+        통과하면 봉인한 완료 기록의 형식·파일 목록·해시를 돌려주고, 아니면 None이다.
+        """
         self._check_arguments(arguments)
         if {path.name for path in output.iterdir()} - {"handoff.json", "AGENT_COMPLETE.json"}:
-            return False
+            return None
         result = read_metadata(output / "handoff.json")
         if result.get("directory") != str(_directory(arguments["name"])) or result.get("status") != "handoff_created":
-            return False
-        verify_bundle(_directory(arguments["name"]))
-        bundle = _directory(arguments["name"])
-        provenance = read_metadata(bundle / "provenance.json")
-        directory, record, candidate, evidence, application = _pipeline(arguments["pipeline_name"], applied=True)
+            return None
+        expected = "tabular_preparation_handoff_v2" if self.typed else "csv_preparation_handoff_v1"
+        directory, record, candidate, evidence, application = _pipeline(arguments["pipeline_name"], applied=True,
+                                                                        typed=self.typed)
         from .preparation_apply_cli import status
 
         prepared = Path(status(application)["local_result_directory"])
-        if any(_fingerprint(bundle / "prepared" / name) != _fingerprint(prepared / name) for name in PREPARED_FILES):
-            return False
-        return (provenance.get("pipeline_name") == arguments["pipeline_name"]
-                and provenance.get("candidate_id") == evidence.signature
-                and provenance.get("apply_run_id") == application.states.load().run_id
-                and _fingerprint(bundle / "preprocessor.json")["sha256"] == evidence.state_sha256)
+
+        with tempfile.TemporaryDirectory() as scratch:
+            bundle = Path(scratch)
+            _snapshot_bundle(_directory(arguments["name"]), bundle)
+            if verify_bundle(bundle)["schema_version"] != expected:
+                return None
+            provenance = read_metadata(bundle / "provenance.json")
+            if self.typed:
+                from .csv_handoff_cli import TYPED_HANDOFF_README
+
+                # v2는 안내서 고정 문구와 계획·적용 계획 식별값까지 대조한다. v1 과거 결과 검증 범위는 바꾸지 않는다.
+                if (provenance.get("source_contract_id") != arguments["source_contract_id"]
+                        or provenance.get("pipeline_signature") != record["plan_signature"]
+                        or provenance.get("apply_plan_id") != application.plan.plan_id
+                        or _read_file(bundle / "README.md", 65536) != TYPED_HANDOFF_README.encode("utf-8")):
+                    return None
+            if any(_fingerprint(bundle / "prepared" / name) != _fingerprint(prepared / name) for name in PREPARED_FILES):
+                return None
+            if (provenance.get("pipeline_name") != arguments["pipeline_name"]
+                    or provenance.get("candidate_id") != evidence.signature
+                    or provenance.get("apply_run_id") != application.states.load().run_id
+                    or _fingerprint(bundle / "preprocessor.json")["sha256"] != evidence.state_sha256):
+                return None
+            manifest = read_metadata(bundle / "HANDOFF_COMPLETE.json")
+            return {"schema_version": manifest["schema_version"], "files": manifest["files"],
+                    "manifest_sha256": _fingerprint(bundle / "HANDOFF_COMPLETE.json")["sha256"]}
 
 
 def manager(tool):
@@ -111,7 +158,8 @@ def open_recorded(name, recorded_code_id):
         raise ValueError("실행 당시 코드 지문이 필요합니다.")
     directory = _root(directory_for(name))
     selection = read_metadata(directory / "selection.json")
-    if set(selection) != {"name", "pipeline_name", "max_bundle_bytes", "limits", "code_id", "actor", "parent_id"}:
+    # 읽기 전용 과거 결과 검증은 기존 v1 전달만 허용한다.
+    if set(selection) != SELECTION_FIELDS:
         raise ValueError("전달 선택 기록이 잘못됐습니다.")
     states = LocalStateStore(directory)
     if selection["actor"] != _current_actor() or states.load().actor_id != _current_actor() or selection["name"] != name:
@@ -147,17 +195,22 @@ def open_recorded(name, recorded_code_id):
     return tool, checker
 
 
-def create_run(name, pipeline_name, maximum, limits):
+def create_run(name, pipeline_name, maximum, limits, *, source_contract_id=None):
     if type(maximum) is not int or not 0 < maximum <= MAX_BUNDLE_BYTES:
         raise ValueError("로컬 전달 바이트 상한이 잘못됐습니다.")
-    directory, record, candidate, evidence, application = _pipeline(pipeline_name, applied=True)
+    typed = source_contract_id is not None
+    directory, record, candidate, evidence, application = _pipeline(pipeline_name, applied=True, typed=typed)
+    if typed and evidence.derivation.train.parent_source_id != source_contract_id:
+        raise ValueError("적용 결과의 표형 출처가 전달 선택과 다릅니다.")
     selected = {"name": name, "pipeline_name": pipeline_name, "max_bundle_bytes": maximum,
-                "limits": asdict(limits), "code_id": code_id(), "actor": _current_actor(),
+                "limits": asdict(limits), "code_id": _connection_code(typed), "actor": _current_actor(),
                 "parent_id": _fingerprint(application.states.directory / "state.json")["sha256"]}
-    target = directory_for(name)
+    if typed:
+        selected["source_contract_id"] = source_contract_id
+    target = directory_for(name, typed=True) if typed else directory_for(name)
     if not target.parent.exists():
         parent = Path(__file__).resolve().parents[2]
-        for part in ("logs", "agents", "csv_local_handoff", "runs"):
+        for part in ("logs", "agents", "tabular_local_handoff" if typed else "csv_local_handoff", "runs"):
             parent = parent / part
             if not parent.exists():
                 parent.mkdir()
@@ -165,16 +218,16 @@ def create_run(name, pipeline_name, maximum, limits):
     _root(target.parent)
     target.mkdir()
     states = LocalStateStore(target)
-    states.create(_current_actor(), policy_version="csv_local_handoff_v1")
+    states.create(_current_actor(), policy_version="tabular_local_handoff_v2" if typed else "csv_local_handoff_v1")
     (target / "selection.json").write_text(json.dumps(selected, ensure_ascii=False), encoding="utf-8")
     ApprovalStore(target / "approvals.sqlite3")
     return {"run_dir": str(target), "status": "created"}
 
 
-def open_run(name):
-    directory = _root(directory_for(name))
+def open_run(name, *, typed=False):
+    directory = _root(directory_for(name, typed=True) if typed else directory_for(name))
     selection = read_metadata(directory / "selection.json")
-    if set(selection) != {"name", "pipeline_name", "max_bundle_bytes", "limits", "code_id", "actor", "parent_id"}:
+    if set(selection) != (SELECTION_FIELDS | {"source_contract_id"} if typed else SELECTION_FIELDS):
         raise ValueError("전달 선택 기록이 잘못됐습니다.")
     states = LocalStateStore(directory)
     if selection["actor"] != _current_actor() or states.load().actor_id != _current_actor() or selection["name"] != name:

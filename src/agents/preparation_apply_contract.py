@@ -12,7 +12,7 @@ from .artifacts import _root, _fingerprint
 from .executor import ExecutionPlan, ExecutionStep
 from .partition_input_contract import bind_partition_input
 from .preparation_candidate_contract import PreparationCandidateContract
-from .preparation_candidate_results import read_candidate
+from .preparation_candidate_results import read_checked_candidate
 from .snapshot_eda import _digest
 from .split_evidence import CommittedArtifact, read_confirmed_split, read_committed_artifact, read_metadata
 from .state import LocalStateStore
@@ -63,6 +63,8 @@ def read_candidate_evidence(run_directory, actor):
     saved = read_metadata(root / "execution_plan.json")
     record = read_metadata(root / "selection.json")
     state = LocalStateStore(root).load()
+    if record.get("schema_version") == "preparation_candidate_v2":
+        return _read_typed_candidate(root, actor, saved, record, state)
     fields = {"split_run", "split_scope", "export_run", "export_scope", "train_contract_id", "rules", "limits", "max_candidate_bytes", "code_id", "plan_id"}
 
     if set(record) != fields or set(saved) != {"run_id", "actor_id", "plan"} or state.actor_id != actor or state.status != "completed":
@@ -101,13 +103,47 @@ def read_candidate_evidence(run_directory, actor):
                           plan.source_id, plan.config_id, plan.plan_id, plan.policy_version)
     artifact = read_committed_artifact(root, scope)
 
-    if {path.name for path in artifact.directory.iterdir()} != {"candidate", "AGENT_COMPLETE.json"} or read_candidate(artifact.directory / "candidate", contract, record["code_id"]) is None:
+    if {path.name for path in artifact.directory.iterdir()} != {"candidate", "AGENT_COMPLETE.json"} or read_checked_candidate(artifact.directory / "candidate", contract, record["code_id"], packet) is None:
         raise ValueError("승인·커밋된 후보 파일의 정합성이 일치하지 않습니다.")
 
     payload = read_metadata(artifact.directory / "candidate/preprocessor.json")
     artifact.check()
     return CandidateEvidence(artifact, contract, record["code_id"],
                              _fingerprint(artifact.directory / "candidate/preprocessor.json")["sha256"],
+                             json.dumps(payload["output_columns"], ensure_ascii=False))
+
+
+def _read_typed_candidate(root, actor, saved, record, state):
+    """v2 후보의 고정 입력·실행 계획·소비 승인·완료 파일을 복원한다."""
+    from .tabular_source_contract import TabularPartitionInputContract
+    if (set(record) != {"schema_version", "train", "rules", "limits", "max_candidate_bytes", "code_id", "plan_id"}
+            or set(saved) != {"run_id", "actor_id", "plan"} or state.actor_id != actor or state.status != "completed"):
+        raise ValueError("같은 계정이 완료한 v2 후보 기록이 필요합니다.")
+    train = TabularPartitionInputContract.from_dict(record["train"])
+    if train.split.artifact.scope.actor_id != actor or train.export.scope.actor_id != actor:
+        raise ValueError("선행 승인의 계정이 다릅니다.")
+    contract = PreparationCandidateContract(train, PreparationRules(**record["rules"]), WorkerLimits(**record["limits"]),
+                                             record["max_candidate_bytes"], schema_version=record["schema_version"])
+    packet = json.loads(json.dumps(contract.packet(record["code_id"])))
+    value = dict(saved["plan"])
+    value["steps"] = tuple(ExecutionStep(**step) for step in value["steps"])
+    plan = ExecutionPlan(**value)
+    if (saved["run_id"] != state.run_id or saved["actor_id"] != actor or plan.policy_version != contract.schema_version
+            or state.policy_version != plan.policy_version or state.current_stage != "derive_preparation"
+            or record["plan_id"] != plan.plan_id or plan.source_id != contract.source_id or plan.config_id != _digest(packet)
+            or tuple((s.stage, s.action_id) for s in plan.steps) != (("preflight", "run_preflight"), ("derive_preparation", "derive_preparation"))
+            or _digest(json.loads(plan.steps[-1].arguments_json)) != _digest(packet)):
+        raise ValueError("v2 후보 실행 계획·입력 계보가 다릅니다.")
+    scope = ApprovalScope(actor, state.run_id, "derive_preparation", "derive_preparation", state.run_id + ":derive_preparation",
+                          hashlib.sha256(plan.steps[-1].arguments_json.encode("utf-8")).hexdigest(),
+                          plan.source_id, plan.config_id, plan.plan_id, plan.policy_version)
+    artifact = read_committed_artifact(root, scope)
+    if ({p.name for p in artifact.directory.iterdir()} != {"candidate", "AGENT_COMPLETE.json"}
+            or read_checked_candidate(artifact.directory / "candidate", contract, record["code_id"], packet) is None):
+        raise ValueError("v2 후보 파일이 커밋된 증거와 다릅니다.")
+    payload = read_metadata(artifact.directory / "candidate/preprocessor.json")
+    artifact.check()
+    return CandidateEvidence(artifact, contract, record["code_id"], _fingerprint(artifact.directory / "candidate/preprocessor.json")["sha256"],
                              json.dumps(payload["output_columns"], ensure_ascii=False))
 
 
@@ -118,10 +154,14 @@ class PreparationApplyContract:
     candidate: CandidateEvidence
     limits: WorkerLimits
     max_partition_bytes: int = 32 * 1024 * 1024
+    schema_version: str = POLICY_VERSION
 
     def __post_init__(self):
         if not isinstance(self.candidate, CandidateEvidence) or not isinstance(self.limits, WorkerLimits):
             raise TypeError("완료된 후보 증거와 자원 계약이 필요합니다.")
+        expected = "preparation_apply_v2" if self.candidate.derivation.schema_version == "preparation_candidate_v2" else POLICY_VERSION
+        if self.schema_version != expected:
+            raise ValueError("후보 입력 버전과 적용 버전이 다릅니다.")
 
         if type(self.max_partition_bytes) is not int or not 1 <= self.max_partition_bytes <= 1024 * 1024 * 1024:
             raise ValueError("적용 출력 파일 상한은 1 바이트~1 GiB 범위여야 합니다.")
@@ -132,28 +172,61 @@ class PreparationApplyContract:
 
     @property
     def validation(self):
+        if self.schema_version == "preparation_apply_v2":
+            from .partition_input_contract import bind_typed_partition_input
+            return bind_typed_partition_input(self.train.split, self.train.export, "validation", self.train.roles)
         return bind_partition_input(self.train.split, self.train.export, "validation", self.train.roles)
 
     def check(self):
-        self.candidate.check()
-        self.validation.check()
+        self.checked_validation()
         return True
+
+    def checked_validation(self):
+        """후보와 Validation을 이번 호출에서 검사하고 결합한 Validation 계약을 돌려준다. 객체에 저장하지 않는다.
+
+        v2 결합 함수는 결합 직후 구간 검사를 수행하므로 같은 계약을 다시 검사하지 않는다.
+        """
+        self.candidate.check()
+        validation = self.validation
+        if self.schema_version == "preparation_apply_v2":
+            from .tabular_preparation import checked_feature_types
+            checked_feature_types(validation)
+        else:
+            validation.check()
+        return validation
+
+    @property
+    def source_id(self):
+        return self.candidate.derivation.source_id
 
     def positions(self):
         return {name: list(part.row_positions) for name, part in (("train", self.train), ("validation", self.validation))}
 
     def packet(self, code_id):
+        return self.verified_packet(code_id)[0]
+
+    def verified_packet(self, code_id):
+        """이번 호출에서 한 번 검사한 후보·구간으로 packet을 만들고 같은 Validation 계약을 함께 돌려준다."""
         if type(code_id) is not str or len(code_id) != 64 or any(char not in "0123456789abcdef" for char in code_id):
             raise ValueError("적용 코드의 SHA-256 식별값이 필요합니다.")
 
-        self.check()
+        # Train은 후보 증거 재구성(candidate.check) 안에서 검사된다.
+        validation = self.checked_validation()
+        if self.schema_version == "preparation_apply_v2":
+            from .tabular_preparation import checked_partition_packet
+            return {"version": self.schema_version, "candidate_id": self.candidate.signature, "preprocessor_sha256": self.candidate.state_sha256,
+                    "max_state_bytes": self.candidate.derivation.max_candidate_bytes, "roles": asdict(self.train.roles),
+                    "rules": asdict(self.candidate.derivation.rules), "output_columns_sha256": _digest(self.candidate.output_columns),
+                    "output_feature_count": len(self.candidate.output_columns),
+                    "partitions": {"train": checked_partition_packet(self.train), "validation": checked_partition_packet(validation)},
+                    "limits": asdict(self.limits), "max_partition_bytes": self.max_partition_bytes, "code_id": code_id}, validation
         partitions = {name: {"contract_id": part.contract_id, "snapshot": asdict(part.snapshot),
                              "rows": len(part.row_positions), "positions_sha256": _digest(list(part.row_positions))}
-                      for name, part in (("train", self.train), ("validation", self.validation))}
+                      for name, part in (("train", self.train), ("validation", validation))}
         return {"version": POLICY_VERSION, "candidate_id": self.candidate.signature,
                 "preprocessor_sha256": self.candidate.state_sha256,
                 "max_state_bytes": self.candidate.derivation.max_candidate_bytes,
                 "roles": asdict(self.train.roles), "rules": asdict(self.candidate.derivation.rules),
                 "output_columns_sha256": _digest(self.candidate.output_columns),
                 "output_feature_count": len(self.candidate.output_columns), "partitions": partitions,
-                "limits": asdict(self.limits), "max_partition_bytes": self.max_partition_bytes, "code_id": code_id}
+                "limits": asdict(self.limits), "max_partition_bytes": self.max_partition_bytes, "code_id": code_id}, validation

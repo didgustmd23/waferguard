@@ -13,7 +13,19 @@ from .preparation_candidate_report import candidate_markdown
 def read_candidate(directory, contract, code_id, *, committed=False):
     """원본 재파싱·통계 재계산·fit 없이 필드·범위·순서·출처·상한을 확인한다."""
     try:
-        contract.check()
+        # Train을 한 번 검사하고 같은 결과로 기대 binding을 만든다.
+        binding = json.loads(json.dumps(contract.packet(code_id)))
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError, OverflowError, RecursionError):
+        return None
+    return read_checked_candidate(directory, contract, code_id, binding, committed=committed)
+
+
+def read_checked_candidate(directory, contract, code_id, binding, *, committed=False):
+    """같은 호출 안에서 contract.packet(code_id)로 검사·생성한 binding으로 후보 파일을 확인한다.
+
+    binding을 다른 호출에서 보관했다가 넘기지 않는다. 검사 없이 binding을 만드는 진입점이 아니다.
+    """
+    try:
         root = _root(directory)
         expected = {"preprocessor.json", "candidate.json", "candidate.md"}
 
@@ -67,7 +79,7 @@ def read_candidate(directory, contract, code_id, *, committed=False):
 
         expected_report = {
             "schema_version": "preparation_candidate_report_v1", "status": "candidate_ready",
-            "binding": json.loads(json.dumps(contract.packet(code_id))),
+            "binding": binding,
             "preprocessor_sha256": _fingerprint(root / "preprocessor.json")["sha256"],
             "removed": state["removed"], "retained": [record["column"] for record in state["records"]],
             "output_feature_count": len(columns), "transformed": False, "model_trained": False,
@@ -75,12 +87,14 @@ def read_candidate(directory, contract, code_id, *, committed=False):
 
         # v2는 처리 영향을 더한다. v1(영향 집계 이전 후보)은 이전 코드로 실행한 기록일 때만 받는다.
         # 현재 코드의 worker는 항상 v2를 쓰므로 현재 지문의 v1은 영향 검증을 피하려는 기록으로 보고 거부한다.
-        if type(report) is dict and report.get("schema_version") == "preparation_candidate_report_v2":
+        typed = contract.schema_version == "preparation_candidate_v2"
+        impact_version = "preparation_candidate_report_v3" if typed else "preparation_candidate_report_v2"
+        if type(report) is dict and report.get("schema_version") == impact_version:
             if not _valid_impact(report.get("impact"), state, contract.rules):
                 return None
 
-            expected_report.update(schema_version="preparation_candidate_report_v2", impact=report["impact"])
-        elif code_id == _current_code_id():
+            expected_report.update(schema_version=impact_version, impact=report["impact"])
+        elif typed or code_id == _current_code_id():
             return None
 
         if report != expected_report or _read_file(root / "candidate.md", contract.max_candidate_bytes).decode("utf-8") != candidate_markdown(expected_report):

@@ -16,6 +16,8 @@ ENTRY = "src/agents/preparation_apply_worker.py"
 WORKER_FILES = tuple(dict.fromkeys(BASE_FILES + (
     "src/agents/snapshot_eda_worker.py", "src/agents/partition_csv.py",
     "src/agents/preparation_apply_io.py", "src/agents/partition_export_worker.py",
+    "src/agents/tabular_preparation_worker.py", "src/agents/strict_json.py",
+    "src/agents/tabular_worker_input.py", "src/preprocessing/tabular_bundle.py", "src/preprocessing/canonical_data.py",
 )))
 CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     ENTRY, "src/agents/preparation_apply.py", "src/agents/preparation_apply_cli.py",
@@ -24,6 +26,8 @@ CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     "src/agents/preparation_candidate_contract.py", "src/agents/preparation_candidate_results.py",
     "src/agents/preparation_candidate_report.py",
     "src/agents/partition_input_contract.py",
+    "src/agents/tabular_preparation.py", "src/agents/tabular_source_contract.py",
+    "src/agents/tabular_input_worker.py", "src/preprocessing/tabular_loaders.py",
 )))
 
 

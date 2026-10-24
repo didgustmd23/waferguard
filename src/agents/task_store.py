@@ -26,11 +26,11 @@ LEGACY_VERSIONS = {"csv_task_v1": "tabular_csv"}
 KIND_PATTERN = r"[a-z][a-z0-9_]{0,39}"
 MAX_TASK_BYTES = 512 * 1024
 # 진행 제어 정보(단계·동의·확정 계획·문제)는 기록 본문에 둔다. 넓은 표에서 커지는 내용 구역만 분리 저장한다.
-PART_SECTIONS = ("diagnostic", "draft", "candidate", "report", "attempts")
+PART_SECTIONS = ("diagnostic", "draft", "candidate", "report", "attempts", "input_selection")
 PART_INLINE_BYTES = 32 * 1024
 MAX_PART_BYTES = 16 * 1024 * 1024
-PART_NAME = r"(diagnostic|draft|candidate|report|attempts)-[0-9a-f]{64}\.json"
-PHASES = ("created", "diagnosing", "awaiting_review", "processing", "awaiting_apply", "applying", "completed",
+PART_NAME = r"(diagnostic|draft|candidate|report|attempts|input_selection)-[0-9a-f]{64}\.json"
+PHASES = ("created", "diagnosing", "awaiting_input", "awaiting_review", "processing", "awaiting_apply", "applying", "completed",
           "needs_attention")
 
 

@@ -10,6 +10,25 @@ from .split_evidence import CommittedArtifact, ConfirmedSplit, read_metadata
 from .artifacts import _root
 
 
+def bind_typed_partition_input(split, export, partition, roles):
+    """v2 내보내기만 자료형 보존 구간 계약으로 복원한다. 임의 파일은 받지 않는다."""
+    from src.preprocessing.tabular_bundle import BundleRef
+    from .tabular_source_contract import TabularPartitionInputContract
+    # 분할·내보내기 증거 재검사는 아래 contract.check()가 수행한다. 영수증은 크기 제한 JSON으로만 먼저 읽는다.
+    receipt = read_metadata(export.directory / "partition_exports.json")
+    if (partition not in ("train", "validation") or receipt.get("schema_version") != "partition_exports_v2"
+            or split.artifact.scope.policy_version != "tabular_split_v2" or export.scope.policy_version != "partition_export_v2"
+            or receipt.get("roles") != json.loads(json.dumps(asdict(roles)))):
+        raise ValueError("승인된 v2 분할·내보내기·역할이 필요합니다.")
+    try:
+        contract = TabularPartitionInputContract(split, export, partition, BundleRef.from_dict(receipt["partitions"][partition]["bundle"]),
+                                                 json.dumps(asdict(roles), ensure_ascii=False), receipt["source_id"])
+    except (KeyError, TypeError) as error:
+        raise ValueError("내보내기 영수증의 구간 기록이 올바르지 않습니다.") from error
+    contract.check()
+    return contract
+
+
 @dataclass(frozen=True)
 class PartitionInputContract:
     """로컬 전용 구간 계약. 데이터·라벨·대치 통계를 포함하지 않고 변환도 실행하지 않는다."""

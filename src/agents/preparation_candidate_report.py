@@ -24,6 +24,9 @@ def candidate_markdown(report):
              f"- 적용 후 예상 출력 특징: {report['output_feature_count']}개", "",
              "## 선택한 규칙", "", "| 항목 | 설정 |", "| --- | --- |"]
     lines.extend(f"| {cell(name)} | {cell(value)} |" for name, value in report["binding"]["rules"].items())
+    if report["binding"].get("input_warnings"):
+        lines.extend(["", "## 자료형 계산 한계", "", "큰 정수 특징은 기존 float64 변환 과정에서 정밀도를 잃을 수 있습니다. 라벨·ID 메타데이터는 원래 자료형으로 보존합니다."])
+        lines.extend(f"- {cell(item['column'])}: {cell(item['code'])}" for item in report["binding"]["input_warnings"])
     lines.extend(["", "## 제거 후보", "", "| 특징 | 사유 |", "| --- | --- |"])
     lines.extend(f"| {cell(item['column'])} | {cell(item['reason'])} |" for item in report["removed"])
 

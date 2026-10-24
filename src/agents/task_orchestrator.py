@@ -20,7 +20,7 @@ from .worker_contract import WorkerLimits
 from .worker_paths import _path
 
 
-__all__ = ["TaskProblem", "PlanError", "start_task", "diagnose", "resolve_problem", "review_state", "check_plan",
+__all__ = ["TaskProblem", "PlanError", "start_task", "diagnose", "resolve_problem", "resume_input", "review_state", "check_plan",
            "preview_plan", "apply_revisable", "confirm_plan", "approve_apply"]
 TERMINAL = {"completed", "blocked_input", "failed_runtime", "security_locked", "cancelled"}
 
@@ -77,6 +77,9 @@ def _check_snapshot(record):
 
     if not verify_snapshot(Path(snapshot["directory"]), Snapshot(**snapshot["snapshot"])):
         raise TaskProblem("SNAPSHOT_CHANGED", "작업에 사용 중인 복사본이 변경되어 중단했습니다. 새 작업으로 시작하세요.")
+    checker = getattr(_adapter(record), "check_source", None)
+    if checker is not None:
+        checker(record)
 
 
 def _run_name(record, step_id, *, attempt=None):
@@ -162,6 +165,8 @@ def diagnose(task_id, *, root=None, requester=None):
         except Exception:
             return _stop(record, TaskProblem("DIAGNOSTIC_FAILED", "입력 진단을 완료하지 못했습니다. 자동 재시도하지 않습니다."), root)
 
+        if record["phase"] == "awaiting_input":
+            return record
         return _recommend(record, adapter, requester, root)
 
 
@@ -208,6 +213,37 @@ def resolve_problem(task_id, action, *, root=None, requester=None):
             return _stop(record, TaskProblem("DIAGNOSTIC_FAILED", "해결 동작을 완료하지 못했습니다. 자동 재시도하지 않습니다."), root)
 
         record["history"][-1].update(status="completed", **adapter.resolution_facts(record, action))
+        if record["phase"] == "awaiting_input":
+            return _save(record, root)
+        return _recommend(record, adapter, requester, root)
+
+
+def resume_input(task_id, selection, *, expected_revision, expected_inspection_id, root=None, requester=None):
+    """검증된 입력 해석 대기를 새 A 개정으로 재개한다. 오래된 제출은 기록 생성 전에 거부한다."""
+    with task_store.task_lock(task_id, root=root) as directory:
+        record = task_store.load_task(task_id, root=root)
+        current = record.get("input_selection") or {}
+        if (record["phase"] != "awaiting_input" or type(expected_revision) is not int
+                or expected_revision != record["revision"] or expected_inspection_id != current.get("inspection_id")):
+            raise ValueError("대기 중인 입력 해석 또는 revision이 바뀌었습니다.")
+        adapter = _adapter(record)
+        adapter.check_input_selection(record, selection, directory)
+        task_consent.check(record["consents"].get("A"), "A", task_id)
+        content = {"source_path": record["source"]["path"], "source_size_bytes": record["source"]["size_bytes"],
+                   "limits": record["limits"], "model": record["model"]["model"], "model_host": record["model"]["host"],
+                   **adapter.input_consent_content(record, selection)}
+        record["consents"]["A"] = task_consent.grant("A", task_id, content)
+        record.update(phase="diagnosing", problem=None)
+        record = _save(record, root)
+        context = SimpleNamespace(save=lambda value: _save(value, root), authorizer=task_consent.authorizer)
+        try:
+            record = adapter.resume_input(record, directory, context, selection)
+        except TaskProblem as problem:
+            return _stop(record, problem, root)
+        except Exception:
+            return _stop(record, TaskProblem("INPUT_PREPARATION_FAILED", "입력 준비를 완료하지 못했습니다. 자동 재시도하지 않습니다."), root)
+        if record["phase"] == "awaiting_input":
+            return record
         return _recommend(record, adapter, requester, root)
 
 

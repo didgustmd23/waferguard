@@ -348,8 +348,8 @@ class InputProfilePipelineTest(unittest.TestCase):
 
         self.assertEqual(self.cli(status, "diagnostic-04")["stage"], "preflight")
 
-    def test_new_files_enter_only_module_pipeline_manifest(self):
-        """새 파일이 다른 실행 체계의 코드 식별값에 들어가지 않는지 고정한다."""
+    def test_diagnostic_files_enter_only_registered_tabular_consumers(self):
+        """공유 진단 의존성은 승인된 표형 소비자에만 결합하고 WM 등으로 퍼지지 않는다."""
         new = {"src/preprocessing/input_profile.py", "src/agents/input_profile_pipeline.py"}
         members = []
 
@@ -360,7 +360,7 @@ class InputProfilePipelineTest(unittest.TestCase):
                 if new & set(getattr(transport, "CONTROL_FILES", ())):
                     members.append(module.name)
 
-        self.assertEqual(members, ["module_pipeline_transport"])
+        self.assertEqual(members, ["module_pipeline_transport", "partition_export_transport", "snapshot_split_transport", "tabular_input_transport"])
 
 
 if __name__ == "__main__":

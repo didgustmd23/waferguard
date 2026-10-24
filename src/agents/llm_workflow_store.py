@@ -14,7 +14,7 @@ from .llm_workflow_contract import validate_workflow_proposal
 from .llm_workflow_proposal import checked_context, restore_context
 from .worker_contract import _decode
 from .worker_paths import _path
-from .workflow_service_registry import workflow_service
+from .workflow_service_registry import service_version, workflow_service
 
 
 STORE_ROOT = Path(__file__).resolve().parents[2] / "logs/agents/llm_workflows"
@@ -96,7 +96,7 @@ def load_workflow(name, *, root=STORE_ROOT):
 
 
 def run_identity(module_id, name):
-    service = workflow_service(module_id, "1.0.0")
+    service = workflow_service(module_id, service_version(module_id))
     _, tool, _ = service._open(name)
     state = tool.states.load()
     return {"run_id": state.run_id, "actor_id": state.actor_id, "plan_id": tool.plan.plan_id,

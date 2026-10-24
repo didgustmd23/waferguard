@@ -34,7 +34,7 @@ class PreparationCandidateTool(SnapshotEdaTool):
         _decode(json.dumps(self.arguments))
         self.config_id = _digest(self.arguments)
         self.plan = ExecutionPlan(
-            source_id=contract.train.snapshot.source_id, config_id=self.config_id, policy_version=POLICY_VERSION,
+            source_id=contract.source_id, config_id=self.config_id, policy_version=contract.schema_version,
             steps=(ExecutionStep("preflight", "run_preflight"),
                    ExecutionStep("derive_preparation", "derive_preparation", json.dumps(self.arguments))),
         )
@@ -46,16 +46,21 @@ class PreparationCandidateTool(SnapshotEdaTool):
     def _request(self, task_id):
         root = self._work_root(task_id)
         state = self.states.load()
+        from .tabular_preparation_worker import input_files
+        files = input_files(root) if self.contract.schema_version == "preparation_candidate_v2" else tuple(str(root / "input" / name) for name in ("snapshot/input.bin", "snapshot/snapshot.json", "candidate_task.json"))
         return WorkerRequest(
             task_id=task_id, run_id=state.run_id, actor_id=state.actor_id,
             stage="derive_preparation", action_id="derive_preparation", source_id=self.plan.source_id,
-            config_id=self.config_id, plan_id=self.plan.plan_id, policy_version=POLICY_VERSION, limits=self.limits,
-            input_files=tuple(str(root / "input" / name) for name in ("snapshot/input.bin", "snapshot/snapshot.json", "candidate_task.json")),
+            config_id=self.config_id, plan_id=self.plan.plan_id, policy_version=self.contract.schema_version, limits=self.limits,
+            input_files=files,
             dependency_directories=(), output_directory=str(root / "output/result"), scratch_directory=str(root / "scratch/task"),
         )
 
     def _stage(self, request):
         """승인 소비·예약 후 Train 파일만 복사한다. 다른 구간은 전달하지 않는다."""
+        if self.contract.schema_version == "preparation_candidate_v2":
+            from .tabular_preparation import stage_parts
+            return stage_parts(self, request)
         root = self._work_root(request.task_id)
         root.parent.mkdir(exist_ok=True)
         _root(root.parent)

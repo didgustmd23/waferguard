@@ -75,10 +75,14 @@ def read_committed_artifact(run_directory, expected_scope):
     if not isinstance(expected_scope, ApprovalScope):
         raise TypeError("신뢰하는 실행 관리자가 보존한 ApprovalScope가 필요합니다.")
 
-    if (expected_scope.stage, expected_scope.tool_id) not in (
+    allowed = (
         ("commit_split", "commit_split"), ("ingest", "run_ingest"),
         ("derive_preparation", "derive_preparation"), ("run_eda", "run_eda"),
-    ):
+    )
+    if expected_scope.policy_version == "tabular_split_v2":
+        # v2 확정 증거는 실제로 승인·커밋된 선행 제안의 완료 표식에도 결합된다.
+        allowed += (("propose_split", "propose_split"),)
+    if (expected_scope.stage, expected_scope.tool_id) not in allowed:
         raise ValueError("분할·내보내기·후보 산출·승인된 EDA 작업의 증거가 필요합니다.")
 
     root = _root(run_directory)
@@ -153,7 +157,7 @@ class ConfirmedSplit:
         return True
 
 
-def read_split_files(directory, source_id, config_id, *, preview=False, committed=False, allow_review=False):
+def read_split_files(directory, source_id, config_id, *, preview=False, committed=False, allow_review=False, expected_rows=None):
     """제안·확정 파일의 제한된 구조 검사. 승인 증거 및 원본 재계산을 대신하지 않는다."""
     root = _root(directory)
     names = {"proposal.json", "proposal.md"} if preview else {"split.json", "assignments.csv"}
@@ -203,6 +207,9 @@ def read_split_files(directory, source_id, config_id, *, preview=False, committe
         flattened.extend(rows)
 
     count = len(flattened)
+
+    if expected_rows is not None and (type(expected_rows) is not int or count != expected_rows):
+        raise ValueError("분할 배정 행 수가 승인된 입력 행 수와 다릅니다.")
 
     if count > MAX_SPLIT_ROWS or sorted(flattened) != list(range(count)):
         raise ValueError("분할 위치에 중복·누락이 있거나 메타데이터 한도를 초과했습니다.")
@@ -278,6 +285,28 @@ def read_confirmed_split(run_directory, expected_scope):
 
     artifact = read_committed_artifact(run_directory, expected_scope)
     proposal = read_split_files(artifact.directory, expected_scope.source_id, expected_scope.config_id, committed=True)
+    if expected_scope.policy_version == "tabular_split_v2":
+        from .tabular_source_contract import TabularEdaInputContract
+        from .executor import _digest as arguments_digest, _json as arguments_json
+        record = read_metadata(Path(run_directory) / "selection.json")
+        if set(record) != {"contract", "code_id", "plan_id"}:
+            raise ValueError("v2 분할 선택 기록의 필드가 다릅니다.")
+        contract = TabularEdaInputContract.from_dict(record["contract"])
+        contract.check_input()
+        if sum(len(values) for values in proposal["partitions"].values()) != contract.source.bundle.rows:
+            raise ValueError("확정 분할에 승인 입력의 행이 누락됐습니다.")
+        arguments = {"version": "tabular_split_v2", "source": contract.source.packet(), "profile": contract.profile.to_dict(),
+                     "limits": asdict(contract.limits), "code_id": record["code_id"], "proposal_sha256": None}
+        from dataclasses import replace
+        preview_scope = replace(expected_scope, stage="propose_split", tool_id="propose_split",
+                                target_id=expected_scope.run_id + ":propose_split", arguments_id=arguments_digest(arguments_json(arguments)))
+        preview = read_committed_artifact(run_directory, preview_scope)
+        bound_arguments = {"arguments": arguments, "dependency": _fingerprint(preview.directory / "AGENT_COMPLETE.json")}
+        if (expected_scope.source_id != contract.source.source_id or expected_scope.config_id != contract.profile.signature
+                or expected_scope.plan_id != record["plan_id"] or expected_scope.arguments_id != arguments_digest(arguments_json(bound_arguments))
+                or proposal["rules"] != asdict(contract.profile.split_rules)
+                or proposal != read_split_files(preview.directory, expected_scope.source_id, expected_scope.config_id, preview=True, committed=True)):
+            raise ValueError("v2 분할 승인 범위와 입력·역할·계획이 다릅니다.")
     artifact.check()
 
     return ConfirmedSplit(artifact, json.dumps(proposal, ensure_ascii=False, sort_keys=True, allow_nan=False))

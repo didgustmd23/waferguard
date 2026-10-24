@@ -210,6 +210,318 @@ flowchart TB
 4. 제한된 개수의 검증된 표본 미리보기를 로컬에만 표시한다. 모델에는 보내지 않는다.
 5. 동일 표본 그룹 묶기를 누수 방지 선택지로 제공한다. 사용자가 확정한 뒤에만 적용하며, 삭제는 하지 않는다.
 
+### 공통 표형 입력·처리 확장
+
+**상태: T1 구현 중·작업 1~6(저장/출처, CSV 검사/생성, 입력 승인·해석 재개, v2 진단·분할·내보내기, typed 후보/적용, v2 서비스·handoff·보고서 근거)의 구현·합성 검증 완료.** v2 어댑터·UI 연결(작업 7)과 실제 환경 검증(작업 8)은 남았으며 현재 제품 화면의 표형 입력은 여전히 CSV뿐이다. 작성했던 웨이퍼 통합 연결 설계안은 폐기하고 기존 WM 계산·개별 실행·도메인 문서는 유지한다. 아래 T2~T4와 연결 전 계약/파일은 설계 기준이며 지원 완료를 뜻하지 않는다.
+
+**지원 목표**
+
+| 입력 형식 | 필요한 해석·선택 | 제한 |
+| --- | --- | --- |
+| CSV·TSV·구분자 기반 TXT/DATA/DAT | 인코딩·구분자·헤더·결측 표현 | 확장자만으로 구분자나 자료형을 확정하지 않음 |
+| XLSX·XLS | 시트·헤더 범위·표 영역·수식 값 정책 | 복수 시트 자동 병합·매크로/수식 실행 안 함 |
+| Parquet·Feather | 컬럼·자료형·파일/테이블 구조 | 기존 자료형을 설명 없이 문자열로 손실 변환하지 않음 |
+| JSON·JSONL | 레코드 경로·중첩 필드·배열 펼침 정책 | 임의 깊이 flatten·행 증식·다중 테이블 자동 병합 안 함 |
+| DataFrame Pickle | 구조 선택·출처/신뢰 승인·격리 역직렬화 | 임의 객체를 표로 강제 변환하거나 일반 파일 읽기로 처리하지 않음 |
+
+**공통 흐름**
+
+형식별 로더 → 격리 입력 진단·필요한 해석 질문 → 승인된 공통 표형 작업 복사본 → 역할·타깃·그룹·처리 계획 → 기존 승인형 분할·Train 기준 전처리·적용 → 공통 보고서로 이어진다. 형식마다 조정기·승인 체계·전체 화면·전처리 엔진을 만들지 않는다. 어떤 형식도 파일 열기만으로 지원 완료로 보지 않으며 결과와 전달까지 확인한다.
+
+- 공통 표형 계약은 컬럼 이름/순서·논리 자료형·결측 표현·행 위치/식별·입력 해석 설정·원본 및 정규화 지문을 보존한다. 아래 v2 계약은 기존 표형 canonical의 안전한 태그/검증 원칙을 재사용한다. 내부 입력을 무조건 CSV로 내보내 재읽지 않는다.
+- 현재 표형 어댑터뿐 아니라 진단·분할·후보·적용 worker의 CSV 의존부를 조사한다. 로더 하나만 추가하면 모든 후속 단계가 호환된다고 가정하지 않는다. 기존 계산 코어와 결과 검증을 재사용하고 입력 로딩 경계를 공통화하는 범위를 제시한다.
+- 원본은 보존하고 새 작업 복사본만 사용한다. 헤더 정비·자료형/결측 표현 정규화는 변경 전후 매핑·근거·손실 가능성을 표시하고 동의 범위에 결합한다. 파일 표현 정규화와 Train에서 기준을 학습하는 대치·인코딩·스케일링을 분리해 누수를 방지한다.
+- 숫자처럼 보이는 문자열 등 공통 입력 정비는 대상·실패 값·결측으로 바뀔 영향과 사용자 선택을 설계한다. TotalCharges 같은 특정 컬럼명 예외나 조용한 변환을 넣지 않는다. 표현 정규화만으로 역할·target을 자동 확정하지 않는다.
+- 모호한 구분자·헤더·시트·레코드 경로는 필요한 질문으로 해결한다. 지원하지 않는 구조·암호화·라이브러리 부재·용량/시간 초과는 원인과 다음 행동을 표시한다. 모든 임의 파일을 무제한 수용한다는 의미의 '전부 지원'은 약속하지 않는다.
+- 값 파싱은 격리 worker에서 수행하고 부모는 byte 복사·내용 지문·허용 경로/결과 검증 경계를 유지한다. 원본 행·경로·전체 파일·예외 원문을 모델에 자동 전달하지 않는다. 요청·응답 계약과 승인·코드 지문 결합을 형식 확장으로 약화하지 않는다.
+- 형식별 합성 정상·모호성·손상·자원 초과·악성/위장 입력, 자료형/정밀도·결측·행/열 순서 보존, 원본 불변·변조 거부, 동일 표의 형식 간 결과 동등성을 검증한다. 기존 CSV/배열 회귀와 실제 AppContainer/UI 확인을 분리한다.
+
+#### 조사 근거와 선택한 구조
+
+| 영역 | 확인한 현재 코드 | 설계에 반영할 점 |
+| --- | --- | --- |
+| 공통 흐름 | `task_orchestrator.py`·`task_adapters.py`·`task_plan.py`가 어댑터의 진단·계획·단계를 호출 | 조정기·동의·질문·작업 기록·보고서 틀 재사용 |
+| 입력 선택 | `tabular_task.accepts`는 `.csv`만 허용하고 `task_orchestrator.start_task`는 파일 하나를 받음 | 표형 유형과 형식 로더를 분리하고 입력 해석 상태 추가 |
+| 진단·분할 | `module_pipeline_worker.py`·`snapshot_split_worker.py`가 UTF-8 CSV를 직접 읽음 | 공통 표형 reader 뒤에서 기존 진단·품질·분할 계산 호출 |
+| 구간·전처리 | `partition_export_worker.py`는 CSV로 구간을 내보내고 후보·적용 worker가 CSV로 다시 읽음 | Train·Validation 중간 결과도 공통 표형 계약으로 유지 |
+| 계산 | `input_profile.py`·`eda.py`·`quality.py`·`split.py`·`transform.py`는 DataFrame 또는 `TabularInput`을 받음 | 계산 코어 재사용, 역할별 자료형 적합성은 실행 전 검사 |
+| 기존 저장 | `canonical_data.py`는 schema·태그형 JSONL·인덱스·자료형을 보존하고 `load_table`로 복원 | 기존 v1을 덮어쓰지 않고 후속 v2 계약을 추가 |
+| Pickle | `pickle_import_worker.py`에서 역직렬화, 부모 `pickle_results.py`에서 제한된 결과 검사 | 승인·격리 재사용. `pickle_converters.py`의 WM 조립 의존은 공통 로더에 끌어오지 않음 |
+| SECOM 원본 | `sensor_ml/data_pipeline/step1_merge_data.py`에 특징/메타데이터 두 파일의 행 위치 결합이 있음 | 기존 실험은 유지. 통합 작업의 복수 입력 결합은 별도 단계로 명시 |
+
+선택안은 **형식별 격리 로더 → 버전 있는 공통 표형 묶음 → 기존 계산 코어**다. 모든 입력을 CSV로 변환하는 안은 nullable 정수·불리언·범주·시간·빈 문자열의 의미가 재읽기 때 바뀔 수 있어 채택하지 않는다. 형식마다 조정기·도구 전체를 복제하는 안도 채택하지 않는다. 기존 canonical v1만 그대로 연결하는 안은 범주·시간대·해석 설정·정비 계보가 부족하므로 확장한다. 파일 분할·함수명은 구현자가 조정할 수 있지만 책임과 계약 경계는 유지한다.
+
+#### 형식별 로더와 지원 경계
+
+확장자는 후보 선택에만 사용한다. 승인된 snapshot의 서명·구조를 격리 worker에서 검사하고, 위장 파일을 다른 파서로 무제한 재시도하지 않는다. 사용자 파이썬 표현식·converter 함수·import 경로·URL·원격 파일시스템 옵션을 받지 않는다. 결과는 하나의 유한한 표이며 자료형별 지원과 계산 가능 여부를 구분한다.
+
+| 로더 ID(제안) | 처리할 입력과 선택 | 첫 구현의 명확한 경계 |
+| --- | --- | --- |
+| `delimited_v1` | `.csv`·`.tsv`·`.txt`·`.data`·`.dat`; 인코딩, 고정 구분자 또는 공백 구분, 따옴표, 헤더 유무, 결측 토큰, 소수점/천 단위 | UTF-8/BOM·CP949·UTF-16의 명시 선택. 추정이 모호하면 질문. 고정폭·다중 표·주석/행 건너뛰기 규칙은 지원 설정에 없으면 거부. 헤더 없는 경우 위치 기반 컬럼명을 제안하고 확인 후 생성 |
+| `excel_v1` | `.xlsx`·`.xls`; 시트 하나, 연속 표 영역, 헤더 행 | 복수 시트 병합·매크로·수식 계산·외부 링크 갱신 없음. 캐시된 수식 결과만 쓰는 정책을 명시하고 캐시 없음/오래됨 가능성을 경고. 병합 셀 자동 채우기·색/서식의 의미 추정 없음. 암호화·지원 밖 구조는 다음 행동과 함께 거부 |
+| `parquet_v1` / `feather_v1` | 단일 로컬 `.parquet`·`.feather`; 스키마와 컬럼 선택 | 디렉터리 dataset·원격 참조·암호화·임의 extension type 제외. 중첩 list/struct/map·binary 등 공통 계약 밖 컬럼은 명시적으로 제외하거나 지원 불가로 안내. 문자열로 조용히 변환하지 않음 |
+| `json_records_v1` / `jsonl_records_v1` | `.json`의 레코드 배열 또는 명시 경로, `.jsonl`/`.ndjson`의 행별 객체 | 중복 키·비표준 숫자·과도한 깊이/긴 레코드 거부. 객체 경로는 키/인덱스 목록으로만 선택. 선택한 스칼라 필드는 한 행을 유지하며 배열 자동 explode·임의 flatten·테이블 자동 결합 없음. 없는 키와 명시 null의 차이는 해석 기록에 남김 |
+| `dataframe_pickle_v1` | `.pkl`·`.pickle`의 DataFrame 하나 또는 명시 구조 경로 | 격리 전에 출처/신뢰 확인과 역직렬화 허용을 동의에 결합. 자동 형식 판별을 위해 Pickle을 열지 않음. 안전한 Pickle이라는 보장은 하지 않으며 dict/list 등 임의 객체의 강제 표 변환·압축 묶음은 제외 |
+
+빈/중복/비문자열 컬럼명은 공통 계약으로 가져오기 전에 위치와 원래 이름을 보존한 매핑을 제시한다. 기존 CSV 중복 헤더 정비의 원본 불변·충돌 없는 번호·동의·이력을 유지하며, 다른 형식에서는 '헤더 뒤 바이트 동일' 대신 선택 표의 값·순서 보존 범위를 표시한다. 숫자 문자열과 큰 정수 ID는 자동 float 변환하지 않는다.
+
+**CSV v2 기본 해석(이 설계의 제안값):** 최초 A 화면에 UTF-8/BOM·쉼표·첫 행 헤더·빈 필드의 결측 처리·제한된 자료형 판별 정책을 요약한다. 빈 필드는 따옴표 유무와 관계없이 기본 결측으로 해석하며, 빈 문자열 보존을 고르면 문자열로 유지한다. `NA`·`NULL` 등 추가 결측 토큰은 자동 적용하지 않고 명시 선택한다. 따라서 문자열/결측 보존은 원본 바이트의 모든 구분을 자동 유지한다는 뜻이 아니라 **확정한 해석 이후**의 의미 보존이다. 날짜 문자열·문자 true/false·선행 0이 있는 숫자 문자열은 기본 문자열로 유지한다. 정수는 범위 안에서 정수/nullable 정수로 보존하고 float를 경유하지 않는다. 실수는 허용 문법·범위·십진 표현의 round-trip을 검사하며 정밀도 손실 우려가 있으면 문자열로 유지하고 정비 후보로 알린다. 파일 전체의 타입/범위 검사를 마치기 전에 표본 일부의 추정만으로 확정하지 않는다. 구분자·인코딩 등이 기본과 다르면 후보를 제시하고 사용자 선택을 받는다. 기존 `read_csv` 기본 추론과 항상 같다는 호환 보장은 하지 않으며, 동등성 테스트는 동일 해석이 성립하는 입력에서 수행한다.
+
+#### 공통 표형 묶음과 입력 계약
+
+**저장:** 기존 `canonical_table_v1`은 그대로 읽고, 새 `canonical_table_v2`를 명시적으로 선택한다. 새 writer·reader·validator는 `canonical_data.py`의 기존 v1 동작을 바꾸지 않도록 별도 `tabular_bundle.py`에 둔다. v1으로 낮춰 v2의 해석/영향 검증을 우회할 수 없게 실행 계약이 저장 버전을 고정한다. 기본 구성은 다음과 같다.
+
+- `schema.json`: 버전·행/열 수·컬럼 순서·논리/물리 자료형·인덱스 설명·스칼라 인코딩 버전. 컬럼에는 위치 기반 내부 ID와 표시 이름을 함께 둔다.
+- `data.jsonl`: 명시 태그로 표현한 셀과 인덱스. 정수·불리언·빈 문자열·null·NaN·±inf·날짜를 구별한다. 범주 사전/순서와 시간대·시간 단위를 스키마로 보존한다. 임의 클래스 복원이나 동적 import는 없다.
+- `provenance.json`: 원본 snapshot 지문, 로더/정책 버전, 해석 설정 서명, 선택 범위, 정비 전후 매핑, 손실/제외 내역, 행 위치 계보. 원본 경로는 로컬 출처 정보로만 관리하며 모델 DTO에는 넣지 않는다.
+- `manifest.json`·완료 표식: 고정 허용 파일 목록과 각 파일의 해시·크기. 상위 작업/승인에 보존한 기대 묶음 ID와 대조하며 묶음 자체의 manifest만 신뢰하지 않는다. 부분 출력은 완료 결과로 등록하지 않는다.
+
+**자료형:** 초기 필수 범위는 signed/unsigned 정수·float·nullable 정수/실수·bool/nullable bool·문자열·지원 스칼라만 든 object, 범주형, 날짜/시각/시간대 포함 timestamp다. 범주 사전과 timestamp 단위는 손실 없이 표현 가능한 경우에만 지원한다. Decimal·기간·복합 인덱스·중첩/임의 객체 등은 첫 계약의 필수 범위 밖으로 표시하고, 제외/명시 변환이 없으면 거부한다. 미래 확장을 이유로 기존 제한을 조용히 넓히지 않는다. 저장 가능한 자료형이라도 기존 변환기가 받지 못하면 계획 단계에서 해당 역할·처리 조합을 차단한다. 시각 자료형 보존이 통합 작업의 시간 분할 지원을 뜻하지 않는다.
+
+**식별:** `TabularSourceContract`(제안)는 원본 snapshot, 로더 ID/버전, 해석 설정/정비 서명, canonical manifest 지문, 저장 계약 버전, 자원 한도를 결합한다. 동일 원본이라도 시트·헤더·결측 규칙·정비가 다르면 다른 입력이다. 후속 source ID는 원본 파일 해시만이 아닌 이 계약의 서명에서 만들고, 분할·내보내기·후보·적용·전달이 같은 계보를 대조한다. 로컬 원본 경로의 변경만으로 승인된 snapshot이 무효가 되지는 않는다.
+
+**행 계보:** 파싱 후 최초의 행 위치를 기본 식별자로 두고 인덱스와 구분한다. 원본의 시트/레코드 위치와 정비 후 행 위치를 연결한다. 분할의 행 위치 목록으로 canonical 구간을 만들며 정렬·index 재설정·행 삭제가 숨겨지지 않게 한다. 임의 중복 행 제거와 자동 행 필터링은 입력 로더의 역할이 아니다.
+
+**자원:** 기존 canonical 상한(2백만 행·4096열·1억 셀·JSON 레코드 1MiB)을 초기 상한으로 유지하되, 실제 허용치는 작업의 입력/출력/Job 메모리·시간 상한과 함께 더 작은 쪽을 적용한다. JSONL은 순차 입출력하고 계산 직전에 필요한 표를 복원한다. 현재 v1처럼 전체 행의 파이썬 목록과 DataFrame을 동시에 유지하는 복원은 피한다. 파서 선언 크기·ZIP 해제 크기·배열/문자열 길이·레코드 수를 검사하고 읽는 중에도 제한한다. 일부 라이브러리의 선할당은 Job 상한과 실패 후 정리로 방어하며 파일 크기만으로 처리 가능성을 보장하지 않는다.
+
+#### 사용자 흐름·입력 정비·모델 경계
+
+1. 기존 통합 작업 화면에서 파일과 목표를 받는다. 최초 동의 A는 로더 후보/버전·허용된 구조 검사·기본 해석 설정·'검증된 검사 결과가 이 설정과 정확히 같고 모호성/정비가 없을 때만 생성·진단까지 진행'하는 정책 버전·자원/코드 범위를 포함한다. snapshot 생성 후 inspect의 1회 실행 승인을 해당 byte 지문에 결합한다. Pickle은 별도 신뢰 확인 없이는 구조 검사도 하지 않는다.
+2. inspect 결과가 A의 기본 해석과 정확히 맞으면, 서버가 결과 커밋/지문·스키마·허용 설정·정책·입력 계보를 검사하고 **확정 해석 서명과 inspect 증거를 포함한 별개의 materialize 승인**을 A에서 위임 발급한다. 같은 승인을 두 번 쓰지 않으며 사용자 확인 버튼은 늘리지 않는다. 기본과 다르거나 구분자/헤더/시트/레코드 경로가 모호하면 같은 화면의 `입력 해석 확인 필요`에서 필요한 항목만 묻는다. 제출 시 해석/정비 영향에 대한 새 A 개정을 기록한 뒤 새 승인을 발급한다. 정책에 없는 추정값으로 자동 생성하지 않는다. 이전 승인·실행은 보존하며 화면 rerun만으로 읽기·쓰기·모델 호출·동의 발급하지 않는다.
+3. 숫자 문자열 등 정비 후보에는 대상 컬럼·성공/실패/빈 문자열 건수·변환 뒤 결측 증가·정밀도 손실 가능성을 로컬로 보여 준다. 그대로 유지, 엄격 변환(실패 시 중단), 실패를 결측으로 처리 중 지원된 선택을 명시한다. 변환 실패를 결측으로 만드는 선택은 사용자가 영향에 동의한 경우에만 새 복사본에 적용한다. ID의 선행 0·큰 정수·지역별 숫자 표기·빈 문자열을 임의로 해석하지 않는다.
+4. 정비 결과를 검증한 뒤 해당 입력으로 진단을 갱신하고 기존 권장안·필수 질문·역할/분할/전처리 확인 화면으로 진행한다. 정비 변경은 이후 C·D의 입력과 계획을 무효화하므로 D 이후 정비로 되돌리지 않는다. Train 중앙값·범주 사전·clipping·스케일링 등 학습 기준은 입력 정비에 포함하지 않는다.
+5. C에서 확정한 입력/역할/계획으로 분할 → Train·Validation 내보내기 → Train 기준 후보를 수행하고 D에서 확인한 후보만 적용·전달한다. Test는 기존 정책대로 fit·적용·전달하지 않고 분할 정보만 보존한다. 결과에는 원본 형식·해석/정비·역할·실제 처리·전후 비교·미처리·활용법을 공통 틀로 표시한다.
+
+구조 검사는 로컬 전용이며 파서 선택·시트/경로 선택·정비 동의를 LLM에 맡기지 않는다. 모델에는 확정 입력의 기존 허용 컬럼명·집계만 보내며 원본 행·개별 셀·수식·경로·Pickle 객체·파일 내용은 추가하지 않는다. 넓은 표의 기존 상세도/토큰 예산과 전체 응답 검증을 유지한다. 모델 실패로 입력 로딩이나 규칙 기반 계획이 불가능해지는 구조를 만들지 않는다.
+
+inspect는 완성 canonical을 만들지 않고 제한된 구조 후보·해석 후보·컬럼별 타입/변환 성공/실패/결측 집계·변환 영향만 검증 가능한 로컬 결과로 낸다. 지원 밖 타입은 값 자체를 직렬화하지 않고 타입/위치와 거부 코드를 알린다. 정비 영향을 정확히 세려면 선택 범위를 자원 한도 안에서 모두 검사하며, 표본 검사에 그쳤으면 추정임을 표시하고 실제 생성 단계에서 다시 전수 검증한다. 설정이 바뀌면 inspect를 새 해석으로 다시 수행한다. materialize는 같은 검증 snapshot을 다시 읽고 확정 선택/제외/정비만 적용해 v2를 생성한다. 정비 전 임시 표나 지원 밖 객체를 부모/작업 기록에 보관하지 않는다. 결정/제출은 작업 revision·해석 시도 번호·snapshot·inspect 결과 지문에 결합하며 중복 제출과 오래된 화면은 새 실행 없이 거부한다.
+
+#### 실행 경로 전환·호환성·변경 위치
+
+새 형식마다 contract/CLI/transport/worker/results 전체를 복제하지 않는다. 로더와 canonical 생성은 표형 입력 도구 하나의 고정 action(`inspect`·`materialize`)으로 처리하고, 기존 승인 저장소·상태·AppContainer/Job 운송을 재사용한다. 후속 작업은 기존 서비스의 계산/증거 흐름에 버전 있는 표형 입력을 연결한다. 기존 CSV 공개 ID·기록을 새 의미로 재해석하지 않으며 새 통합 작업은 `tabular_v2` 어댑터와 정적 등록된 서비스 버전으로 연결한다. 모듈마다 버전 전환은 필요하지만 조정기나 전처리 계산의 두 번째 구현을 만들지는 않는다.
+
+프로파일 없는 진단은 v2의 고정 진단 계획에만 허용한다. 기존 일반 EDA 계약의 profile 필수 검사를 완화하지 않고, worker는 새 계획 전체·서명·입력 계약 버전을 재대조한다. 결과의 컬럼 ID/순서는 승인한 canonical 스키마에 대조하며 CSV 헤더를 열어 대조하던 검사를 생략하지 않는다. v2의 typed 입력을 읽는 분기와 구 CSV 분기를 계약 버전으로 명시 구분한다.
+
+| 변경 영역 | 구현 방향 |
+| --- | --- |
+| 신규 `tabular_bundle.py`, `tabular_loaders.py`, `tabular_source_contract.py` | v2 저장/복원/검증, 고정 로더 등록부와 허용 설정, 승인·출처 결합 |
+| 표형 입력 도구(service/worker/results와 transport 연결) | inspect/materialize·모호성 결과·제한/정리. 기존 운송/승인 확장 지점을 재사용하고 공유 코드는 적합할 때만 추출 |
+| `tabular_task.py`, `tabular_options.py`, 프로파일/계획 연결 | 로더/정비와 표형 계산 분리, v2 어댑터/프로파일 ID 연결. 구기록은 기존 ID로 읽음 |
+| 진단·분할·내보내기·후보·적용의 contract/worker/results | CSV reader를 버전별 표형 reader 경계로 정리. 내부 canonical 구간 유지, 기존 v1의 값/순서 규칙 보존. 결과 계약에 출처·입력 버전 추가 |
+| `csv_workflow_*`, handoff/binding/서비스 등록부 | 기존 CSV 호출의 호환 wrapper를 유지하고 새 표형 서비스 버전 등록. `csv:` 고정 source ID·필드 검사·파일명 가정을 명시 분리 |
+| `task_orchestrator.py`, `task_store.py`, `task_adapters.py` | 공통 입력 해석 대기/재개와 계약 참조. 파일 형식별 분기는 어댑터 내부. 기존 작업 기록은 버전별로 검증하고 읽을 때 자동 변환하지 않음 |
+| `task_view.py`, `task_forms.py`, 표형 form, `path_picker.py`·`path_dialog.py` | 확장자 안내·동일 화면 해석 질문·정비 영향·지원 불가 안내. 유형마다 새 메뉴/전체 화면은 만들지 않음 |
+| requirements·런타임 복사 목록 | 아래 엔진과 전이 의존·DLL·메타데이터를 검증된 조합으로 추가. 설치만으로 운영 지원 표시하지 않음 |
+| 결과 보고/로컬 전달 | 전처리된 수치 특징 CSV는 기존 소비자를 위해 유지 가능. 인덱스·라벨·그룹·출처의 자료형은 검증된 부속 계약으로 보존하고 로드 예제 제공. 내부 입력을 CSV로 되돌려 계산하지 않음 |
+
+원본 snapshot은 계속 단일 파일이다. canonical은 외부 경로를 사용자가 직접 신뢰시키는 입력이 아니라 worker가 만든 검증된 결과 묶음이며, transport가 허용 파일만 stage한다. 기존 snapshot 계약에 디렉터리를 억지로 넣지 않는다. 부모는 링크·허용 파일·크기·해시·스키마·행/열 수·타입·계보·승인/계획 서명을 검사한다. worker가 주장한 원본 대비 통계·값 동등성을 부모 검증이 독립 증명했다고 표시하지 않는다.
+
+기존 CSV와 배열 테스트는 기존 경로에서 유지한다. 새 CSV v2 경로는 기존 합성 입력과 역할/계획을 고정해 결과 동등성을 검사하며, 자료형 보존으로 의미가 달라지는 사례는 자동 호환으로 처리하지 않고 차이를 기록한다. 기존 실행을 읽기만 해 자동 마이그레이션하거나 재실행하지 않는다. 코드 지문 대상의 조정기·등록부·worker·런타임을 변경하므로 CSV·모듈 파이프라인과 배열/WM 일부에도 영향 가능성이 있다. 구현 전후 각 code manifest를 실제 비교해 범위를 보고하고, 미실행 승인 갱신과 완료 결과 조회 영향을 구분한다. '문서/로더 변경이라 CSV만 영향'으로 가정하지 않는다.
+
+#### 라이브러리·복수 입력·제한
+
+- 조사한 `wm-gpu312` 환경에는 pandas 2.3.3·PyArrow 26.0.0이 있고 `openpyxl`·`xlrd`는 없었다. 현재 requirements와 격리 `runtime_files`의 고정 패키지 목록에는 Excel 엔진과 PyArrow가 선언돼 있지 않다. 제안 엔진은 XLSX=`openpyxl`, XLS=`xlrd`, Parquet/Feather=`pyarrow`다. 호환 버전은 구현 시 설치 승인 후 환경·DLL·라이선스·격리 import 및 합성 round-trip으로 확정한다. 현재 런타임 복사 상한 512MiB를 포함해 패키지 추가의 크기/시작 시간 영향을 측정하며 상한을 몰래 확대하지 않는다. Arrow의 임의 extension type·사용자 extension 복원·Python 객체 역직렬화를 비활성/거부하고 파일 metadata로 사용자 코드를 복원하지 않는다. 라이브러리 부재는 설치 안내로 표시하고 비격리 fallback·자동 다운로드하지 않는다.
+- Excel의 시트·헤더·자료형 옵션과 Arrow/Pandas 간 nullable·범주·시간 변환은 [pandas 2.3 read_excel](https://pandas.pydata.org/pandas-docs/version/2.3/reference/api/pandas.read_excel.html), [Arrow Pandas integration](https://arrow.apache.org/docs/python/pandas.html)을 기준으로 검증한다. 원본 엔진의 모든 자료형을 지원한다고 약속하지 않는다.
+- SECOM의 특징 `.data`와 라벨/시각 파일처럼 두 파일인 입력은 단일 `.data` 파싱과 별개다. 확장 마지막 단계에서 선택적 `feature_metadata_pair`를 제공한다. 두 파일을 각각 snapshot으로 고정하고 이름·해시·행 수·컬럼 매핑·결합 방식(명시적인 행 위치 일대일)을 계약에 묶는다. 행 수 일치는 의미 정렬의 증명이 아니므로 같은 행 순서라는 사용자 확인과 보고서 경고를 남긴다. 임의 key join·폴더 수집·행 증식·자동 라벨 추정은 범위 밖이다.
+- 복수 입력을 구현할 때만 공통 source descriptor를 단일/명시 파일 목록으로 확장한다. 기존 단일 snapshot 읽기는 호환 경로로 유지한다. 입력을 추가하면 A를 새로 받고 C·D를 재사용하지 않는다. 기존 SECOM 독립 실행 코드를 통합 조정기에 직접 연결하거나 변경하지 않는다.
+- 입력 형식 지원과 시간 기준 분할은 별도 기능이다. 시각 데이터의 보존·제외·메타데이터 사용과 지원하지 않는 timestamp 역할/분할 조합을 명확히 안내한다. SQL/HDF5/HTML/XML·ZIP 입력·클라우드·이미지·웨이퍼 연결·모델 학습은 이번 범위 밖이다.
+
+#### 구현 순서·완료 조건
+
+| 단계 | 범위 | 해당 단계의 완료 근거 |
+| --- | --- | --- |
+| T1 공통 기반과 CSV 전환 | v2 저장/입력 계약, CSV 로더, 진단부터 분할·후보·적용·전달까지 연결 | 기존 CSV 경로의 테스트 유지, 새 CSV v2의 입력→최종 결과, 자료형/계보/승인·변조 거부 |
+| T2 구분자·JSON | TSV/TXT/DATA/DAT·JSON/JSONL, 입력 해석 질문, 숫자 문자열 등 명시 정비 | 헤더 없는 표·모호한 구분자·중첩 선택·TotalCharges형 합성 사례, 정비 영향과 손실 확인 |
+| T3 Excel·열 지향·Pickle | XLSX/XLS·Parquet/Feather·DataFrame Pickle, 엔진/격리 런타임 확장 | 각 형식의 정상 끝단 흐름·지원 밖 타입/악성 입력 거부, 실제 AppContainer에서 파서 import·계산·정리 |
+| T4 복수 입력 | 특징/메타데이터 두 파일의 명시 일대일 결합 | 합성 SECOM형 두 파일, 행 수/변조/매핑 오류 거부, 라벨·시각·행 계보 보존 및 최종 전달 |
+
+T1만 끝내고 모든 형식이 지원된 것으로 표시하지 않는다. T2~T4도 이번 지원 목표의 단계이며, 각 단계의 구현 결과를 보고하고 사용자가 정한 순서로 진행한다. 특정 엔진 설치와 실제 데이터/모델/OS 실행은 각각 허용 범위를 확인한다.
+
+공통 검증은 다음을 포함한다.
+
+- 고정 합성 표의 형식별 값·자료형·결측·빈 문자열·큰 정수·행/열 순서·범주·시각 보존. 입력 표현이 같은 의미인 범위에서 동일 분할과 Train 기준/출력의 동등성을 대조하고 손실 있는 변환은 별도로 검증한다.
+- 정상 흐름뿐 아니라 모호성·헤더 충돌·잘못된 인코딩·수식/캐시·손상/과대 압축·과대 행·악성/위장 입력·라이브러리 없음·변조/링크·다른 actor·만료/동시 제출·오래된 해석/계획/후보의 거부. 실패 시 자동 파서 전환·부분 결과 등록·무단 재실행 없음.
+- 동의 A(해석/정비), C(입력·역할·분할~후보), D(후보·적용·전달)의 서명 결합과 원본 불변. 파서 설정의 임의 옵션·사용자 코드·외부 참조를 차단한다. 보안 영향은 SEC-01·02·04·05·06·07·08·09·10·11·12·13·14·15·16을 실제 변경 경로로 대조한다.
+- 기존 CSV·배열 회귀와 공통 계층의 유형 비의존 검사. 실제 OS 격리/egress는 모의 테스트와 분리해 해당 실행의 증거 범위로 보고한다. 독립 보안 검토와 실제 관리자 UI 정상 흐름을 통과해야 사용자 흐름 완료로 표시한다. 전체 회귀는 사용자 요청/동의 후 실행한다.
+- 보고서에 입력 해석·정비 영향·문제·실제 처리·예상/실측·제외/미처리·파일 활용법이 있으며, 차단 시 원인과 같은 화면의 수정 경로가 있어야 한다. 모델 권장안 실패와 전처리 완료를 구분한다.
+
+**다음 수행 범위:** 아래 T1 계획의 작업 7(새 어댑터·기존 화면의 끝단 연결)부터 이어 간다. 작업 1~6은 공통 기반과 정적 등록 v2 서비스까지 구현했고 기존 운영 경로·라이브러리·실제 데이터·운영 승인은 변경하지 않았다. T2~T4와 웨이퍼 통합 연결을 T1 구현에 섞지 않는다.
+
+#### T1 공통 표형 기반·CSV 전환 구현 계획
+
+> **구현 담당자:** 설치된 `superpowers:executing-plans`로 아래 체크 항목을 순서대로 수행한다. 기본은 한 구현자가 진행하며 경계 변경의 독립 보안 검토를 별도로 적용한다. 사용자가 지정한 대로 각 작업 완료 후 결과를 보고한다. 병렬 구현·작업마다 커밋은 이 계획에 포함하지 않는다. 체크되지 않은 항목은 미수행이다.
+
+**목표:** UTF-8 CSV 하나를 기존 통합 화면에서 받아 승인된 v2 표형 묶음으로 고정하고 진단 → 계획 확인 → 분할/내보내기 → Train 후보 → 적용/전달 → 내용 있는 보고서까지 연결한다.
+
+**구조:** 기존 계산과 실행 서비스를 계약 버전으로 확장한다. 원본은 `file_snapshot_v1`, 내부 표는 `canonical_table_v2`, 작업 유형은 `tabular_v2`로 구분한다. 기존 `tabular_csv`·CSV v1·배열 기록은 기존 해석으로 검증한다. 새로운 형식의 엔진이나 다른 전처리 계산 엔진은 추가하지 않는다.
+
+**기술:** Windows Python 3.12·현재 numpy/pandas·unittest·Streamlit·기존 RulesExecutor/ApprovalStore/AppContainer/Job. T1은 새 패키지 설치가 필요 없다. **기준:** 바로 위 공통 표형 상세 설계와 [현재 검증 상태](GUIDE.md).
+
+**공통 제약**
+
+- T1 로더는 UTF-8/BOM·쉼표·첫 행 헤더의 CSV만 활성화한다. 인코딩/구분자 자동 전환·헤더 없는 입력·숫자 문자열의 사용자 변환·다른 확장자는 T2 이후다. 기본 빈 필드 결측/문자열 보존 선택과 기존 중복 이름 번호 정비는 T1에서 유지한다.
+- 저장 상한은 2백만 행·4096열·1억 셀·JSON 레코드 1MiB이며 실제 실행은 더 엄격한 단계별 한도를 따른다. 현재 `split_evidence.MAX_SPLIT_ROWS`는 1백만 행이므로 T1의 분할 가능한 전체 흐름도 1백만 행 이하로 제한해 진단/계획에서 안내한다. 저장 가능한 행 수와 처리 가능한 행 수를 혼동하거나 기존 한도를 몰래 늘리지 않는다.
+- 정수는 부호/범위를 보존하고 bool과 구분한다. 모든 결측인 컬럼은 임의 수치형으로 확정하지 않는다. 빈 문자열 보존 모드의 문자열은 수치 역할을 자동 허용하지 않는다. 날짜 문자열은 자동 timestamp로 바꾸지 않는다.
+- 구조 검사와 생성은 별도 1회 승인이다. A의 정확한 기본 정책과 일치할 때만 materialize를 위임 발급한다. 수정은 새 A 개정, 분할/후보는 C, 적용/전달은 D에 결합한다. 반복 제출·만료·다른 사용자·취소·실행 중 코드 변경 시 기존 동의로 진행하지 않는다.
+- Test는 기준 산출·변환·전달에 쓰지 않는다. 모델 전송 계약은 확대하지 않는다. 데이터 내용 파싱은 격리 worker에서 하고 부모는 검증된 결과만 검사한다. 기존 보안·회귀 기대값을 느슨하게 바꾸지 않는다.
+- 테스트 실행 중 대상 파일을 수정하지 않는다. 각 작업의 실패 재현 → 구현 → 통과 확인 뒤 다음 작업으로 이동한다. 새 코드와 연결되기 전 신규 테스트의 import 실패는 초기 RED로만 기록하고, 최종 검증에는 실제 동작/거부 단언이 있어야 한다.
+
+**중점 검토 사례와 담당 작업**
+
+| 입력/실패 상황 | 기대 동작 | 작업 |
+| --- | --- | --- |
+| 선행 0 ID·2^53 초과 정수·bool·문자열/빈 필드 혼합 | 임의 float/string 변환 없이 확정 해석대로 보존 | 1·2·5 |
+| 중복 헤더와 원래 `name_1`이 이미 있는 CSV | 충돌 없는 번호와 원래 위치 매핑, 동의 없는 변경 없음 | 2·3 |
+| 같은 파일에서 결측 정책 변경·오래된 화면 재제출 | 원본 해시가 같아도 다른 입력으로 판정, 이전 A/C/D 재사용 거부 | 3·7 |
+| 분할 후 불연속 행 위치·중복 원본 인덱스 | 행 위치와 인덱스를 혼동하지 않고 라벨/그룹/ID 정렬 보존 | 4·5·6 |
+| materialize 뒤 저장 실패·단계 timeout·출력 파일 바꿔치기 | 부분 결과 미등록, 승인 자동 재사용/worker 재실행 없음 | 3·6·8 |
+
+**파일 배치와 공통 인터페이스(아래 신규 이름은 T1에서 정의)**
+
+| 위치 | 책임/변경 |
+| --- | --- |
+| 신규 `src/preprocessing/tabular_bundle.py` | 순수 자료형 `BundleRef`, v2 스키마·태그·행 스트림·분할 부분집합·복원. 기존 `canonical_data.py` v1은 유지 |
+| 신규 `src/agents/tabular_source_contract.py` | `TabularSourceContract`·`TabularEdaInputContract`·`TabularPartitionInputContract`; 기존 CSV 계약을 느슨하게 바꾸지 않는 명시 타입. `BundleRef`와 `CsvReadSpec`는 preprocessing의 순수 타입을 import |
+| 신규 `src/preprocessing/tabular_loaders.py` | 순수 자료형 `CsvReadSpec`, 고정 CSV 로더·허용된 해석 설정·전수 타입/결측/중복 검사 |
+| 신규 `src/agents/tabular_input_{service,worker,results,transport}.py` | inspect/materialize 도구. 기존 실행기·운송 구성요소 재사용, 별도 승인/작업 엔진 없음 |
+| 신규 `src/agents/tabular_v2_task.py`, `tabular_workflow_service.py` | 새 계약을 기존 어댑터/서비스 API에 연결. `tabular_task.py`의 공통 표시/요약만 필요한 만큼 추출·공유하며 파일 전체 복제 금지 |
+| 기존 진단·분할·구간·후보·적용·handoff 계약/worker/results/CLI/transport | 계약 버전별 읽기/staging과 부모 검증. 아래 작업에 변경 대상을 구분 |
+| 기존 공통 조정기·저장소·등록부·UI | 입력 해석 대기/재개, 새로운 작업 생성만 v2 선택, 구기록 재해석 방지 |
+
+타입은 불변 dataclass로 정의하고 strict JSON 왕복을 제공한다. `BundleRef`는 저장 버전·manifest 지문·전체 바이트·행 수·컬럼 수를 갖는다. preprocessing은 agents를 import하지 않는다. `TabularSourceContract`는 원본 snapshot 기대값·로컬 묶음 위치·`BundleRef`·로더/정책 버전·확정 `CsvReadSpec` 서명·inspect 증거 ID·생성 커밋 증거·한도를 갖는다. `source_id`는 이 내용 중 경로를 제외한 서명이며 `tabular_source:<sha256>` 형식이다. 로컬 위치를 worker/모델에 그대로 전달하지 않고 승인 후 고정 폴더로 stage한다. `BundleRef`만으로 커밋 증거나 승인을 대신할 수 없다.
+
+`TabularEdaInputContract(source, profile_json, limits)`는 일반 EDA/분할용이며 프로파일 필수다. 입력 도구와 고정 진단은 별도 계약으로 프로파일 없이 실행한다. `TabularPartitionInputContract(split, export, partition, bundle, roles_json, parent_source_id)`는 `train`/`validation`만 허용하며 확정 분할·커밋된 export·원래 행 위치에 결합한다. v2 후보/적용은 이 타입을 명시 허용하고 기존 v1 타입의 필수 검사를 그대로 유지한다.
+
+**작업 1 — v2 저장과 출처 계약**
+
+파일: 신규 `tabular_bundle.py`·`tabular_source_contract.py`, 신규 `tests/agents/test_tabular_bundle.py`·`test_tabular_source_contract.py`.
+
+인터페이스: `write_bundle(frame, directory, *, provenance, max_output_bytes, row_positions=None) -> BundleRef`, `inspect_bundle(directory, *, expected, max_bytes) -> BundleRef`, `iter_bundle_rows(directory, *, expected)` → `(source_position, original_index, values)` 반복자, `load_bundle(directory, *, expected, columns=None) -> DataFrame`, `write_subset(directory, positions, destination, *, expected, provenance, max_output_bytes) -> BundleRef`. `expected`는 생산 중 신규 결과를 검사할 때만 None을 허용하고, 후속 소비/승인 경로에서는 필수다. 저장 버전·날짜/시간 단위·시간대·범주 사전·순서·결측 태그는 위 v2 계약을 따른다.
+
+- [x] nullable 정수/boolean·`9007199254740993`·`'0012'`·빈 문자열·None/pd.NA/NaN·±inf·순서 있는 category·시간대 timestamp·중복 인덱스의 복원 단언을 먼저 작성한다. `pd.testing.assert_frame_equal(restored, original)`과 원래 행 위치 `[0, 1, 2]`를 대조한다. 잘못된 태그·미지원 Decimal·자료형/행 수 불일치·v1을 v2로 위장·초과 레코드/출력 크기는 거부한다.
+- [x] `python -X utf8 -B -m unittest -v tests.agents.test_tabular_bundle tests.agents.test_tabular_source_contract`로 실패를 확인한다.
+- [x] 위 인터페이스와 원자적 완료 기록을 구현한다. manifest는 `schema.json`·`data.jsonl`·`provenance.json`의 해시/크기를 담고 완료 표식은 manifest 지문을 담는다. BundleRef가 완료 표식/manifest를 외부에서 고정해 순환 해시를 만들지 않는다. 작은 청크의 컬럼별 버퍼로 복원해 전체 행 객체 목록과 표를 동시에 유지하지 않는다.
+- [x] 같은 명령으로 통과를 확인한다. 생성 결과의 자기 일관성 검사를 원본과의 독립 동등성 증명으로 표현하지 않는다.
+
+현재 구현은 `tabular_bundle.py`·`tabular_source_contract.py`와 해당 테스트다. 소비할 데이터는 비공개 임시 스트림에 순차 복사해 기대 해시/크기를 확인한 뒤 최초 행을 반환한다. 경로의 읽기 전후 해시만 비교해 실제 소비 바이트가 달라지는 경우를 허용하지 않는다. Python 저장 문자열·스칼라 object·명시 범주/시각을 지원하며 Arrow 저장 문자열과 미지원 extension/Decimal/다중 인덱스는 명시 거부한다. 실제 OS 격리·대용량 성능·운영 실행 연결은 후속 작업에서 검증한다.
+
+**작업 2 — CSV inspect/materialize 계산**
+
+파일: 신규 `tabular_loaders.py`와 `tests/agents/test_tabular_loaders.py`, `tabular_source_contract.py`의 해석 검사 위임. 기존 `input_profile.py`의 `dedupe_names`를 import해 재사용하며 해당 파일 자체는 변경하지 않는다.
+
+인터페이스: `inspect_csv(snapshot_file, spec: CsvReadSpec, *, limits, max_input_bytes) -> dict`, `materialize_csv(snapshot_file, spec, directory, *, expected_snapshot, expected_inspection, max_output_bytes) -> BundleRef`. `CsvReadSpec`의 T1 허용값은 loader=`delimited_v1`, encoding=`utf-8-sig`, delimiter=`,`, header=`first_row`, empty_field=`missing|preserve`, header_repair=`reject|number_duplicates`; 나머지 키는 거부한다. 타입 추론 정책 ID를 고정하고 개인 converter·정규식·표현식·임의 pandas 옵션은 받지 않는다.
+
+- [x] `test_default_and_preserve_empty_fields`에서 `a,b\n,NA\n1,0012\n`의 기본 첫 셀은 결측, `NA`·`0012`는 문자열임을 확인하고 preserve 모드의 첫 셀은 `''`임을 확인한다. 전체가 빈 컬럼·아주 큰 정수·긴 소수·혼합 타입·잘못된 UTF-8·행 너비 변화·CSV 따옴표/줄바꿈도 고정 정답으로 검사한다.
+- [x] `test_duplicate_repair_requires_exact_spec`에서 `zero,zero,zero_1`의 미승인 정비 거부와 승인된 충돌 없는 이름/위치 매핑을 검사한다. 모호한 입력은 고정 코드와 후보만 반환하고 다른 파서로 자동 재시도하지 않는다. inspect에는 원본 행/실패 값이 포함되지 않아야 한다.
+- [x] `python -X utf8 -B -m unittest -v tests.agents.test_tabular_loaders tests.agents.test_input_profile`로 RED를 확인한다.
+- [x] inspect는 snapshot 전체를 제한 안에서 검사해 컬럼별 타입·성공/실패/결측 건수와 `inspection_id=해시(snapshot+spec+policy+결과)`를 생성한다. materialize는 동일 snapshot을 다시 읽고 inspect ID·해석 서명·형상·타입을 재대조해 작업 1 writer로 기록한다. 수치 변환 사용자 정비와 임의 행 삭제는 T1에 추가하지 않는다.
+- [x] 같은 명령으로 통과를 확인하고 원본 바이트 불변·두 번째 실행의 덮어쓰기 거부를 검사한다.
+
+현재 구현의 `CsvReadSpec`는 순수 불변 타입이며 부모 계약도 같은 타입으로 해석을 검사한다. 검사 결과 `csv_inspection_v1`에는 확정 spec·자원 요청·실제 읽은 snapshot 지문·타입 추론 정책·행 수·컬럼별 dtype/건수·변경된 이름 매핑·고정 상태/코드·inspection ID를 담는다. 원본 행·실패 값·경로는 넣지 않는다. numeric 성공/실패는 셀별 수치 표현 가능 건수이며 컬럼 전체가 수치형으로 확정됐다는 뜻은 아니다. 큰 정수와 실수의 혼합으로 정밀도가 손실되거나 공통 정수 범위가 맞지 않으면 컬럼을 문자열로 유지한다.
+
+생성 단계는 비공개 임시 스트림에 고정한 실제 소비 바이트를 기대 snapshot과 대조하고, 전체 재검사 결과의 canonical JSON을 기대 결과와 비교해 bool/int/float의 묵시적 동등성을 허용하지 않는다. 중복 이름 번호 충돌은 `CSV_HEADER_REPAIR_CONFLICT`, 입력 I/O 실패는 경로 없는 고정 코드로 처리한다. 다른 구분자를 추정해 파서를 자동 전환하지 않으며 명시한 쉼표 해석의 정상 컬럼명 안에 다른 구분자 문자가 있다는 이유만으로 차단하지 않는다. 파일/레코드/행/열/셀 제한과 파싱 중 deadline은 계산 모듈에서 확인하지만 OS 메모리·프로세스 강제와 실제 격리 실행은 작업 3 이후 범위다.
+
+**작업 3 — 입력 도구와 A 승인·입력 해석 재개**
+
+파일: 신규 `tabular_input_service.py`·`tabular_input_worker.py`·`tabular_input_results.py`·`tabular_input_transport.py`·`tabular_input_flow.py`, 수정 `task_orchestrator.py`·`task_store.py`와 개발 중인 v2 출처/저장/로더 계약; 신규 `tests/agents/test_tabular_input.py`·`test_task_input_interpretation.py`.
+
+인터페이스: `TabularInputService(action)`은 기존 서비스의 `create/status/preview_approval/record_delegated_approval/next/results` 규약을 따른다. action은 `inspect|materialize`만 허용하고 stage는 둘 다 기존 증거 도구가 다룰 수 있는 `ingest`로 하되 module ID는 `tabular_inspect|tabular_materialize`로 분리한다. `read_inspection(directory, expected_request)`와 `read_materialization(directory, expected_request)`는 부모에서 요청/출력 결합을 검사한다. 공통 조정기에 `resume_input(task_id, selection, *, expected_revision, expected_inspection_id, root=None, requester=None)`를 추가한다. 선택 객체는 어댑터가 검사하며 공통 조정기는 CSV 필드를 해석하지 않는다.
+
+- [x] 입력 해석 대기에서는 모델 호출·materialize·C/D 발급이 0임을 검사한다. 정상 기본 입력은 A 한 번의 사용자 확인으로 서로 다른 inspect/materialize 실행 승인 두 개를 소비한다. 다른 spec·다른 snapshot·취소·만료·중복 제출·stale revision/inspect ID는 새 동의/실행을 만들기 전에 거부한다.
+- [x] materialize 실행 성공 뒤 작업 기록 저장 실패를 주입해 자동 재실행이 없고 원본·구실행·승인 소비 기록이 보존됨을 검사한다. 링크/추가 파일/완료 표식/해시 변조와 불완전 출력은 등록하지 않는다.
+- [x] `python -X utf8 -B -m unittest -v tests.agents.test_tabular_input tests.agents.test_task_input_interpretation`로 RED를 확인한다.
+- [x] 기존 ApprovalStore·RulesExecutor·상태·위임 기록·AppContainer/Job을 재사용한다. worker는 `-I -S -B` 복사 런타임에서 작업 2를 호출하고 부모 모듈/승인 DB에 의존하지 않는다. 새 transport는 기존 고정 복사/ACL/Job 구성요소를 이용하며 새로운 비격리 fallback은 만들지 않는다.
+- [x] `awaiting_input` phase와 `input_selection` 기록(시도·inspect 참조·해석 서명·동의 이력)을 추가한다. 어댑터가 이 상태로 돌아오면 공통 `diagnose/resume_input`은 `_recommend`를 호출하지 않고 반환하며 materialize/진단 커밋 뒤에만 모델 단계로 간다. A 기본 정책의 정확한 일치 조건으로만 materialize를 승인하고, selection 변경은 새 inspect와 A 개정으로 수행한다. 큰 inspect 본문은 기존 parts 저장을 이용하고 새 구역을 분리하면 `PART_SECTIONS`·`PART_NAME`·크기 검사를 함께 확장한다. 64KiB IPC에는 해시/파일 참조만 넣는다. 원본 snapshot 검사는 유지하고 소비 직전 canonical 참조도 재검사하는 어댑터 hook을 추가한다.
+- [x] 위 대상과 기존 `tests.agents.test_task_orchestrator`·`tests.agents.test_array_task`를 실행해 구경로가 유지되는지 확인한다.
+
+입력 준비 정책은 `tabular_input_flow`가 맡고 공통 조정기는 유형 이름 없이 대기/재개 hook만 호출한다. 생성의 설정 지문은 worker packet 전체를 기준으로 하며 snapshot·확정 spec·검사 ID/파일 해시·코드·정책·자원·출력 상한을 포함한다. 개발 중인 `TabularSourceContract`에도 `inspection_sha256`·`max_output_bytes`를 필수로 추가했고, provenance의 검사 파일 해시를 대조한다. 입력 준비 흐름의 기본 총 출력 상한은 64MiB, 검사 sidecar 상한은 16MiB다. `workflow_approval.py`는 부모 코드 지문에 포함하되 worker에는 복사하지 않는다.
+
+합성 어댑터에서 입력 준비 흐름을 검증했으며 후속 진단·모델 단계는 대역이다. 별도 Python `-I -S -B` 프로세스에 허용 소스만 복사해 계산 성공과 부모 서비스/승인 DB 모듈 미사용을 확인했다. 실제 복사 런타임의 AppContainer·ACL·Job 실행과 새 입력 UI는 미검증이다. worker는 부모가 검증한 작업 경계 아래의 경로만 조회하고, 부모의 전체 경로/링크 검사는 유지한다. v2 어댑터 등록과 화면 연결은 작업 7에서 수행한다. 독립 보안 재검토에서 지문 누락 보완 후 추가 확정 결함은 없었으며 검증 수치는 [GUIDE](GUIDE.md)에 둔다.
+
+**작업 4 — v2 고정 진단·분할·canonical 구간 내보내기**
+
+파일: 수정 `input_profile_pipeline.py`·`module_pipeline_worker.py`·`module_pipeline_results.py`·`pipeline_binding_registry.py`, `snapshot_split_cli.py`·`snapshot_split_worker.py`·`split_evidence.py`, `partition_export_cli.py`·`partition_export_contract.py`·`partition_export_worker.py`·`partition_export_results.py`와 해당 transport 목록; 신규 `tabular_worker_input.py`·`tabular_pipeline.py`·`tabular_split.py`·`tests/agents/test_tabular_split_export.py`. 기존 `snapshot_split.py`·`partition_export.py`의 승인·실행·커밋을 v2 도구가 상속하며 해당 두 본문은 변경하지 않았다.
+
+인터페이스: `bind_tabular_diagnostic(source: TabularSourceContract, limits)`는 v2 고정 계획만 결합한다. `snapshot_split_cli.create_from_tabular(name, source, profile, limits, *, confirmed=False)`와 `partition_export_cli.create_from_tabular(name, split_run, source, limits, max_partition_bytes, *, confirmed=False)`를 추가하고 기존 create 인자는 유지한다. `read_confirmed_split`은 같은 `ConfirmedSplit` API를 유지하되 계획 버전에 맞는 source ID와 packet을 검사한다. v2 export 결과는 구간별 BundleRef·원본 행 위치·부모 source ID를 담는다.
+
+- [x] 고정 합성 표에서 원래 인덱스가 `[8,8,3,2,...]`여도 분할은 행 위치로 수행되고 구간을 다시 읽으면 정확한 라벨/그룹/ID가 따라오는지 검사한다. Test canonical/값 파일이 생성되지 않는지, group/stratify·품질 review_required·빈 구간·1백만 행 초과 사전 차단을 검사한다.
+- [x] 일반 계획의 profile 없음·v2 진단에 단계 추가·v1 CSV 파일을 canonical로 위장·원본 해석 서명 변경·분할과 export의 source 불일치를 거부한다. worker가 고정 계획 전체와 서명을 재계산하는지 검사한다.
+- [x] `python -X utf8 -B -m unittest -v tests.agents.test_tabular_split_export tests.agents.test_snapshot_split_execution tests.agents.test_partition_export_execution tests.agents.test_input_profile_pipeline`로 RED를 확인한다.
+- [x] v2 분기에서만 작업 1 reader와 기존 `profile_input`·`inspect_quality`·EDA·`propose_split/validate_proposal`을 호출한다. 구분자가 아닌 계약 버전으로 dispatch한다. `csv:` source ID, UTF-8 헤더/텍스트 강제 dtype, CSV row writer는 v1 경로에서 유지하고 v2에는 적용하지 않는다.
+- [x] 부모 검증은 CSV 헤더 대신 승인된 canonical 스키마의 ID/이름/순서·타입·행 수에 대조한다. 구간 파일은 `write_subset`으로 만들고 분할 증거·행 위치·출력 커밋과 결합한다. 기존 v1 공개 계약의 필수 조건을 제거하지 않는다.
+- [x] 같은 명령과 `tests.agents.test_generic_split`·`tests.agents.test_generic_preprocessing`을 실행해 통과를 확인한다.
+
+v2 입력 helper만 worker에 복사하며 생성 승인 DB·부모 출처 계약·도구는 복사하지 않는다. 진단은 기존 단일 고정 계획, 분할은 기존 품질/EDA/제안/확정, 내보내기는 기존 ingest 실행기로 진행한다. `TabularExportContract`가 동일 생성 출처·프로파일·v2 확정 분할·상한을 결합한다. 확정 증거를 다시 읽을 때도 선행 제안의 실제 승인·커밋·완료 표식과 확정 승인 인자를 대조한다. 이 선행 제안 읽기는 `tabular_split_v2` 정책에만 허용하며 기존 v1 증거 검사는 유지한다.
+
+부모는 진단의 컬럼 순서와 스키마에서 확정 가능한 분류, 진단·EDA·제안·확정의 행 수를 승인 묶음과 대조한다. category 등 분류가 모호한 경우 추정하지 않는다. 구간은 컬럼 스키마·행 위치·provenance·기대 해시를 검증하며 원본 대비 모든 통계·변환 값의 독립 정답 인증을 뜻하지 않는다. 정상·변조 합성 검사와 허용 파일만 둔 별도 Python `-I -S -B`의 진단/분할/내보내기를 확인했다. 실제 AppContainer·UI·모델은 미검증이며 정식 어댑터/서비스 연결은 작업 6~7이다. 독립 보안 재검토에서 복사 의존 누락과 기대 행 수 대조 누락을 보완한 뒤 추가 확정 결함은 없었다. 검증 수치는 [GUIDE](GUIDE.md)에 둔다.
+
+**작업 5 — typed 구간의 Train 후보·Validation 적용**
+
+파일: 수정 `partition_input_contract.py`, `preparation_candidate_contract.py`·`preparation_candidate.py`·`preparation_candidate_cli.py`·`preparation_candidate_worker.py`·`preparation_candidate_results.py`, `preparation_apply_contract.py`·`preparation_apply.py`·`preparation_apply_cli.py`·`preparation_apply_worker.py`·`preparation_apply_results.py`, `preparation_pipeline_cli.py`; 신규 `tests/agents/test_tabular_preparation_v2.py`.
+
+인터페이스: 작업 1의 `TabularPartitionInputContract`를 명시적으로 허용하는 `PreparationCandidateContract`/`PreparationApplyContract` 버전 `v2`를 추가한다. 기존 `.packet(code_id)`·`.check()`·후보 증거 `.signature` API를 유지하되 packet의 입력 버전/BundleRef/부모 source ID·분할 증거를 포함한다. 직렬화 복원은 허용된 두 타입만 분기하며 임의 dict/duck typing을 허용하지 않는다. `.snapshot`에 canonical을 가짜로 넣지 않고 `.source_id`·구간의 고정 입력 참조를 사용한다.
+
+- [x] Train 값 `[1, NaN, 9]`, Validation `[100, NaN]`의 중앙값 기준이 5이며 Validation 결과 `[100,5]`이고 refit=0임을 검사한다. 임의 source index와 bool/큰 정수 target·문자열 group/ID의 값/타입/행 순서를 검사한다. 큰 정수 **특징**의 기존 float64 계산 한계는 조용히 무손실 처리했다고 하지 않고 승인 전 영향 안내 대상으로 고정한다.
+- [x] typed 범주/nullable 입력이 기존 변환기의 지원 범위인지 사전 검사하고, 지원되지 않는 조합을 후보 worker 실패까지 미루지 않는다. 후보 교체·다른 split/partition·v1 downgrade·D 이후 입력 변경·원래 행 위치 변조는 거부한다.
+- [x] 대상 테스트에서 미구현 binder/연결 API와 복사 worker·지문 누락의 RED를 확인한 뒤 수정했다.
+- [x] typed reader에서 가져온 표에 기존 `build_preparation`·저장/복원·영향 집계를 적용한다. 기존 transform 계산을 재작성하지 않는다. v2 row metadata는 작업 1의 안전한 스칼라 인코딩과 schema로 보존하고 임의 `str()` 변환하지 않는다. 후보/적용 결과 버전과 검증기는 같은 encoding을 고정한다.
+- [x] 위 대상 모듈과 `tests.agents.test_generic_transform`·분할/내보내기 관련 검사를 실행해 후보 예상/적용 실측 구분·Test 미사용·잘못된 입력의 승인 전 거부를 확인했다. 검증 수치와 미검증 범위는 [GUIDE](GUIDE.md)에 둔다.
+
+v2 전처리는 `bind_typed_partition_input`으로 승인·커밋된 Train/Validation을 결합하고 기존 후보·적용 실행기에 연결한다. 부모의 `tabular_preparation`은 타입/계보 사전 검사와 staging, worker의 `tabular_preparation_worker`는 고정 입력 참조·typed 로딩·안전한 메타데이터를 맡는다. 변환 계산은 기존 `build_preparation`·저장/복원·영향 집계를 재사용한다. 범주 사전 dtype은 값이 같은 object 뷰로 특징 계산에만 전달하고 메타데이터의 원래 dtype은 유지한다. bool·문자열·시각의 수치 특징 지정과 지원되지 않는 범주 스칼라는 후보 생성 전에 거부한다. int64/uint64 특징은 기존 float64 계산의 정밀도 한계를 승인 안내와 후보 보고서에 표시한다.
+
+기존 영향 보고서 v2와 구별해 typed 후보는 `preparation_candidate_report_v3`, 적용은 `preparation_application_v3`만 허용한다. typed 결과를 과거 결과 형식으로 낮추는 것은 거부한다. `*_rows.json`의 `typed_row_metadata_v2`는 안전한 scalar encoding·원래 컬럼/인덱스 schema·원래 행 위치를 담는다. 부모는 승인 구간에서 복원한 메타데이터와 대조하며 `load_row_metadata`로 원래 dtype을 읽을 수 있다. 숫자 특징의 변환 값 전체를 부모가 재계산해 인증한다는 의미는 아니다. 후보 선택 기록은 쓰기/읽기 모두 8 MiB 상한, IPC는 기존 64 KiB 상한을 유지한다. 적용은 해시를 확인한 실제 후보 바이트를 worker scratch에 고정해 복원하며 fit하지 않는다. 후보/적용 worker에는 부모 승인 모듈을 복사하지 않고 부모 출처 검증 의존성은 코드 지문에 포함한다. 정식 서비스·handoff·통합 UI 연결은 작업 6~7이다.
+
+**작업 6 — 표형 서비스 버전·전달·보고서 사실 연결**
+
+파일: 신규 `tabular_workflow_service.py`, 수정 `workflow_service_registry.py`·`csv_workflow_service.py`·`csv_workflow_creation.py`·`csv_workflow_schema.py`·`csv_handoff_workflow.py`·`csv_handoff_contract.py`·`csv_handoff_cli.py`, `llm_workflow_binding.py`·`csv_workflow_binding_evidence.py`·`csv_workflow_proposal_catalogue.py`·`llm_workflow_contract.py`; 신규 `tests/agents/test_tabular_workflow_v2.py`·`test_tabular_handoff_v2.py`.
+
+인터페이스: `workflow_service('tabular_split_review'|'tabular_partition_export'|'tabular_prepare_candidate'|'tabular_prepare_apply'|'tabular_local_handoff', '2.0.0')`를 고정 등록한다. 서비스는 기존 `create/status/preview_approval/record_delegated_approval/next/results` 규약을 유지한다. 새 service의 생성 명세에는 임의 원본 파일 대신 검증된 `source_contract_id`/선행 커밋 참조를 쓴다. 기존 CSV ID `1.0.0`은 바꾸지 않는다. workflow 제안·step binding은 정적 명세의 v2 ID와 선행 결과를 지원하고 검증 없는 우회 실행으로 대체하지 않는다.
+
+- [x] v2 계획의 각 단계가 같은 source/시도/동의에 묶이고 `source_contract_id`가 다른 선행 결과나 지원하지 않는 서비스 버전은 거부되는지 검사한다. v1 서비스는 기존 생성 명세와 결과 그대로 검증한다.
+- [x] handoff에서 출력 숫자 특징 CSV와 타입/결측/행 위치를 보존한 metadata 부속 파일을 대조한다. 라벨 `True`와 `1`, `'0012'`와 `12`가 혼동되지 않아야 하며, 저장/복원한 fitted 기준과 출력 컬럼 순서가 같아야 한다. 자기 manifest만 다시 계산한 위조·추가 파일·누락·다른 D 후보·다른 시도는 거부한다.
+- [x] `python -X utf8 -B -m unittest -v tests.agents.test_tabular_workflow_v2 tests.agents.test_tabular_handoff_v2 tests.agents.test_csv_workflow_service tests.agents.test_csv_handoff tests.agents.test_llm_workflow_binding`로 RED를 확인한다.
+- [x] 필요한 서비스/생성/검증 공통 함수만 추출하고 CSV wrapper는 유지한다. 표형 모듈을 공통 UI 카탈로그에 중복 노출하지 않는다. 읽기 전용 과거 결과 검증은 기존 허용 범위만 유지하고 v2를 이유로 확대하지 않는다. metadata에 값이 있는 파일은 모델 전송 대상이 아니며 사용 예제에서도 입력 타입 보존 reader를 제공한다.
+- [x] 같은 명령으로 통과를 확인하고 v2 결과의 보고 근거(`report_sources`)가 검증된 단계 결과에서만 입력 해석·품질·제안·후보·전처리기·적용·전달 파일을 모으는지 검사한다. 이 근거를 `report_facts`의 문제·처리·전후/미집계·해석·정비·실제 적용 구간·파일 활용 설명으로 화면에 연결하는 것은 작업 7의 완료 조건이며 아직 구현하지 않았다.
+
+v2 5개 서비스는 `2.0.0`으로 정적 등록하고 UI 카탈로그와 기본 LLM 제안 명세(`workflow_proposal_specifications()`)에는 노출하지 않는다. v2 제안 명세는 `include_tabular=True`로만 만들며 한 제안에 CSV/표형 단계를 섞거나 다른 계열의 선행 참조를 쓰면 거부한다. 각 단계는 같은 `source_contract_id`에 묶이고 materialize 실행은 관리 입력 루트(`logs/agents/tabular_input`, 작업별 `input_runs`) 아래만 허용한다. `create()`는 preview 이후 원본·분할 서명·Train 계약을 다시 대조한다. v2 연결 지문은 `tabular_workflow_service.code_id`(CSV 지문 + v2 의존 파일)이며 v1은 기존 `csv_workflow_creation.code_id`를 쓴다. v1 단계는 v2 선행 결과를, v2 단계는 v1 선행 결과를 거부한다.
+
+v2 handoff는 `tabular_preparation_handoff_v2`로 숫자 특징 CSV와 `typed_row_metadata_v2` 행 파일, `preparation_application_v3`, `source_contract_id`·파이프라인 서명·적용 계획 ID를 담은 provenance, 고정 README를 둔다. 결과 확인은 이 값을 승인 기록과 대조하므로 자기 manifest만 다시 계산한 위조나 다른 D 시도의 묶음은 거부된다. 사용자용 reader `load_handoff_partition`과 결과 확인(`HandoffTool.verified_bundle`)은 완료 기록(manifest) 바이트를 한 번 읽어 봉인하고, 그 기록의 크기·해시와 같은 바이트만 비공개 임시 사본에 복사한 뒤 사본 하나에서 묶음 검사·승인 기록 대조·해석을 모두 수행한다. 검사 뒤 원본을 다시 읽지 않으므로 검사 중 manifest·파일을 바꾸거나 되돌려도 검증하지 않은 값이 반환되지 않는다. 특징 CSV는 `%.17g`로 쓰고 `float_precision="round_trip"`으로 읽어 float64 값이 추가로 반올림되지 않는다. 라벨·그룹·식별자 결측은 분할 단계가 거부하므로 메타데이터의 bool·nullable 결측 왕복은 reader 계층의 합성 사본으로만 검사했다. reader는 묶음 자체 정합성만 확인하며 승인 이력과의 결합은 `results()`가 담당한다. 임시 사본은 `%TEMP%`에 생기며 강제 종료 시 남을 수 있다.
+
+`report_sources`는 단계별 결과를 다시 검증하고 단계 간 연결을 대조한 뒤 보고 근거를 로컬 전용 사실로 돌려준다. 원본을 다시 열 때는 커밋 폴더 완료 표식의 해시에 묶인 바이트만 쓰고, 승인 체인에 묶인 값(분할안은 확정 증거, 후보·전처리기는 검증 시점 표식 해시, 적용 기록은 봉인 manifest 해시)과 대조한다. quality는 승인 체인에 묶인 기대 해시가 없어 완료 표식의 손상 검사 수준이다. 반환하는 전달 폴더·README·보고서 경로는 원본 경로이므로 작업 7에서 화면에 표시할 때는 검증된 해시에 묶인 바이트만 써야 한다. 합성 입력과 모의 OS 전송 기준으로 검증했으며 실제 AppContainer·UI·모델은 미검증이다. 검증 비용 개선 A로 한 호출 안에서 같은 하위 증거를 반복 결합·검사하던 구조를 정리했다(Validation 구간 1회 결합, packet·자료형 대조·후보 읽기가 같은 호출의 검사 결과를 공유). 공개 호출·승인 기록·worker 시작·결과 등록 경계의 재검증과 승인 DB·상태·취소·코드 지문 확인은 유지하며 객체·전역·디스크 캐시는 두지 않는다. 공개 경계마다 하위 증거 전체를 다시 검증하는 비용은 남아 있고, 같은 검증 작업 안의 고정 증거 전달(B안)은 아직 결정 전이다. 검증 수치는 [GUIDE](GUIDE.md)에 둔다.
+
+**작업 7 — 새 어댑터·기존 화면의 끝단 연결**
+
+파일: 신규 `tabular_v2_task.py`, 수정 `tabular_task.py`·`tabular_options.py`·`profile_store.py`·`task_adapters.py`·`task_orchestrator.py`·`task_plan.py`, `src/ui/task_view.py`·`task_forms.py`·`tabular_task_form.py`; 신규 `tests/agents/test_tabular_task_v2.py`·`test_ui_tabular_v2.py`, 기존 `test_task_array_adapter.py`의 공통 경계 검사 확장.
+
+인터페이스: v2 어댑터는 기존 어댑터와 같은 `diagnose/base_plan/plan_fields/validate_plan/questions/prepare/create_step/service/check_lineage/review/report_facts`를 제공하고 작업 3 입력 선택을 추가한다. `task_adapters.select(path, *, generation='legacy')`와 `input_specs(*, generation='legacy')`는 legacy/current 후보 집합을 각각 검증한다. `start_task`에 keyword-only `input_generation='legacy'`를 추가해 기존 호출/테스트를 유지하고, 통합 UI의 신규 생성은 고정 `current`를 요청한다. current는 CSV→`tabular_v2`, NPZ→기존 `array_npz` 한 개씩만 고르며 외부 입력이 임의 kind/import를 지정할 수 없다. 구기록은 저장된 kind로 읽는다.
+
+- [ ] v2 어댑터 `report_facts`가 작업 6의 `report_sources` 근거로 문제·처리·전후/미집계·해석·정비·실제 적용 구간·파일 활용 설명을 화면 보고서에 연결하는지 검사한다. 화면에 보일 파일 내용은 검증된 완료 표식·manifest 해시에 묶인 바이트만 쓰고 반환 경로를 다시 열어 신뢰하지 않는다.
+- [ ] AppTest로 정상 CSV의 A→진단→권장안/질문→최종 계획→C→후보→D→전달/보고서를 확인한다. mock 모델 거부 시 기본 계획으로 끝까지 진행해야 한다. 한 화면에서 중복 헤더 동의·해석 수정·재제출 거부·원인/다음 행동도 검사한다.
+- [ ] 새 current 선택이 v2로 가고 기존 legacy 선택과 저장된 CSV/배열 기록이 그대로 열리는지 검사한다. 공통 조정기/화면에 CSV 파서·WM 필드·형식별 계산 분기를 넣지 않는다. 새 메뉴·T2 미구현 선택지는 노출하지 않는다.
+- [ ] `python -X utf8 -B -m unittest -v tests.agents.test_tabular_task_v2 tests.agents.test_ui_tabular_v2 tests.agents.test_task_orchestrator tests.agents.test_ui_task tests.agents.test_task_array_adapter tests.agents.test_array_task`로 RED를 확인한다.
+- [ ] v2 프로파일 ID `tabular_canonical_v2`를 새 `TabularEdaInputContract`의 정적 허용 목록에 등록한다. 기존 `eda_input_contract.REGISTERED_EDA_ADAPTERS`의 CSV v1 검사를 완화하지 않는다. `profile_store`의 기존 CSV 기본값은 유지하고 v2 어댑터만 새 ID를 명시한다. `source_id`·선택 revision·계획 미리보기 digest·후보 signature가 최종 실행까지 같은지 검사한다. 같은 코드의 옵션 설명·권장안 값 명세·역할 검사·보고서 조립은 공유하되 CSV 파일명/경로를 공통 결과로 가정하지 않는다.
+- [ ] 같은 명령으로 통과를 확인한다. T2 숫자 문자열 정비를 구현하지 않은 상태에서 수치 역할 부적합을 자동 수정하지 않고 지원 범위와 다음 행동을 안내한다.
+
+**작업 8 — 승인 지문·독립 검토·실제 환경 확인 준비**
+
+파일: 앞 작업의 worker/등록부와 `module_pipeline_transport.py`·`snapshot_split_transport.py`·`partition_export_transport.py`·`preparation_candidate_transport.py`·`preparation_apply_transport.py`·신규 `tabular_input_transport.py`의 복사/지문 목록, `appcontainer_probe.py`의 실제 영향 경로 확인, 신규 `tests/agents/test_tabular_v2_appcontainer.py`; 필요 시 기존 `scripts/run_agent_regression.py`의 자동 발견 여부만 확인한다. CLI/UI 실제 확인용 고정 합성 fixture는 테스트 helper로 두며 새 날짜별 보고서/스크립트를 양산하지 않는다.
+
+- [ ] 구현 착수 직전 전체 기존 code manifest와 작업 트리 기준을 읽기 전용으로 보존한다. 모든 신규 worker 의존 파일·출처/정책/위임 판정 코드가 해당 worker 또는 제어 지문 목록에 있는지 검사한다. 런타임에는 T1의 새 엔진을 추가하지 않으며 기존 복사 상한·network capability·핸들·ACL·Job 정책을 유지한다.
+- [ ] 독립 보안 검토에서 A 조건부 materialize·C/D 출처/후보 결합·신규 파일·legacy downgrade·원본/결과 경로 혼동·코드 지문 누락을 SEC 기준으로 검토한다. 지적 반영은 실행 중인 테스트가 끝난 뒤 수행하고 영향 테스트를 다시 실행한다. 보안 PASS와 제품 완료를 구분한다.
+- [ ] 작업 1~7의 명령을 최종 코드 고정 상태에서 실행하고 실행/통과/실패/오류/생략·hash 시점을 기록한다. 여러 모듈 동시 실행의 간헐 실패도 원인 미확인인 채 해결됐다고 표시하지 않는다. 전체 회귀 `python scripts/run_agent_regression.py`는 별도 사용자 요청/동의 후 수행한다.
+- [ ] 실제 환경 허용 후 관리자 UI에서 고정 합성 CSV 한 건을 새 v2 경로로 끝까지 실행한다. 선택 검사 `WAFERGUARD_TEST_APPCONTAINER=1`과 `python -X utf8 -B -m unittest -v tests.agents.test_tabular_v2_appcontainer`로 inspect/materialize·진단·후속 단계의 종료·Job 정리·active_processes=0·원본 불변을 확인한다. 원본 수치 정답과 NumPy/pandas 독립 계산을 대조한다. 새 egress 시험을 하지 않았다면 기존 증거를 새 실행의 전면 보장으로 재사용하지 않는다.
+- [ ] 실제 manifest 변경 목록으로 CSV·모듈 파이프라인·배열·WM의 미실행 승인/완료 결과 조회 영향을 보고한다. 사용자 실데이터·기존 작업 재실행·실제 모델 호출·커밋/푸시는 이 계획의 자동 실행 항목이 아니다.
+
+**작업 9 — 현재 지원 상태와 마무리**
+
+파일: `DESIGN.md`의 이 절과 `GUIDE.md`의 입력 지원/시작 순서/한계만 갱신한다. 일정표는 실제 단계 완료 상태가 바뀐 경우에만 해당 항목을 갱신한다.
+
+- [ ] T1 구현·합성 검증·독립 검토·실제 OS/UI 검증을 각각 원본 근거와 대조하고 해당 상태만 표시한다. 실제 환경 미확인이면 T1의 사용자 흐름 확인은 남겨 둔다.
+- [ ] v1/v2 입력 해석 차이·현재 CSV만 지원·빈 문자열/큰 정수의 보존/계산 한계·원본 보존·동의 재발급 영향을 안내한다. T2~T4를 완료로 표시하지 않는다.
+- [ ] 문서 링크·`git diff --check`·미추적 신규 파일 포함 변경 범위를 확인하고 최종 보고한다. 사용자 승인 없는 커밋은 수행하지 않는다.
+
+**계획 자체 점검:** 상세 설계의 공통 저장/출처는 작업 1, 기본 해석/정비는 2·3, 중간 표형 계약은 4·5, 서비스/보고서는 6·7, 독립 검토/실제 확인은 8·9에 대응한다. T1 이후 로더·엔진·다중 파일·수치 문자열 변환은 의도적으로 제외했다. 현재 문서의 체크 항목은 실행 결과가 아니라 향후 확인 목록이다.
+
 ## 입력 계약
 
 ### Snapshot과 프로파일
@@ -425,8 +737,8 @@ SEC-11·12는 실제 토큰·ACL·Job/네트워크 캡처 증거로 확인한다
 
 ## 후속 범위
 
-진행 순서는 **배열·이미지 통합 작업 연결 → 웨이퍼 프로파일 연결 → 시간 처리 지원**이다. 첫 단계(`.npz` 배열 연결)는 구현·합성 검증했다([배열·이미지 통합 작업 연결](#배열이미지-통합-작업-연결)). pickle·이미지 폴더 입력은 같은 배열 어댑터 위의 후속 입력이다. 시간 처리는 표형/배열과 별개의 처리 능력이다. 기존 SECOM의 시간 기준 분할 재사용을 먼저 검토하며 윈도우·순서 기반 시계열 모델용 전처리와 구분한다. 배열/이미지 연결에 시간 기능을 묵시적으로 포함하지 않는다.
+다음 작업은 **공통 표형 입력·처리 확장**이다([설계 방향](#공통-표형-입력처리-확장)). 기존 `.npz` 배열 연결은 구현·검증한 범위에서 유지하고, 웨이퍼 통합 연결 설계안은 폐기한다. 기존 WM 단독 경로는 보존한다. pickle·이미지 폴더의 배열 입력 확대와 시간 처리는 이번 범위에 묵시적으로 포함하지 않는다. 시간 처리는 표형/배열과 별개의 처리 능력이며, 추후 기존 SECOM 시간 기준 분할의 재사용과 시계열 윈도우 전처리를 구분해 검토한다.
 
-별도 설계가 필요한 보류 범위는 문자열→수치 정비, 조건부 도메인 처리, 컬럼/그룹별 전처리, 목적별 EDA, 일반 재시작/재접속·취소 복구, 외부 API, 임의 사용자 모듈, 결과 해설 추가 편집/영구 저장/자동 민감 탐지다. TotalCharges 같은 특정 컬럼 규칙을 공통 엔진에 하드코딩하지 않는다. 웨이퍼 위임 발급 위치와 해당 코드 지문 영향은 연결 시 결정한다.
+표형 입력의 문자열→수치·결측 표현 정규화는 공통 입력 설계에서 함께 검토하되 자동 변환으로 확정하지 않는다. 그 밖의 조건부 도메인 처리, 컬럼/그룹별 전처리, 목적별 EDA, 일반 재시작/재접속·취소 복구, 외부 API, 임의 사용자 모듈, 결과 해설 추가 편집/영구 저장/자동 민감 탐지는 보류한다. 특정 데이터셋·컬럼명 규칙을 공통 엔진에 하드코딩하지 않는다.
 
 남은 결함·검증 공백은 GUIDE의 현재 제한에서 관리한다. 완료된 단계별 계획·P1/P2 버전 서술·작업별 검토/테스트 이력은 이 문서에 다시 추가하지 않는다.
