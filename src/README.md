@@ -2,6 +2,18 @@
 
 전처리 에이전트는 [사용 안내](../docs/agents/GUIDE.md)와 [단일 설계](../docs/agents/DESIGN.md)를 따릅니다. 구현·검증 상태를 이 파일에 중복 기록하지 않습니다. 아래는 센서 ML·맵 처리 코드를 찾기 위한 안내입니다.
 
+## 통합 표형 v2의 진입점
+
+| 책임 | 주요 파일 |
+| --- | --- |
+| 공통 조정·동의·기록·화면 | `agents/task_orchestrator.py`, `task_consent.py`, `task_store.py`, `ui/task_view.py` |
+| 유형 선택·표형 v2 연결 | `agents/task_adapters.py`, `tabular_v2_task.py`, `tabular_workflow_service.py` |
+| CSV 검사·작업용 표 생성 | `agents/tabular_input_*`, `preprocessing/tabular_loaders.py`, `tabular_bundle.py` |
+| typed 분할·전처리 연결 | `agents/tabular_split.py`, `tabular_preparation.py`, `tabular_preparation_worker.py` |
+| 보고서·결과 활용 | `agents/task_report.py`, `tabular_task.py`, `csv_handoff_contract.py` |
+
+새 CSV 작업은 v2로 선택하고 기존 CSV·배열 기록은 저장된 유형으로 엽니다. 아래 개별 CLI 설명은 기존 경로를 포함하며 현재 통합 작업의 전 단계를 하나의 CSV v1 경로로 해석하지 않습니다.
+
 ## 공통 코어 — src 바로 아래
 
 pickle 변환은 `agents/pickle_import_cli.py`·`pickle_import.py`에서 승인·실행을 관리합니다. `pickle_contract.py`가 선택 계약을, `pickle_converters.py`가 구조 판별과 표·숫자 배열·WM 변환기 연결을 담당합니다. 공통 데이터 코어는 `preprocessing/canonical_data.py`입니다. 격리 실행은 `pickle_import_transport.py`·`pickle_import_worker.py`, 부모 검증은 `pickle_results.py`에 있습니다. 기존 `wm_pickle_*` 파일은 호환 진입점입니다. [실행 방법과 지원 범위](../docs/agents/guides/PICKLE_IMPORT.md)를 참고하세요.
@@ -10,9 +22,9 @@ pickle 변환은 `agents/pickle_import_cli.py`·`pickle_import.py`에서 승인�
 
 Train 후보 기준 산출은 `agents/preparation_candidate_cli.py`·`preparation_candidate.py`가 관리합니다. 입력 증거는 `preparation_candidate_contract.py`, 격리 계산·운송은 `preparation_candidate_worker.py`·`preparation_candidate_transport.py`, 부모 파일 검증은 `preparation_candidate_results.py`가 담당합니다. 기존 `preprocessing/transform.py`를 재사용하며 변환 적용·모델 학습은 하지 않습니다. [구현 범위·사용법](../docs/agents/guides/PREPARATION_CANDIDATE.md)을 참고하세요.
 
-분할 준비는 `agents/snapshot_split_cli.py`·`snapshot_split.py`가 관리하며, `snapshot_split_worker.py`·`snapshot_split_transport.py`가 격리 품질·EDA·제안·확정을 수행합니다. [SECOM Train 기능 검증 절차](../docs/agents/guides/SNAPSHOT_SPLIT.md)를 참고하세요. 기존 `preprocessing/split.py`를 재사용하며 ML 실험 분할·모델은 변경하지 않습니다. 합성 테스트는 통과했고 실제 Windows 실행은 별도 확인 대상입니다.
+분할 준비는 `agents/snapshot_split_cli.py`·`snapshot_split.py`가 관리하며, `snapshot_split_worker.py`·`snapshot_split_transport.py`가 격리 품질·EDA·제안·확정을 수행합니다. [SECOM Train 기능 검증 절차](../docs/agents/guides/SNAPSHOT_SPLIT.md)를 참고하세요. 기존 `preprocessing/split.py`를 재사용하며 ML 실험 분할·모델은 변경하지 않습니다. 코드 시점별 합성·실제 Windows 확인 범위는 [GUIDE](../docs/agents/GUIDE.md#검증-상태와-남은-제한)를 따릅니다.
 
-구간 추출은 `agents/partition_export_contract.py`·`partition_export_worker.py`, 부모 파일 검증은 `partition_export_results.py`, 제한된 CSV 파서는 `partition_csv.py`에 있습니다. 승인·커밋 연결은 `partition_export.py`, AppContainer+Job 운송은 `partition_export_transport.py`, 사용자 명령은 `partition_export_cli.py`가 담당합니다. [구간 내보내기 구현 범위·사용법](../docs/agents/guides/PARTITION_EXPORT.md)을 참고하세요. 합성 연결 테스트는 통과했으며 실제 Windows 격리 실행은 별도 확인이 필요합니다.
+구간 추출은 `agents/partition_export_contract.py`·`partition_export_worker.py`, 부모 파일 검증은 `partition_export_results.py`, 제한된 CSV 파서는 `partition_csv.py`에 있습니다. 승인·커밋 연결은 `partition_export.py`, AppContainer+Job 운송은 `partition_export_transport.py`, 사용자 명령은 `partition_export_cli.py`가 담당합니다. [구간 내보내기 구현 범위·사용법](../docs/agents/guides/PARTITION_EXPORT.md)을 참고하세요. 개별 CLI와 통합 v2의 검증 범위는 [GUIDE](../docs/agents/GUIDE.md#검증-상태와-남은-제한)를 따릅니다.
 
 변환 준비의 실행 증거는 `agents/split_evidence.py`, 구간 입력 결합은 `agents/partition_input_contract.py`가 검사합니다. [확정 분할·구간 입력 계약](../docs/agents/DESIGN.md#분할내보내기train-기준)을 참고하세요. 기존 분할 결과를 읽기 전용으로 확인하며 실제 내보내기·변환은 실행하지 않습니다.
 
