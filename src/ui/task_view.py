@@ -416,6 +416,33 @@ def _question_widgets(st, questions, key):
     return answers
 
 
+def _render_unresolved(st, task, state, draft):
+    """제출한 계획에서 남은 필수 질문의 문장·관련 항목·해결 방법. 질문 ID를 설정 경로로 해석하지 않고 값을 바꾸지 않는다."""
+    try:
+        unresolved = orchestrator.unresolved_questions(task, draft["plan"], draft["answers"])
+    except (PlanError, ValueError):
+        unresolved = []
+
+    if not unresolved:
+        st.text("남은 질문을 다시 계산하지 못했습니다. 위 질문 답변과 계획 양식을 확인한 뒤 다시 미리보기하세요.")
+        return
+
+    numbers = {item["id"]: number for number, item in _numbered(state["questions"])}
+
+    for item in unresolved:
+        # 질문 문장·관련 항목은 입력 유래 이름을 포함할 수 있어 일반 텍스트로만 보인다.
+        where = f"위 질문 {numbers[item['id']]}" if item["shown"] and item["id"] in numbers else "제출한 계획에서 새로 생긴 질문"
+        st.text(f"남은 필수 질문({where}): {item['text']}")
+        related = ([item["path"]] if item.get("path") else []) + list(item.get("subjects") or [])
+        st.text("관련 항목: " + (", ".join(str(value) for value in related) or "전체 계획"))
+
+        if item["shown"]:
+            st.text("해결: 위 질문에 답하거나, 계획 양식에서 관련 항목을 고친 뒤 다시 미리보기하세요.")
+        else:
+            st.text("해결: 이 질문은 위 질문 목록에 없습니다. 계획 양식에서 관련 항목(역할 표·분할 방식 등)을 서로 맞게 고친 뒤 "
+                    "다시 미리보기하세요. 입력한 값은 그대로 두었고 자동으로 바꾸지 않았습니다.")
+
+
 def _render_rejected_items(st, error, questions, plan, answers):
     """거부된 계획 항목을 그 값을 정한 질문 번호·양식 값과 함께 보여 준다. 답변·계획은 바꾸지 않는다."""
     if not error.subjects:
@@ -593,7 +620,11 @@ def _render_final_plan(st, task, adapter, state, key, draft):
             return
 
         st.error(error.message + " 작업은 만들지 않았습니다.")
-        _render_rejected_items(st, error, state["questions"], draft["plan"], draft["answers"])
+
+        if error.code == "REQUIRED_QUESTION_UNANSWERED":
+            _render_unresolved(st, task, state, draft)
+        else:
+            _render_rejected_items(st, error, state["questions"], draft["plan"], draft["answers"])
         return
 
     labels = {"base": "기본 계획", "model": "모델 권장", "user": "사용자 변경", "answer": "질문 답변", "previous": "직전 확정 계획"}

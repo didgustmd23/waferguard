@@ -402,7 +402,7 @@ def check_plan(record, plan, answers):
                         subjects=[item["path"] for item in conflicts])
 
     final, applied = apply_answers(plan, shown, answers or {}, fields)
-    required = unanswered_required(adapter.questions(record, final), applied)
+    required = _unresolved(adapter, record, final, applied)
 
     if required:
         raise PlanError("REQUIRED_QUESTION_UNANSWERED", "답해야 하는 질문이 남아 있습니다.",
@@ -410,6 +410,24 @@ def check_plan(record, plan, answers):
 
     adapter.validate_plan(record, final)
     return final, applied
+
+
+def _unresolved(adapter, record, final, applied):
+    """최종 계획에서 다시 계산한 필수 질문 중 해결되지 않은 것. 확정 판정(check_plan)과 화면 안내가 같은 계산을 쓴다."""
+    return unanswered_required(adapter.questions(record, final), applied)
+
+
+def unresolved_questions(record, plan, answers):
+    """제출한 계획·답변 기준으로 남은 필수 질문(문장·관련 항목·선택지). 화면 안내용이며 판정·저장·실행은 하지 않는다.
+
+    표시한 계획에서 계산한 질문 목록에 없던 질문(제출한 계획에서 새로 생긴 질문)도 포함한다. 각 항목의 shown은 화면 위
+    질문 목록에서 답할 수 있는지를 뜻한다. 충돌·답변 적용 오류는 check_plan과 같은 PlanError로 올린다.
+    """
+    adapter = _adapter(record)
+    shown = review_state(record)["questions"]
+    final, applied = apply_answers(plan, shown, answers or {}, adapter.plan_fields(record))
+    ids = {item["id"] for item in shown}
+    return [dict(item, shown=item["id"] in ids) for item in _unresolved(adapter, record, final, applied)]
 
 
 def preview_plan(record, plan, answers):
