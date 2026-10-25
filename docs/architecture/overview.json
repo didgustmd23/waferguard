@@ -1,0 +1,499 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "WaferGuard · 독립 실행 경로",
+    "locale": "ko",
+    "output": "docs/architecture/overview.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/didgustmd23/waferguard.git",
+      "revision": "4fd209c5a5b873b1b6fd8eda20d75e162bdbc334"
+    }
+  },
+  "components": [
+    {
+      "id": "a-in",
+      "type": "backend",
+      "label": "CSV · NPZ 입력",
+      "sublabel": "통합 전처리 작업",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 25,
+          "end_line": 38
+        }
+      ]
+    },
+    {
+      "id": "a-ui",
+      "type": "backend",
+      "label": "화면 · 계획 · 동의",
+      "sublabel": "진단과 사용자 결정",
+      "pos": [
+        40,
+        180
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 25,
+          "end_line": 38
+        }
+      ]
+    },
+    {
+      "id": "a-w",
+      "type": "backend",
+      "label": "격리 계산 · 부모 검증",
+      "sublabel": "AppContainer + Job",
+      "pos": [
+        40,
+        320
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 25,
+          "end_line": 38
+        }
+      ]
+    },
+    {
+      "id": "a-out",
+      "type": "backend",
+      "label": "전처리 결과 · 보고서",
+      "sublabel": "CSV 전달 묶음 / 배열 결과",
+      "pos": [
+        40,
+        460
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 25,
+          "end_line": 38
+        }
+      ]
+    },
+    {
+      "id": "s-in",
+      "type": "backend",
+      "label": "SECOM 센서 · 라벨",
+      "sublabel": "독립 데이터 입력",
+      "pos": [
+        425,
+        40
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 40,
+          "end_line": 47
+        }
+      ]
+    },
+    {
+      "id": "s-data",
+      "type": "backend",
+      "label": "병합 · 점검 · 분할",
+      "sublabel": "기존 데이터 Pipeline",
+      "pos": [
+        425,
+        180
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 40,
+          "end_line": 47
+        }
+      ]
+    },
+    {
+      "id": "s-exp",
+      "type": "backend",
+      "label": "센서 선택 · 실험 비교",
+      "sublabel": "학습 fold 안에서 특징 선택",
+      "pos": [
+        425,
+        320
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 40,
+          "end_line": 47
+        }
+      ]
+    },
+    {
+      "id": "s-out",
+      "type": "backend",
+      "label": "평가 · 추론 · 저장",
+      "sublabel": "모델과 보고서",
+      "pos": [
+        425,
+        600
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 40,
+          "end_line": 47
+        }
+      ]
+    },
+    {
+      "id": "w-in",
+      "type": "backend",
+      "label": "WM-811K 검사맵",
+      "sublabel": "광학 사진과 구분",
+      "pos": [
+        810,
+        40
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 49,
+          "end_line": 55
+        }
+      ]
+    },
+    {
+      "id": "w-data",
+      "type": "backend",
+      "label": "변환 · 검증 · EDA",
+      "sublabel": "웨이퍼 전용 계산",
+      "pos": [
+        810,
+        180
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 49,
+          "end_line": 55
+        }
+      ]
+    },
+    {
+      "id": "w-set",
+      "type": "backend",
+      "label": "분할 · 캐시 · Dataset",
+      "sublabel": "src/wafer_dl",
+      "pos": [
+        810,
+        320
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 49,
+          "end_line": 55
+        }
+      ]
+    },
+    {
+      "id": "w-plan",
+      "type": "backend",
+      "label": "딥러닝 학습 (계획)",
+      "sublabel": "작은 CNN · ResNet18",
+      "pos": [
+        810,
+        460
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/WM811K/PREPROCESSING_DESIGN.md",
+          "line": 327,
+          "end_line": 349
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "로컬 Ollama",
+      "sublabel": "동의 범위 자료 / 권장안",
+      "pos": [
+        40,
+        650
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 59,
+          "end_line": 70
+        }
+      ]
+    },
+    {
+      "id": "s-train",
+      "type": "backend",
+      "label": "머신러닝 학습",
+      "sublabel": "Train 기준 Pipeline · XGBoost",
+      "pos": [
+        425,
+        460
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/modeling_models.py",
+          "line": 354,
+          "end_line": 377
+        },
+        {
+          "path": "src/sensor_ml/experiments/fixed_sensor_oof.py",
+          "line": 108,
+          "end_line": 118
+        }
+      ]
+    },
+    {
+      "id": "w-eval",
+      "type": "backend",
+      "label": "평가 · 모델 선택 (계획)",
+      "sublabel": "Validation 선택 · Test 평가",
+      "pos": [
+        810,
+        600
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/WM811K/PREPROCESSING_DESIGN.md",
+          "line": 340,
+          "end_line": 356
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "a-in-a-ui",
+      "from": "a-in",
+      "to": "a-ui",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "a-ui-a-w",
+      "from": "a-ui",
+      "to": "a-w",
+      "label": "승인 범위 실행",
+      "variant": "security"
+    },
+    {
+      "id": "a-w-a-out",
+      "from": "a-w",
+      "to": "a-out",
+      "label": "검증 후 등록",
+      "variant": "default"
+    },
+    {
+      "id": "a-ui-llm",
+      "from": "a-ui",
+      "to": "llm",
+      "label": "제한된 요청",
+      "variant": "default"
+    },
+    {
+      "id": "llm-a-ui",
+      "from": "llm",
+      "to": "a-ui",
+      "label": "검증 대상 응답",
+      "variant": "default"
+    },
+    {
+      "id": "s-in-s-data",
+      "from": "s-in",
+      "to": "s-data",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "s-data-s-exp",
+      "from": "s-data",
+      "to": "s-exp",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "s-exp-s-train",
+      "from": "s-exp",
+      "to": "s-train",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "w-in-w-data",
+      "from": "w-in",
+      "to": "w-data",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "w-data-w-set",
+      "from": "w-data",
+      "to": "w-set",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "w-set-w-plan",
+      "from": "w-set",
+      "to": "w-plan",
+      "label": "학습 계획",
+      "variant": "dashed"
+    },
+    {
+      "id": "s-train-s-out",
+      "from": "s-train",
+      "to": "s-out",
+      "label": "학습한 모델",
+      "variant": "default"
+    },
+    {
+      "id": "w-plan-w-eval",
+      "from": "w-plan",
+      "to": "w-eval",
+      "label": "평가 계획",
+      "variant": "dashed"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "전처리 에이전트",
+      "wraps": [
+        "a-in",
+        "a-ui",
+        "a-w",
+        "a-out"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "SECOM 머신러닝",
+      "wraps": [
+        "s-in",
+        "s-data",
+        "s-exp",
+        "s-out",
+        "s-train"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "WM-811K 경로",
+      "wraps": [
+        "w-in",
+        "w-data",
+        "w-set",
+        "w-plan",
+        "w-eval"
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "title": "서로 독립된 실행",
+      "items": [
+        "세 영역 사이에 자동 데이터·결과 전달은 없다.",
+        "공통 코드 참조를 실행 연결선으로 그리지 않았다."
+      ],
+      "dot": "cyan"
+    },
+    {
+      "title": "LLM과 계산의 구분",
+      "items": [
+        "LLM은 원본 행·이미지·승인 정보의 자동 수신자가 아니다.",
+        "직접 실행·승인 권한이 없고 응답은 검증 대상이다."
+      ],
+      "dot": "violet"
+    },
+    {
+      "title": "보존한 지원 경계",
+      "items": [
+        "고급 WM 모듈은 기존 웨이퍼 계산을 재사용한다.",
+        "통합 작업의 웨이퍼 프로파일 연결 완료를 뜻하지 않는다.",
+        "WM 학습 점선은 구현된 학습 경로가 아니다."
+      ],
+      "dot": "amber"
+    },
+    {
+      "title": "학습 구현과 계획의 구분",
+      "dot": "amber",
+      "items": [
+        "SECOM은 기존 학습·평가 경로를 표시하며 새 학습을 실행하지 않았다.",
+        "WM의 CNN·ResNet18 학습과 평가·모델 선택은 계획 단계다.",
+        "통합 전처리 에이전트에서 두 학습 경로로 자동 전달하지 않는다."
+      ]
+    }
+  ]
+}

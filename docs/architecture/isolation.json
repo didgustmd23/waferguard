@@ -1,0 +1,393 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "격리 경계 · 허용 경로와 차단 대상",
+    "locale": "ko",
+    "output": "docs/architecture/isolation.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/didgustmd23/waferguard.git",
+      "revision": "4fd209c5a5b873b1b6fd8eda20d75e162bdbc334"
+    }
+  },
+  "components": [
+    {
+      "id": "consent",
+      "type": "security",
+      "label": "사용자 동의 · 승인 검증",
+      "sublabel": "입력 / 계획 / 코드 결합 · 1회 소비",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        270,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/task_orchestrator.py",
+          "line": 484,
+          "end_line": 545
+        }
+      ]
+    },
+    {
+      "id": "trans",
+      "type": "backend",
+      "label": "부모 transport",
+      "sublabel": "허용 소스 복사 · ACL · 최소 환경",
+      "pos": [
+        450,
+        40
+      ],
+      "size": [
+        270,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 610,
+          "end_line": 616
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "부모의 로컬 Ollama 호출",
+      "sublabel": "worker 네트워크 권한과 별도",
+      "pos": [
+        860,
+        40
+      ],
+      "size": [
+        270,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/local_ollama.py",
+          "line": 82,
+          "end_line": 102
+        }
+      ]
+    },
+    {
+      "id": "input",
+      "type": "database",
+      "label": "runtime · tools · input",
+      "sublabel": "허용 복사본 RX",
+      "pos": [
+        40,
+        260
+      ],
+      "size": [
+        270,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 619,
+          "end_line": 624
+        }
+      ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "고정 계산 worker",
+      "sublabel": "capability 0 · 상속 핸들 없음",
+      "pos": [
+        450,
+        260
+      ],
+      "size": [
+        270,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/appcontainer_native.py",
+          "line": 123,
+          "end_line": 162
+        }
+      ]
+    },
+    {
+      "id": "out",
+      "type": "database",
+      "label": "output · scratch",
+      "sublabel": "작업별 Modify · Low Integrity",
+      "pos": [
+        860,
+        260
+      ],
+      "size": [
+        270,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 619,
+          "end_line": 624
+        }
+      ]
+    },
+    {
+      "id": "job",
+      "type": "security",
+      "label": "Job Object · 감시",
+      "sublabel": "메모리 / 프로세스 제한 · 종료 정리",
+      "pos": [
+        450,
+        420
+      ],
+      "size": [
+        270,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/job_object.py",
+          "line": 54,
+          "end_line": 68
+        },
+        {
+          "path": "src/agents/appcontainer_native.py",
+          "line": 123,
+          "end_line": 162
+        }
+      ]
+    },
+    {
+      "id": "validate",
+      "type": "security",
+      "label": "부모 결과 검증",
+      "sublabel": "요청·파일·해시·형식·도메인",
+      "pos": [
+        860,
+        600
+      ],
+      "size": [
+        270,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 613,
+          "end_line": 615
+        }
+      ]
+    },
+    {
+      "id": "publish",
+      "type": "backend",
+      "label": "완료 등록 · 보고서",
+      "sublabel": "검증 통과 결과만 반입",
+      "pos": [
+        450,
+        600
+      ],
+      "size": [
+        270,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 613,
+          "end_line": 615
+        }
+      ]
+    },
+    {
+      "id": "protected",
+      "type": "database",
+      "label": "차단 대상 · 보호 파일",
+      "sublabel": "원본 폴더 / 승인 DB / 키 / 타 작업",
+      "pos": [
+        40,
+        600
+      ],
+      "size": [
+        270,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 629,
+          "end_line": 632
+        }
+      ]
+    },
+    {
+      "id": "network",
+      "type": "external",
+      "label": "차단 대상 · 네트워크",
+      "sublabel": "외부 · localhost · worker의 Ollama 호출",
+      "pos": [
+        450,
+        790
+      ],
+      "size": [
+        300,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 629,
+          "end_line": 632
+        }
+      ]
+    },
+    {
+      "id": "reject",
+      "type": "security",
+      "label": "transport 거부 대상",
+      "sublabel": "미승인 / 지문 불일치 / 링크 우회",
+      "pos": [
+        40,
+        790
+      ],
+      "size": [
+        270,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 632,
+          "end_line": 633
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "consent-trans",
+      "from": "consent",
+      "to": "trans",
+      "label": "승인된 범위",
+      "variant": "security"
+    },
+    {
+      "id": "trans-input",
+      "from": "trans",
+      "to": "input",
+      "label": "제한 복사",
+      "variant": "default"
+    },
+    {
+      "id": "trans-job",
+      "from": "trans",
+      "to": "job",
+      "label": "정지 생성·Job 연결",
+      "variant": "default"
+    },
+    {
+      "id": "input-worker",
+      "from": "input",
+      "to": "worker",
+      "label": "읽기·실행",
+      "variant": "default"
+    },
+    {
+      "id": "job-worker",
+      "from": "job",
+      "to": "worker",
+      "label": "상한·감시",
+      "variant": "security"
+    },
+    {
+      "id": "worker-out",
+      "from": "worker",
+      "to": "out",
+      "label": "전용 쓰기",
+      "variant": "default"
+    },
+    {
+      "id": "out-validate",
+      "from": "out",
+      "to": "validate",
+      "label": "미신뢰 출력·종료 증거",
+      "variant": "default"
+    },
+    {
+      "id": "validate-publish",
+      "from": "validate",
+      "to": "publish",
+      "label": "검증 통과만",
+      "variant": "security"
+    },
+    {
+      "id": "worker-protected",
+      "from": "worker",
+      "to": "protected",
+      "label": "차단 대상",
+      "variant": "dashed"
+    },
+    {
+      "id": "worker-network",
+      "from": "worker",
+      "to": "network",
+      "label": "차단 대상",
+      "variant": "dashed"
+    },
+    {
+      "id": "trans-reject",
+      "from": "trans",
+      "to": "reject",
+      "label": "거부 대상",
+      "variant": "dashed"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "AppContainer · 계산 worker의 권한 경계",
+      "wraps": [
+        "input",
+        "worker",
+        "out",
+        "job"
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "title": "부모와 worker의 경계",
+      "items": [
+        "승인 판단·모델 요청·결과 검증은 부모에서 수행한다.",
+        "Job은 자원 제한이며 파일·네트워크 접근 경계를 대신하지 않는다.",
+        "호스트 관리자에 대한 방어 또는 별도 커널 VM을 뜻하지 않는다."
+      ],
+      "dot": "rose"
+    },
+    {
+      "title": "네트워크 증거의 정확한 범위",
+      "items": [
+        "기존 합성 외부·loopback 시험에서 WFP 폐기 증거를 확인했다.",
+        "일부 loopback AppId는 수신 측 부모여서 정책 원인 귀속은 미확정이다.",
+        "모든 목적지·worker·하위 프로세스의 SEC-12 완료를 의미하지 않는다."
+      ],
+      "dot": "amber"
+    },
+    {
+      "title": "읽는 방법",
+      "items": [
+        "차단 대상 점선은 권한 미부여·거부 의도를 표시한다.",
+        "현재 그림을 그리면서 새 차단 실험을 실행하지 않았다.",
+        "기존 SECOM·WM CLI 전체가 이 격리 안에 들어가는 것은 아니다."
+      ],
+      "dot": "cyan"
+    }
+  ]
+}

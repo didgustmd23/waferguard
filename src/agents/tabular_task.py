@@ -473,9 +473,22 @@ def _values(record, step_id, name):
     return {"name": name, "pipeline_name": steps["candidate"]["run_name"], "max_bundle_bytes": 128 * 1024 ** 2}
 
 
+def check_saved_plan(record, directory):
+    """저장 실행안을 현재 연결 코드로 열고 동의 C·D에 결합한 확정 계획 서명과 같은지 확인한다. 저장 실행안은 자기 해시만 갖는다.
+
+    공통 조정기는 결정 D 발급 전에도 불러, 코드 변경 등으로 열 수 없는 실행안이면 D 없이 멈추고 계획 수정으로 이어 가게 한다.
+    """
+    saved = plans.load_workflow(record["confirmed"]["plan_name"], root=_plan_root(directory))
+
+    if saved["proposal"].plan_signature != record["confirmed"]["plan_signature"]:
+        raise ValueError("저장 실행안이 확정한 계획과 다릅니다. 자동 재개하지 않습니다.")
+
+    return saved
+
+
 def create_step(record, directory, step_id, name):
     """기존 결합·생성 API로 한 단계를 만든다. 승인·실행은 공통 조정기가 한다."""
-    saved = plans.load_workflow(record["confirmed"]["plan_name"], root=_plan_root(directory))
+    saved = check_saved_plan(record, directory)
     completed = {step: item["run_name"] for step, item in record["steps"].items() if item["status"] == "completed"}
     binding = bind_workflow_step(saved["proposal"], **saved["context"], step_id=step_id,
                                  values=_values(record, step_id, name), limits=WorkerLimits(**record["limits"]),
@@ -496,6 +509,19 @@ def check_lineage(record):
 
     if split.contract.snapshot.sha256 != record["snapshot"]["snapshot"]["sha256"]:
         raise TaskProblem("SNAPSHOT_CHANGED", "분할 작업의 입력이 진단한 복사본과 다릅니다. 새 작업으로 시작하세요.")
+
+    check_profile(record, split.contract.profile)
+
+
+def check_profile(record, profile):
+    """분할 실행 계약에 고정된 프로파일(역할·품질·분할 설정)이 동의 C에 결합한 프로파일 서명과 같은지 확인한다.
+
+    저장 경로·파일만 바꾼 기록은 분할 규칙이 같아도 다른 역할로 실행될 수 있으므로 단계 생성 직후와 결정 D 전에 거부한다.
+    """
+    consent = (record["consents"].get("C") or {}).get("content") or {}
+
+    if profile.signature != consent.get("profile_signature"):
+        raise TaskProblem("PROFILE_CHANGED", "분할 작업의 역할·품질·분할 설정이 동의한 계획과 다릅니다. 새 작업으로 시작하세요.")
 
 
 def quality_findings(record):
@@ -872,6 +898,26 @@ def review_facts(record, candidate, preprocessor, raw):
     return facts
 
 
+def _class_rows(partitions, plan):
+    """분할 확정 결과의 구간별 클래스에서 확인한 target 클래스 누락. 클래스 조건을 해제하고 확정한 분할에서만 생긴다."""
+    seen = {name: {str(entry["label"])[:80] for entry in item["classes"]} for name, item in partitions.items() if item and item.get("classes")}
+    labels = sorted(set().union(*seen.values())) if seen else []
+    target = next((name for name, role in plan["roles"].items() if role == "target"), "전체")
+    handled = ("사용자가 '모든 구간에 모든 클래스 요구'를 해제해 진행함" if not plan["split"].get("require_all_classes")
+               else "분할 설정 확인 필요")
+    rows = []
+
+    for name in ("train", "validation", "test"):
+        absent = [label for label in labels if name in seen and label not in seen[name]]
+
+        if absent:
+            rows.append({"구분": "확인된 클래스 누락", "컬럼": target,
+                         "내용": f"{name} 구간에 클래스 {', '.join(absent)} 없음(분할 확정 결과). 이 구간으로 해당 클래스를 평가할 수 없습니다.",
+                         "처리": handled})
+
+    return rows
+
+
 def _problems(record, quality, renamed=None):
     """진단(전체 입력 기준)과 품질 검사에서 확인된 항목. 처리 방식은 확정한 역할·규칙에서만 가져온다.
 
@@ -1056,6 +1102,8 @@ def report_from_sources(record, sources):
     if excluded:
         warnings.append({"구분": "정보 손실", "내용": f"역할이 제외인 컬럼 {len(excluded)}개는 특징으로 쓰지 않았습니다. 사유는 컬럼별 처리 표에 있습니다."})
 
+    problems = _problems(record, quality, renamed) + _class_rows(partitions, plan)
+
     for row in _problems(record, quality, renamed):
         if row["처리"] in ("자동 수정하지 않음", "삭제하지 않음") or row["처리"].startswith("범주형 특징으로 유지"):
             warnings.append({"구분": "미처리", "내용": f"{row['구분']} — {row['컬럼']}: {row['내용']} ({row['처리']})"})
@@ -1083,7 +1131,7 @@ def report_from_sources(record, sources):
         f"출력 {output_width}열을 만들었습니다.",
         "적용 구간: " + (", ".join(f"{name} {applied[name]['rows']}행" for name in ("train", "validation") if name in applied) or MISSING)
         + ". Test는 변환하지 않았습니다.",
-        f"주요 문제: 진단·품질 검사 지적 {len(_problems(record, quality, renamed))}건, 정보 손실 예상 특징 {lost}개, "
+        f"주요 문제: 진단·품질 검사·분할 확인 지적 {len(problems)}건, 정보 손실 예상 특징 {lost}개, "
         f"Train 기준 제거 {len(removed) if removed is not None else MISSING}개.",
     ]
     usage = [
@@ -1100,7 +1148,7 @@ def report_from_sources(record, sources):
         "metrics": [{"label": "입력 행", "value": summary["row_count"]}, {"label": "입력 컬럼", "value": summary["column_count"]},
                     {"label": "특징 수 (전→후)", "value": f"{features} → {output_width}"},
                     {"label": "품질 검사", "value": (quality or {}).get("status", MISSING)}],
-        "problems": _problems(record, quality, renamed), "processing": _processing(record, preprocessor, candidate),
+        "problems": problems, "processing": _processing(record, preprocessor, candidate),
         "comparison": comparison, "comparison_note": f"후 (실측)은 {measured}, 예상 (후보)은 {estimate}입니다. 미산출은 괄호에 사유를 적었습니다.",
         "warnings": warnings, "usage": usage,
         "images": [{"label": label} for label in sources["image_labels"]],

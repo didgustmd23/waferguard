@@ -22,6 +22,7 @@ CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     "src/agents/tabular_input_transport.py", "src/agents/tabular_input_results.py",
     "src/agents/tabular_input_service.py", "src/agents/tabular_input_flow.py",
     "src/agents/tabular_source_contract.py", "src/agents/task_orchestrator.py", "src/agents/task_store.py",
+    "src/agents/tabular_v2_task.py",
     "src/agents/task_consent.py", "src/agents/delegated_approval.py", "src/agents/split_evidence.py",
     "src/agents/workflow_approval.py",
 )))

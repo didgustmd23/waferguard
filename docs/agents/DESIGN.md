@@ -25,21 +25,11 @@
 
 ## 책임 구분
 
-```mermaid
-flowchart TD
-    U[사용자: 데이터·목표] --> UI[공통 화면: 요청·진행·결정·결과]
-    UI --> O[공통 조정기: 상태·계획·질문·동의·보고]
-    O --> A[데이터 형태 어댑터: 표형 CSV · 배열 NPZ]
-    A --> L[입력 로더·선택적 도메인 프로파일]
-    A --> E[기존 실행 관리자·승인 저장소]
-    E --> W[AppContainer + Job: 격리 계산]
-    W --> V[부모: 결과 계약·해시·실행 증거 검증]
-    V --> O
-    A --> G[목표·허용 이름/구조·집계·계획/선택지의 모델 요청]
-    G --> M[로컬 Ollama: 해석·권장 변경·질문]
-    M --> P[응답·전체 계획 검증]
-    P --> O
-```
+> 구성도 이미지를 누르면 인터랙티브 버전으로 이동한다(GitHub Pages 배포 후 활성화). 배포 전에는 각 로컬 HTML을 내려받아 브라우저에서 열 수 있다. 그림은 커밋 `4fd209c` 기준이며 진행 중인 작업 8 변경은 포함하지 않는다.
+
+[![공통 책임과 유형별 처리 구성도](../architecture/responsibilities.svg)](https://didgustmd23.github.io/waferguard/responsibilities.html)
+
+[인터랙티브 보기](https://didgustmd23.github.io/waferguard/responsibilities.html) · [로컬 HTML](../architecture/responsibilities.html) · [구성도 원본](../architecture/responsibilities.json)
 
 | 계층 | 책임·의존 방향 |
 | --- | --- |
@@ -51,61 +41,9 @@ flowchart TD
 
 ### 내부 구조
 
-```mermaid
-flowchart TB
-    subgraph UI["화면 (src/ui)"]
-        TV["task_view.py<br/>요청 · 진행 · 결정 · 결과"]
-        FM["task_forms.py<br/>tabular_task_form · array_task_form"]
-    end
+[![어댑터 등록·위임 승인·실행·부모 검증·보고서 연결 구성도](../architecture/internal.svg)](https://didgustmd23.github.io/waferguard/internal.html)
 
-    subgraph CORE["공통 핵심 (src/agents, 유형별 계산과 분리)"]
-        OR["task_orchestrator.py<br/>단계 진행 · 동의 대조 · 복구"]
-        PL["task_plan.py<br/>경로 변경 · 질문 · 충돌 · 출처"]
-        CS["task_consent.py<br/>동의 A · C · D · 위임 판정"]
-        ST["task_store.py<br/>작업 기록 · 잠금 · revision"]
-        RC["task_recommend.py<br/>모델 권장안 요청 · 검증"]
-        RP["task_report.py<br/>공통 보고서 조립"]
-    end
-
-    RG["task_adapters.py<br/>유형을 연결하는 고정 등록 경계"]
-
-    subgraph AD["유형 어댑터"]
-        TA["tabular_task.py + tabular_options.py<br/>CSV 표형"]
-        AA["array_task.py + array_options.py<br/>.npz 배열"]
-    end
-
-    subgraph SV["유형별 서비스 · 실행"]
-        DG["pipeline_approval_cli · module_pipeline<br/>표형 입력 진단(input_profile)"]
-        CSV["CSV 작업 서비스 5종<br/>분할 · 내보내기 · 후보 · 적용 · 전달"]
-        ARR["array_task_service.py<br/>진단 · 후보 · 적용"]
-        DA["delegated_approval.py<br/>동의 범위 대조 후 1회 승인 기록"]
-        EX["executor.py + approval_store.py<br/>승인 소비 · 상태 · 커밋"]
-        TR["*_transport.py<br/>AppContainer + Job"]
-        WK["*_worker.py<br/>격리 계산"]
-        OUT["worker 출력 파일<br/>아직 신뢰하지 않은 결과"]
-        RS["*_results.py<br/>부모 결과 검증"]
-    end
-
-    CALC["계산 코어 (src/preprocessing)<br/>input_profile · split · transform · array_dataset"]
-    OL["local_ollama.py<br/>loopback Ollama"]
-
-    TV --> OR
-    TV --> FM
-    OR --> PL & CS & ST & RP
-    OR --> RC --> OL
-    OR --> RG --> TA & AA
-    TA -->|결정 A| DG
-    TA -->|결정 C · D| CSV
-    AA -->|결정 A · C · D| ARR
-    CSV & ARR -->|동의 대조 후 위임 승인| DA -->|승인 기록 후 단계 진행| EX
-    DG -->|동의 대조 · 자체 위임 기록 후 단계 진행| EX
-    EX --> TR --> WK --> CALC
-    WK --> OUT
-    EX -->|부모에서 검증 호출| RS
-    OUT -->|부모가 출력 파일을 읽음| RS
-    RS -->|검증 통과만 완료 등록| EX
-    TA & AA -.->|검증된 report_facts 전달| RP
-```
+[인터랙티브 보기](https://didgustmd23.github.io/waferguard/internal.html) · [로컬 HTML](../architecture/internal.html) · [구성도 원본](../architecture/internal.json)
 
 | 결정 | 화면에서 하는 일 | 조정기가 이어서 하는 일 |
 | --- | --- | --- |
@@ -115,7 +53,7 @@ flowchart TB
 
 각 단계의 1회 승인은 해당 동의 범위·입력·계획·코드 지문과 맞을 때만 위임 발급한다. worker 출력은 부모 검증기를 통과한 것만 커밋하고, 화면·보고서는 검증된 결과만 다시 읽는다.
 
-등록부 `task_adapters.py`는 유형별 어댑터를 import하는 의도된 연결 경계다. 조정·계획·동의·저장·보고서의 공통 규칙이 유형별 계산에 직접 의존하지 않는 것과 구분한다. 구성도의 연결은 주요 호출/처리 관계이며 모든 함수 호출·반환을 나타내지는 않는다. 표형 진단은 `pipeline_approval_cli.record_delegated_approval`에서 동의를 대조해 자체 위임 기록을 남기고 실행기를 거친다. CSV·배열 서비스의 공통 `delegated_approval` 경로와 구분하되, 모두 승인 소비 뒤 격리 계산하고 부모가 출력을 검증한다. `task_report`는 어댑터의 `report_facts`를 호출해 검증된 결과 사실을 받아 조립하며, 점선은 그 반환 자료를 나타낸다.
+등록부 `task_adapters.py`는 유형별 어댑터를 import하는 의도된 연결 경계다. 조정·계획·동의·저장·보고서의 공통 규칙이 유형별 계산에 직접 의존하지 않는 것과 구분한다. 구성도의 연결은 주요 호출/처리 관계이며 모든 함수 호출·반환을 나타내지는 않는다. 표형 진단은 `pipeline_approval_cli.record_delegated_approval`에서 동의를 대조해 자체 위임 기록을 남기고 실행기를 거친다. CSV·배열 서비스의 공통 `delegated_approval` 경로와 구분하되, 모두 승인 소비 뒤 격리 계산하고 부모가 출력을 검증한다. `task_report`는 어댑터의 `report_facts`를 호출해 검증된 결과 사실을 받아 조립하며, `report_facts` 연결선은 그 반환 자료를 나타낸다.
 
 주요 구현은 `task_orchestrator.py`, `task_plan.py`, `task_consent.py`, `task_store.py`, `task_adapters.py`, `task_report.py`, `tabular_task.py`, `array_task.py`와 `src/ui/task_view.py`다. 등록은 고정 ID 목록을 사용하고 폴더 탐색·동적 import·새 에이전트 프레임워크를 도입하지 않는다.
 
@@ -605,29 +543,9 @@ worker는 허용 목록의 복사된 소스와 작업 입력만 사용한다. Ap
 
 아래는 **에이전트의 격리 worker 경계**다. 기존 SECOM CLI·WM CLI 전체를 자동으로 이 경계 안에서 실행한다는 뜻은 아니다. 실선은 허용된 처리 경로, 점선의 `차단 대상`은 권한을 부여하지 않거나 검증에서 거부하는 경로다. 차단 대상 표시는 모든 실제 환경에서 차단 실측을 마쳤다는 뜻이 아니다.
 
-```mermaid
-flowchart TB
-    subgraph HOST["부모 프로세스 — 격리 경계 밖"]
-        U["사용자 목표 · 계획 확인 · 동의"] --> A["승인 검증 · 1회 소비<br/>입력 / 계획 / 코드 지문 결합"]
-        A --> T["transport<br/>작업 전용 폴더 · 허용 소스 복사<br/>ACL · 최소 환경 설정"]
-        V["부모 결과 검증<br/>요청 결합 · 허용 파일 · 해시 · 형식<br/>도메인 검증"] --> R["검증 통과한 결과만<br/>완료 등록 · 보고서"]
-        L["로컬 Ollama<br/>부모의 별도 전송 정책"]
-    end
+[![AppContainer 허용 경로·부모 검증·차단 대상 구성도](../architecture/isolation.svg)](https://didgustmd23.github.io/waferguard/isolation.html)
 
-    subgraph BOX["AppContainer + Job Object — 계산 worker"]
-        I["runtime / tools / input<br/>허용 복사본 읽기 · 실행"] --> W["고정 worker<br/>네트워크 capability 0<br/>상속 핸들 없음"]
-        W --> O["output / scratch<br/>작업 전용 쓰기 · Low Integrity"]
-        J["Job Object<br/>메모리 · 동시 프로세스 수 제한<br/>시간 초과 / 취소 감시 · 종료 정리"] --- W
-    end
-
-    T --> I
-    T --> J
-    O -->|미신뢰 결과 · 종료 증거| V
-
-    W -.->|차단 대상: 권한 미부여| P["원본 폴더 · 승인 DB · 비밀 키<br/>다른 작업 폴더"]
-    W -.->|차단 대상: 네트워크 권한 미부여| N["외부 네트워크 · localhost<br/>Ollama 직접 호출 포함"]
-    T -.->|거부| X["미승인 실행 · 코드 지문 불일치<br/>허용 목록 밖 경로 / 소스 · 링크 우회"]
-```
+[인터랙티브 보기](https://didgustmd23.github.io/waferguard/isolation.html) · [로컬 HTML](../architecture/isolation.html) · [구성도 원본](../architecture/isolation.json)
 
 **합성 시험의 외부·loopback 트래픽에 대한 실제 WFP 폐기 증거를 확인했다. SEC-12 전체 검증 완료를 뜻하지는 않는다.** 2026-10-23 기존 ETL을 읽기 전용으로 재검토했다. 수집 실행 `3e4d66b4156a472fae626845257a1acd`와 `ef25fb95cabf40e99bc2879fa923019f`에서 Windows provider 정의상 `WFP: Packet Dropped`인 이벤트 ID `1001`(버전 2)을 확인했다. 각 실행의 loopback 이벤트는 검사 서버 포트·캡처 시간과 일치하며 첫 이벤트의 PID도 검사 프로세스와 일치한다. 외부 시험 주소 `192.0.2.1:9`의 폐기 이벤트는 격리 실행 파일과 대응한다. 다만 loopback 이벤트의 AppId는 수신 측 부모 실행 파일이므로, 특정 AppContainer 정책이 차단 원인이라는 판정이나 모든 목적지·worker·하위 프로세스로 일반화하지 않는다. 상세 대조값과 한계는 [WFP 진단](security/WFP_DIAGNOSTIC.md)의 기존 ETL 재검토 절을 따른다.
 
@@ -687,6 +605,8 @@ flowchart TB
 후보 `preparation_candidate_report_v2`는 Train 예상 영향, 적용 `preparation_application_v2`는 구간별 실측 합계를 갖는다. 특징별 missing/imputed/clipped/distinct_before/constant_after/unknown/missing_after는 기존 transform 계산을 공유한다. 부모는 키·순서·타입·범위·기준으로 결정되는 항목을 검사하고, 적용 CSV의 결측·상수·새 범주를 대조하며 Train 합계를 후보와 교차 검사한다. 숫자 비교는 -0과 0을 동일하게 본다. clipping 횟수 등 원본 재계산 없는 값은 worker 집계임을 명시한다. 현재 코드가 v1로 내려 영향 검증을 우회하는 것은 거부하고 과거 코드 기록 호환과 구분한다.
 
 어댑터가 검증된 결과에서 문제·처리·전후 비교·그래프·파일·경고 사실을 추출하고 공통 보고서가 조립한다. 보고서 생성 시 원본 재분석·LLM 수치 생성·fit은 하지 않는다. 후보 예상/적용 실측/미산출 사유를 구분하고 처리 출처와 제외 사유를 보여 준다. 값이 없으면 추측하지 않고 미집계로 표시한다.
+
+로컬 결과 보고서는 결합 검증한 확정 분할의 구간별 target 클래스 이름·개수를 전후 비교와 '확인된 클래스 누락' 행으로 표시하고 작업 기록의 보고서에 저장한다. 분할 제안에서 멈춘 문제 기록에는 구간 이름·개수만 저장하며, 빠진 클래스 이름은 화면에 보일 때 검증한 제안 근거에서 다시 읽는다. 이 로컬 표시 허용은 모델 요청(표형 권장안은 컬럼명·집계만 보낸다)·외부 전송으로 확대되지 않는다. 결과 해설은 아래 정보 전달의 별도 정책을 따르며 이 보고서 허용을 상속하지 않는다. 표시 길이 절단은 화면 처리이며 익명화가 아니다.
 
 경로·해시·내부 이름은 기술 상세로 분리한다. 그래프는 표시할 때도 검증된 PNG만 열고 입력 문자열은 일반 텍스트로 표시한다. 저장 Markdown의 HTML/Markdown 특수문자 처리를 유지한다. 범주 대치값의 타입 토큰을 사용자용 값으로 표시하고 실제 전용 범주가 있을 때만 결측 범주 포함이라고 쓴다. IQR 후보는 정상 0/1 값일 수도 있으며 오류 판정이 아니다.
 

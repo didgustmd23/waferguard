@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WaferGuard 구성도</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { max-width: 1080px; margin: 48px auto; padding: 0 24px; line-height: 1.65; }
+    h1 { margin-bottom: 8px; } p { color: #64748b; }
+    main { display: grid; grid-template-columns: repeat(auto-fit,minmax(300px,1fr)); gap: 24px; }
+    article { border: 1px solid #94a3b855; border-radius: 16px; overflow: hidden; }
+    article img { display: block; width: 100%; height: 290px; object-fit: contain; }
+    article h2 { margin: 16px 20px 8px; font-size: 20px; }
+    article p { margin: 8px 20px 20px; } a { color: #0284c7; }
+    footer { margin-top: 32px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>WaferGuard 구성도</h1>
+    <p>커밋 <code>4fd209c</code> 기준. 그림을 누르면 확대·탐색할 수 있는 인터랙티브 구성도가 열립니다.</p>
+  </header>
+  <main>
+    <article><a href="overview.html"><img src="overview.svg" alt="전처리 에이전트·SECOM 학습·WM 학습 계획의 독립 실행 경로"></a><h2><a href="overview.html">전체 구성</a></h2><p>세 영역은 독립 실행합니다. SECOM 학습과 WM 학습·평가 계획을 구분하며 결과를 자동 전달하지 않습니다.</p></article>
+    <article><a href="responsibilities.html"><img src="responsibilities.svg" alt="공통 책임과 유형별 처리 경계"></a><h2><a href="responsibilities.html">책임 구분</a></h2><p>공통 조정·승인·보고와 유형별 로딩·계산을 구분합니다.</p></article>
+    <article><a href="internal.html"><img src="internal.svg" alt="어댑터 등록·위임 승인·실행·결과 검증·보고서 연결"></a><h2><a href="internal.html">내부 구조</a></h2><p>v2 표형 경로와 기존 CSV·배열 경로, 부모 결과 검증을 표시합니다.</p></article>
+    <article><a href="isolation.html"><img src="isolation.svg" alt="부모와 AppContainer worker의 권한 경계 및 차단 대상"></a><h2><a href="isolation.html">격리 경계</a></h2><p>허용·차단 대상과 실제 검증 범위의 한계를 구분합니다.</p></article>
+  </main>
+  <footer>구조·보안 계약의 기준은 <a href="https://github.com/didgustmd23/waferguard/blob/4fd209c5a5b873b1b6fd8eda20d75e162bdbc334/docs/agents/DESIGN.md">DESIGN</a>입니다. 이 구성도는 진행 중인 작업 8 변경을 포함하지 않습니다.</footer>
+</body>
+</html>
