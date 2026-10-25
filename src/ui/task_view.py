@@ -451,10 +451,10 @@ def _render_review(st, task):
     state = orchestrator.review_state(task)
 
     if problem:
-        st.warning(problem["message"])
-        # 이전 형식 기록이면 검증된 결과로 다시 읽은 지적·원인 안내를 쓴다. 양식의 일괄 제외 선택도 같은 지적을 쓴다.
+        # 이전 형식 기록이면 검증된 결과로 다시 읽은 원인·지적·안내를 쓴다. 양식의 일괄 제외 선택도 같은 지적을 쓴다.
         problem = state["problem"]
         task = dict(task, problem=problem)
+        st.warning(problem["message"])
         _render_findings(st, adapter, problem)
 
         if not problem.get("retryable"):

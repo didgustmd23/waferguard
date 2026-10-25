@@ -140,6 +140,18 @@ def prepare_input(record, directory, context, *, selection=None):
 
 
 def check_source(record):
-    """후속 단계 전에 원시 복사본과 생성 묶음·승인 연결을 다시 확인한다."""
+    """후속 단계 전에 원시 복사본과 생성 묶음·승인 연결을 다시 확인한다.
+
+    기록의 출처가 이 작업의 생성 실행(작업 ID로 정해지는 이름·작업 폴더 위치)과 이 작업의 snapshot에서 나왔는지도 대조한다.
+    다른 작업의 온전한 출처로 바꾼 기록은 출처 자체 검사를 통과해도 거부한다.
+    """
     _verify_snapshot(record)
-    TabularSourceContract.from_dict(record["input_selection"]["source"]).check_input()
+    current = record["input_selection"]
+    source = TabularSourceContract.from_dict(current["source"])
+    snapshot = record["snapshot"]
+    name = f"t{record['task_id'][:10]}-m{current['attempt']}"
+    run = Path(snapshot["directory"]).parent / "input_runs" / "materialize" / name
+    if (current.get("materialize_run") != name or Path(source.materialization.run_directory) != run
+            or source.snapshot != Snapshot(**snapshot["snapshot"]) or source.snapshot_directory != snapshot["directory"]):
+        raise ValueError("작업 기록의 표형 출처가 이 작업의 생성 실행·복사본과 다릅니다.")
+    source.check_input()

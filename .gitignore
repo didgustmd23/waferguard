@@ -107,3 +107,9 @@ Thumbs.db
 *.onnx
 pytorch_model*.bin
 /graphify-out/
+
+# Archify 초안·화면 캡처·로컬 검증 기록
+/.archify/
+# 공유할 최종 HTML·SVG·편집용 JSON은 docs/architecture에 유지한다.
+# delivery 영수증은 로컬 절대 경로를 포함하므로 이 PC에서만 보관한다.
+/docs/architecture/*.delivery.json

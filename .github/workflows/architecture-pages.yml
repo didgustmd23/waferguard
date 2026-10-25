@@ -1,0 +1,46 @@
+name: Publish architecture diagrams
+
+# 사용자 수동 실행만 허용한다. 커밋·PR에서 자동 게시하지 않는다.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: architecture-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Prepare diagram site only
+        shell: bash
+        run: |
+          mkdir -p _architecture_site
+          cp docs/architecture/index.html _architecture_site/
+          for diagram in overview responsibilities internal isolation; do
+            cp "docs/architecture/$diagram.html" _architecture_site/
+            cp "docs/architecture/$diagram.svg" _architecture_site/
+          done
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _architecture_site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -338,6 +338,22 @@ def problem_view(record):
 
     view = dict(problem, findings=_findings(record), revisable=revisable(record))
 
+    # 이전 형식 기록은 분할의 모든 입력 차단을 품질 정지로 저장했다. 확인된 다른 원인이면 그 원인·안내를 보인다.
+    if problem.get("code") == "QUALITY_REVIEW" and problem.get("retryable") and not problem.get("findings"):
+        refreshed = _refreshed(record)
+
+        if refreshed is not None and refreshed.code != "QUALITY_REVIEW":
+            view.update(code=refreshed.code, message=refreshed.message, detail=refreshed.detail, findings=refreshed.findings)
+
+    # 기록에 두지 않는 표시용 세부(예: 구간별 빠진 라벨)는 어댑터가 검증된 근거에서 다시 읽는다. 기록은 바꾸지 않는다.
+    display = getattr(_adapter(record), "display_findings", None)
+
+    if display is not None and view["findings"]:
+        try:
+            view["findings"] = display(record, view["findings"])
+        except Exception:
+            pass
+
     if view.get("hint") is None and view.get("diagnostic"):
         pending = [step for step, item in record.get("steps", {}).items() if item.get("status") != "completed"]
 
@@ -359,14 +375,18 @@ def _findings(record):
     if problem.get("findings"):
         return problem["findings"]
 
+    refreshed = _refreshed(record)
+    return [] if refreshed is None else refreshed.findings
+
+
+def _refreshed(record):
+    """재시도 가능한 정지를 어댑터가 검증된 결과로 다시 분류한 문제. 읽기만 하며 확인하지 못하면 None이다."""
     pending = [step for step, item in record.get("steps", {}).items() if item.get("status") != "completed"]
 
     try:
-        refreshed = _adapter(record).blocked_problem(record, pending[-1]) if pending else None
+        return _adapter(record).blocked_problem(record, pending[-1]) if pending else None
     except Exception:
-        refreshed = None
-
-    return [] if refreshed is None else refreshed.findings
+        return None
 
 
 def check_plan(record, plan, answers):
@@ -531,7 +551,9 @@ def _drive(record, step_id, module_id, decision, name, root):
                         "allowed": _allowed(record, decision), **adapter.expected(record, decision)}
 
             if decision == "C":
+                # 이전 시도의 동의·계획으로 되돌린 기록을 새 시도 이름으로 다시 실행하지 않는다.
                 expected["snapshot_sha256"] = record["snapshot"]["snapshot"]["sha256"]
+                expected["attempt"] = record["attempt"]
 
             authorize = task_consent.authorizer(record, decision, module_id, state["stage"], expected=expected)
             result = service.record_delegated_approval(name, service.preview_approval(name), authorize=authorize)
@@ -699,6 +721,16 @@ def approve_apply(task_id, *, root=None, expected_signature=None, expected_attem
 
         if adapter.review_signature(record) != record["candidate"]["signature"]:
             return _stop(record, TaskProblem("CANDIDATE_CHANGED", "확인한 적용 대상이 바뀌었습니다. 적용하지 않습니다."), root)
+
+        # 저장 실행안을 열 수 없으면(코드 변경·파일 변경) 결정 D를 발급하지 않고 멈춘다. 계획 수정으로 새 시도·새 동의를 준비한다.
+        checker = getattr(adapter, "check_saved_plan", None)
+
+        try:
+            if checker is not None:
+                checker(record, directory)
+        except (ValueError, OSError):
+            return _stop(record, TaskProblem("PLAN_STALE", "저장한 실행안을 현재 코드로 열 수 없거나 확정한 계획과 달라 적용하지 "
+                                             "않았습니다. '계획 수정'으로 새 시도를 준비하세요(새 동의 필요).", retryable=True), root)
 
         record["consents"]["D"] = task_consent.grant("D", task_id, {
             "plan_signature": record["confirmed"]["plan_signature"], "limits": record["limits"],

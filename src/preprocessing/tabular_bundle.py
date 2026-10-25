@@ -24,13 +24,15 @@ MAX_JSON_BYTES = 1024 * 1024
 DATA_FILES = ("schema.json", "data.jsonl", "provenance.json")
 FILES = frozenset((*DATA_FILES, "manifest.json", "SUCCESS.json"))
 _WORKER_ROOT = ContextVar("tabular_worker_root", default=None)
+# 부모가 worker에 권한을 준 폴더. 작업 root·조상과 중간 폴더 output·scratch에는 worker 권한이 없다.
+GRANTED_FOLDERS = (("input",), ("output", "result"), ("scratch", "task"))
 
 
 @contextmanager
 def worker_filesystem(root):
-    """부모가 검증한 작업 경계 아래만 조회한다. 경계 자체와 조상에는 worker 권한이 없다."""
+    """부모가 검증하고 권한을 준 작업 폴더 아래만 조회한다. 그 위의 폴더는 조회하지 않는다."""
     root = Path(os.path.abspath(root))
-    token = _WORKER_ROOT.set(root)
+    token = _WORKER_ROOT.set(tuple(root.joinpath(*parts) for parts in GRANTED_FOLDERS))
     try:
         yield
     finally:
@@ -72,13 +74,14 @@ def _decode(payload):
 
 def _safe(path, *, directory):
     path = Path(os.path.abspath(path))
-    boundary = _WORKER_ROOT.get()
-    _require(boundary is None or path.is_relative_to(boundary))
+    granted = _WORKER_ROOT.get()
+    _require(granted is None or any(path.is_relative_to(folder) for folder in granted))
     for component in (path, *path.parents):
-        if component == boundary:
-            break
         info = component.lstat()
         _require(not stat.S_ISLNK(info.st_mode) and not getattr(info, "st_file_attributes", 0) & 0x400)
+        # 권한 폴더 자체까지 검사하고 그 위는 조회하지 않는다.
+        if granted is not None and component in granted:
+            break
     _require(path.is_dir() if directory else path.is_file() and path.stat().st_nlink == 1)
     return path
 

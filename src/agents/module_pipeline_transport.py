@@ -41,6 +41,8 @@ CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     "src/agents/llm_task_assist.py", "src/agents/task_adapters.py", "src/agents/tabular_task.py",
     "src/agents/task_plan.py", "src/agents/task_recommend.py", "src/agents/delegated_approval.py",
     "src/agents/strict_json.py",
+    # v2 표형 어댑터는 생성된 표의 진단 위임 범위(결정 A)와 대조값을 정한다.
+    "src/agents/tabular_v2_task.py",
     "src/agents/tabular_pipeline.py", "src/agents/tabular_source_contract.py", "src/agents/split_evidence.py",
     "src/agents/tabular_input_worker.py", "src/agents/workflow_approval.py",
     "configs/agents/modules/missing_row_histogram.json",

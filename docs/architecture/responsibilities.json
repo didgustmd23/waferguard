@@ -1,0 +1,304 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "에이전트 · 공통 책임과 유형별 처리",
+    "locale": "ko",
+    "output": "docs/architecture/responsibilities.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/didgustmd23/waferguard.git",
+      "revision": "4fd209c5a5b873b1b6fd8eda20d75e162bdbc334"
+    }
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "사용자",
+      "sublabel": "데이터 · 목적 · 필요한 결정",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 20,
+          "end_line": 42
+        }
+      ]
+    },
+    {
+      "id": "ui",
+      "type": "frontend",
+      "label": "공통 화면",
+      "sublabel": "요청 · 진행 · 결정 · 결과",
+      "pos": [
+        400,
+        40
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 28,
+          "end_line": 42
+        }
+      ]
+    },
+    {
+      "id": "common",
+      "type": "backend",
+      "label": "공통 조정기",
+      "sublabel": "상태 · 계획 · 질문 · 동의",
+      "pos": [
+        770,
+        40
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/task_orchestrator.py",
+          "line": 484,
+          "end_line": 545
+        }
+      ]
+    },
+    {
+      "id": "adapt",
+      "type": "backend",
+      "label": "데이터 형태 어댑터",
+      "sublabel": "표형 CSV / 배열 NPZ",
+      "pos": [
+        770,
+        260
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/task_adapters.py",
+          "line": 7,
+          "end_line": 39
+        }
+      ]
+    },
+    {
+      "id": "load",
+      "type": "backend",
+      "label": "로더 · 입력 매핑",
+      "sublabel": "형식 해석 / 선택적 프로파일",
+      "pos": [
+        400,
+        260
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 43,
+          "end_line": 49
+        }
+      ]
+    },
+    {
+      "id": "execute",
+      "type": "security",
+      "label": "기존 승인 · 실행기",
+      "sublabel": "동의 범위 대조 / 1회 소비",
+      "pos": [
+        770,
+        520
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/task_orchestrator.py",
+          "line": 484,
+          "end_line": 545
+        }
+      ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "격리 계산",
+      "sublabel": "AppContainer + Job",
+      "pos": [
+        400,
+        520
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/appcontainer_native.py",
+          "line": 123,
+          "end_line": 162
+        }
+      ]
+    },
+    {
+      "id": "verify",
+      "type": "backend",
+      "label": "부모 결과 검증",
+      "sublabel": "검증 후 등록 · 공통 보고",
+      "pos": [
+        40,
+        520
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/task_report.py",
+          "line": 20,
+          "end_line": 32
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "로컬 LLM 권장안",
+      "sublabel": "제한 요청 · 전체 계획 검사",
+      "pos": [
+        1120,
+        260
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 38,
+          "end_line": 42
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-ui",
+      "from": "user",
+      "to": "ui",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "ui-common",
+      "from": "ui",
+      "to": "common",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "common-adapt",
+      "from": "common",
+      "to": "adapt",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "adapt-load",
+      "from": "adapt",
+      "to": "load",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "adapt-execute",
+      "from": "adapt",
+      "to": "execute",
+      "label": "동의 범위 실행",
+      "variant": "security"
+    },
+    {
+      "id": "execute-worker",
+      "from": "execute",
+      "to": "worker",
+      "label": "승인 소비 후",
+      "variant": "default"
+    },
+    {
+      "id": "worker-verify",
+      "from": "worker",
+      "to": "verify",
+      "label": "미신뢰 출력",
+      "variant": "default"
+    },
+    {
+      "id": "verify-common",
+      "from": "verify",
+      "to": "common",
+      "label": "검증된 결과 사실",
+      "variant": "default"
+    },
+    {
+      "id": "adapt-llm",
+      "from": "adapt",
+      "to": "llm",
+      "label": "허용 DTO",
+      "variant": "default"
+    },
+    {
+      "id": "llm-common",
+      "from": "llm",
+      "to": "common",
+      "label": "응답·계획 검증",
+      "variant": "default"
+    }
+  ],
+  "boundaries": [],
+  "cards": [
+    {
+      "title": "공통 핵심",
+      "items": [
+        "조정·동의·상태·질문·보고서·화면 틀은 공통 책임이다.",
+        "유형별 로딩·진단·계산·특수 검증은 어댑터와 계산 모듈이 맡는다."
+      ],
+      "dot": "cyan"
+    },
+    {
+      "title": "도메인과 형태를 분리",
+      "items": [
+        "웨이퍼는 배열 위에 놓는 선택적 도메인 프로파일이다.",
+        "프로파일 개념은 현재 통합 웨이퍼 연결을 의미하지 않는다."
+      ],
+      "dot": "violet"
+    },
+    {
+      "title": "허용 범위",
+      "items": [
+        "표형은 현재 CSV, 배열은 NPZ 입력이다.",
+        "새 조정기·화면·승인 체계를 유형마다 복제하지 않는다."
+      ],
+      "dot": "amber"
+    }
+  ]
+}

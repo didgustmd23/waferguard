@@ -30,6 +30,12 @@ def render(st, record, plan, fields, key):
     split["test_ratio"] = ui[0].number_input("Test 비율", 0.01, 0.98, float(split["test_ratio"]), 0.05, key=key + "_test")
     split["random_state"] = int(ui[1].number_input("난수 시드", 0, 2 ** 32 - 1, int(split["random_state"]), key=key + "_seed"))
     split["stratify"] = ui[2].checkbox("target 기준 계층 분할", value=split["stratify"], key=key + "_stratify")
+    # 기존 분할 계약의 클래스 조건. 끄면 target 클래스가 빠진 구간도 그대로 진행하고, 분할 결과의 구간별 클래스 수로 확인한다.
+    split["require_all_classes"] = ui[0].checkbox("모든 구간에 모든 클래스 요구", value=split["require_all_classes"],
+                                                  key=key + "_require_all_classes",
+                                                  help="켜면(기본) Train·Validation·Test 중 target 클래스가 빠진 구간이 생길 때 분할 "
+                                                       "제안에서 멈춥니다. 끄면 그런 구간도 진행하며, 작은 데이터·group 분할에서 "
+                                                       "평가에 쓸 클래스가 없을 수 있습니다.")
 
     if strategy.get("unsupported"):
         st.text("time 분할은 통합 작업에서 지원하지 않습니다(시간 형식 지정 불가). group 역할이 있으면 group, 없으면 random을 고르세요.")
@@ -67,7 +73,8 @@ def render(st, record, plan, fields, key):
                                                     int(preparation[name]), key=key + "_" + name))
     roles = dict(zip(edited["column"], edited["role"]))
     flagged = sorted({item["subject"] for item in ((record.get("problem") or {}).get("findings") or [])
-                      if item["subject"] in roles and roles[item["subject"]] in ("수치형", "범주형")})
+                      if item["code"] != "CLASS_MISSING_IN_SPLIT" and item["subject"] in roles
+                      and roles[item["subject"]] in ("수치형", "범주형")})
 
     # 품질 검사가 지적한 특징을 사용자가 고를 때만 제외로 바꾼다. 기본은 바꾸지 않으며 서버가 계획 전체를 다시 검증한다.
     if flagged and st.checkbox(f"품질 검사가 지적한 특징 {len(flagged)}개를 제외로 표시합니다", value=False, key=key + "_exclude_flagged"):

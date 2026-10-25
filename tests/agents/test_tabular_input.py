@@ -195,6 +195,28 @@ class TabularInputTest(unittest.TestCase):
             reply = execute_request(request, root)
         self.assertEqual(reply.status, "succeeded")
 
+    def test_materialize_does_not_stat_ungranted_intermediate_folders(self):
+        """실제 ACL처럼 output·scratch 중간 폴더 조회가 거부돼도 생성 worker는 결과 폴더 아래에 묶음을 쓴다."""
+        self.ready_inspection()
+        self.create(self.materialize, "materialize1", "inspect1")
+        _, tool, _ = self.materialize._open("materialize1")
+        request = tool._request("b" * 32)
+        root = tool._stage(request)
+        real_lstat = Path.lstat
+        # 부모는 runtime·input·tools 읽기와 output/result·scratch/task 쓰기만 worker에 부여한다.
+        forbidden = {root, *root.parents, root / "output", root / "scratch"}
+
+        def restricted(path, *args, **kwargs):
+            if path in forbidden:
+                raise PermissionError("모의 허용 범위 밖")
+            return real_lstat(path, *args, **kwargs)
+
+        with patch.object(Path, "lstat", restricted):
+            reply = execute_request(request, root)
+        diagnostic = root / "scratch/task/diagnostic.json"
+        self.assertEqual(reply.status, "succeeded", diagnostic.read_text() if diagnostic.exists() else None)
+        self.assertTrue((root / "output/result/operation/table/SUCCESS.json").is_file())
+
     def test_worker_output_changes_are_never_committed(self):
         for attack in ("extra", "binding", "counts", "completion", "hardlink"):
             name = "attack_" + attack
