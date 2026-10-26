@@ -131,4 +131,4 @@ from src.sensor_ml.experiments.time_weight_compare import build_weight_candidate
 
 `src/wafer_dl/`는 canonical 검증·EDA·그룹 분할·변환·캐시·Dataset을 담당하고, `scripts/wm_sandbox/`는 원본 구조 검사/변환 진입점입니다. 에이전트는 `src/agents/`의 기존 서비스를 통해 이 코어를 호출합니다.
 
-현재 전처리 계약과 구현 위치, 학습 담당자의 모델/평가 계획은 [WM-811K 설계](../docs/WM811K/PREPROCESSING_DESIGN.md)를 따릅니다. 명령은 [문서 목록](../docs/README.md#wm-811k-문서)의 단계별 운영 안내, 관찰 결과는 [WM 보고서](../reports/wm811k/report.md)를 기준으로 합니다. 학습 계획을 구현 완료로 표시하거나 SECOM의 성능과 합산하지 않습니다.
+현재 WM 처리 코드는 canonical 검증, 그룹 분할, 변환·캐시·Dataset과 CNN 학습·평가로 구성됩니다. 구현과 실행 경로는 [WM-811K 설계](../docs/WM811K/PREPROCESSING_DESIGN.md), 재현 방법·결과·한계는 [캐시·학습·평가 기록](../docs/WM811K/CACHE_DATASET.md)을 참고하세요. 작은 CNN의 Train/Validation 학습과 동결 Test 1회 평가를 완료했으며, ResNet18 비교와 seed 변동은 후속입니다. 모델 가중치와 실행별 보고서는 로컬에만 보관합니다.

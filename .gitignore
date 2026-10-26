@@ -97,6 +97,13 @@ Thumbs.db
 /models/candidates/
 /models/retired/
 
+# WM-811K 학습 checkpoint와 로컬 실행 보고서
+/models/wm811k/
+/reports/wm811k/canonical_validation_*/
+/reports/wm811k/split_diagnosis_*/
+/reports/wm811k/test_evaluation_*/
+/reports/wm811k/transform_v2/
+
 # 다운로드·학습·직렬화한 모델은 소스와 별도 관리
 *.gguf
 *.safetensors

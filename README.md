@@ -95,7 +95,7 @@ AP는 V1 **0.040461 → V2 0.075077**, ROC-AUC는 **0.488008 → 0.682330**으�
 
 데이터 출처는 [UCI SECOM](https://archive.ics.uci.edu/dataset/179/secom)입니다. 센서 파일과 label·timestamp 파일을 병합하며, label은 `-1`(정상), `1`(불량)입니다. 원본 데이터는 저장소에 포함하지 않습니다.
 
-WM-811K의 출처·데이터 계약·전처리와 학습 계획은 [전처리·학습 설계](docs/WM811K/PREPROCESSING_DESIGN.md), 실제 관찰한 수치와 그림은 [결과 보고서](reports/wm811k/report.md)를 따릅니다. 데이터 준비와 모델 학습/평가의 완료 범위를 구분하며 SECOM과 통합 성능으로 합산하지 않습니다.
+WM-811K는 [Kaggle 배포본](https://www.kaggle.com/datasets/qingyi/wm811k-wafer-map)을 사용합니다. Lot 비중첩 분할로 학습한 작은 CNN을 동결해 Test 25,834건을 1회 평가했습니다: Accuracy **96.13%**, Macro-Recall **85.61%**, Macro-F1 **77.17%**. 기준선 대비 Macro-Recall은 **74.50%p** 높지만 `Loc` Recall은 58.10%, `Scratch` Precision은 30.56%입니다. 이는 9종 패턴 분류 결과이지 실제 현장 불량 검출률이 아닙니다. 같은 Test로 추가 튜닝하지 않습니다. 원본·가공 데이터, checkpoint, 실행별 보고서는 저장소에 포함하지 않습니다. 재현 절차와 한계는 [WM-811K 기록](docs/WM811K/CACHE_DATASET.md)에 정리했습니다.
 
 ![SECOM 클래스 분포](reports/secom/figures/eda/step3/class_distribution.png)
 
@@ -141,7 +141,7 @@ src/              재사용 코어 (저장 모델 클래스 경로 유지)
   preprocessing/  공통 전처리 코어(역할 계약·품질·EDA·분할·변환·배열)
   agents/         전처리 작업 조정·승인·격리·결과 검증
   ui/             Streamlit 화면(통합 작업·고급 도구)
-  wafer_dl/       맵 전처리·캐시·Dataset (모델 학습은 별도 계획)
+  wafer_dl/       맵 전처리·캐시·Dataset·CNN 학습·평가
 tests/            입력 계약·전처리·평가·추론 검증
 docs/secom/       실험 보고서·재현 조건·Model Card·실행 안내
 reports/secom/    공개 결과 요약·그림·분석 노트북
