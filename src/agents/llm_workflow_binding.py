@@ -27,9 +27,13 @@ def _digest(value):
 
 
 def binding_code_id():
-    """바인더·정적 제안·기존 서비스 연결 변경도 생성 전 재검사한다."""
+    """바인더·정적 제안·기존 서비스 연결 변경도 생성 전 재검사한다.
+
+    저장 실행안 검사·생성 기록(store)과 결합 검사가 쓰는 전처리 모듈 계획 해석도 단계 생성 판정에 관여하므로 포함한다.
+    """
     files = ("llm_workflow_binding.py", "csv_workflow_binding_evidence.py", "llm_workflow_contract.py",
-             "llm_workflow_proposal.py", "csv_workflow_proposal_catalogue.py")
+             "llm_workflow_proposal.py", "csv_workflow_proposal_catalogue.py", "llm_workflow_store.py",
+             "preparation_module_plan.py")
     from .tabular_workflow_service import code_id as tabular_code_id
 
     return _digest({"csv": csv_code_id(), "tabular": tabular_code_id(), "files": {

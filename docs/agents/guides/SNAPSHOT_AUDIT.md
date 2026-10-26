@@ -1,6 +1,6 @@
 # snapshot 품질 검사 — run_audit 격리 연결
 
-2026-10-16. 기존 `preprocessing.quality.inspect_quality()`를 snapshot·사용자 승인·SQLite 예약·AppContainer+Job·부모 보고서 검사에 연결했다. 데이터를 삭제·대치·스케일링·재라벨링하거나 모델 학습·분할·EDA를 실행하지 않는다. 현재는 단독 preflight → audit 계획이며 EDA와 연속 실행하는 전체 workflow는 별도 연결 과제다.
+기존 `preprocessing.quality.inspect_quality()`를 snapshot·사용자 승인·SQLite 예약·AppContainer+Job·부모 보고서 검사에 연결한 단독 CLI다. 데이터를 삭제·대치·스케일링·재라벨링하거나 모델 학습·분할·EDA를 실행하지 않는다. 이 CLI는 preflight → audit 계획만 수행한다. EDA·분할·전처리를 이어서 수행하는 통합 작업은 [GUIDE](../GUIDE.md#통합-작업)의 별도 서비스 연결을 따른다.
 
 ## 소스 경로와 역할
 

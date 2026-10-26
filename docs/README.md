@@ -19,6 +19,10 @@ WM 전처리의 검증·분할·변환·캐시·Dataset, 작은 CNN 학습 및 �
 - `agents/guides/`: 기능별 CLI 실행·승인·결과 확인 절차
 - `agents/security/`: AppContainer·Job·파일 권한·네트워크 실측 절차
 
+에이전트는 CSV v2 구현·실제 합성 사례 확인을 마치고 안정화하는 범위입니다. 추가 표형 형식(T2~T4)과 일반 복구·외부 API는 보류하며, 현재의 미검증 항목은 GUIDE에서 확인합니다.
+
+구성도는 [프로젝트 전체](../README.md#전체-구성도), [에이전트 책임·내부 구조](agents/DESIGN.md#책임-구분), [격리 경계](agents/DESIGN.md#appcontainer-허용차단-구성도)에서 볼 수 있습니다. 정적 SVG와 HTML·편집 원본은 `docs/architecture/`에 함께 둡니다. 별도의 설계 기준 문서는 추가하지 않습니다.
+
 현재 상태를 여러 문서에 복제하거나 날짜별 구현 기록을 추가하지 않습니다. SECOM·WM의 실험/도메인 문서는 아래에서 별도로 관리합니다.
 
 ## WM-811K 문서

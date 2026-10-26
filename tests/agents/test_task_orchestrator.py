@@ -787,6 +787,28 @@ class TaskOrchestratorTest(unittest.TestCase):
         self.assertEqual(self.calls.count("apply_preparation"), 0)
         self.assertNotIn("D", task["consents"])
 
+    def test_saved_workflow_with_other_signature_blocks_apply(self):
+        """같은 설정이라도 확정 계획과 서명이 다른 저장 실행안으로는 적용 단계를 만들지 않는다."""
+        import tempfile
+        from src.agents import llm_workflow_store as plans, tabular_task
+
+        task = self.run_to_apply()
+        directory = task_store.task_directory(task["task_id"], root=self.store)
+        profile, preparation = tabular_task.validate_plan(task, task["confirmed"]["plan"])
+        proposal, context = tabular_task._proposal("other_label", profile, preparation)
+        self.assertNotEqual(proposal.plan_signature, task["confirmed"]["plan_signature"])
+        with tempfile.TemporaryDirectory() as scratch:
+            plans.save_workflow(task["confirmed"]["plan_name"], proposal, context, root=Path(scratch))
+            forged = (Path(scratch) / task["confirmed"]["plan_name"] / "plan.json").read_bytes()
+        (tabular_task._plan_root(directory) / task["confirmed"]["plan_name"] / "plan.json").write_bytes(forged)
+        task = orchestrator.approve_apply(task["task_id"], root=self.store)
+        self.assertEqual((task["phase"], task["problem"]["code"]), ("needs_attention", "PLAN_STALE"))
+        self.assertNotIn("D", task["consents"])
+        self.assertEqual(self.calls.count("apply_preparation"), 0)
+        # 같은 검사는 단계 생성에도 있다(실행 중 바꿔치기). 확정 서명과 다른 실행안으로는 단계를 만들지 않는다.
+        with self.assertRaises(ValueError):
+            tabular_task.check_saved_plan(task, directory)
+
     def fail_completed_save(self):
         """완료 기록 저장만 실패시킨다(모든 단계·보고서 작성 이후). 실행 중 기록은 그대로 남는다."""
         write = task_store._write

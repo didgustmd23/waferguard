@@ -25,7 +25,10 @@ def code_id():
     root = Path(__file__).resolve().parents[2]
     digest = hashlib.sha256(csv_code_id().encode())
     # 전달은 worker 없이 부모가 판정하므로 typed 메타데이터 복원·후보/적용 증거 판정 코드도 포함한다.
-    for name in ("src/agents/tabular_workflow_service.py", "src/agents/csv_handoff_cli.py",
+    # v2 어댑터는 동의 C·D 내용·위임 직전 대조값·단계 생성 값을 정한다(v1 CSV 지문에는 넣지 않는다).
+    # 입력 출처 대조(check_source)는 결정 C·D 위임 직전마다 실행되므로 함께 포함한다.
+    for name in ("src/agents/tabular_workflow_service.py", "src/agents/tabular_v2_task.py", "src/agents/tabular_input_flow.py",
+                 "src/agents/csv_handoff_cli.py",
                  "src/agents/csv_handoff_contract.py", "src/agents/tabular_source_contract.py",
                  "src/agents/tabular_input_service.py", "src/agents/tabular_preparation_worker.py",
                  "src/preprocessing/tabular_bundle.py", "src/agents/preparation_apply_cli.py",

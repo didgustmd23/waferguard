@@ -1,0 +1,473 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "에이전트 · 등록에서 실행·보고서까지",
+    "locale": "ko",
+    "output": "docs/architecture/internal.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/didgustmd23/waferguard.git",
+      "revision": "4fd209c5a5b873b1b6fd8eda20d75e162bdbc334"
+    }
+  },
+  "components": [
+    {
+      "id": "view",
+      "type": "frontend",
+      "label": "공통 화면 · 양식",
+      "sublabel": "task_view / task_forms",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 55,
+          "end_line": 60
+        }
+      ]
+    },
+    {
+      "id": "core",
+      "type": "backend",
+      "label": "조정 · 계획 · 동의 · 기록",
+      "sublabel": "task_orchestrator",
+      "pos": [
+        420,
+        40
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/task_orchestrator.py",
+          "line": 484,
+          "end_line": 545
+        }
+      ]
+    },
+    {
+      "id": "model",
+      "type": "backend",
+      "label": "권장안 요청 · 응답 검증",
+      "sublabel": "task_recommend / Ollama",
+      "pos": [
+        800,
+        40
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 62,
+          "end_line": 70
+        }
+      ]
+    },
+    {
+      "id": "registry",
+      "type": "backend",
+      "label": "고정 어댑터 등록",
+      "sublabel": "current / legacy",
+      "pos": [
+        420,
+        210
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/task_adapters.py",
+          "line": 7,
+          "end_line": 39
+        }
+      ]
+    },
+    {
+      "id": "forms",
+      "type": "frontend",
+      "label": "역할 · 매핑 · 처리 기준",
+      "sublabel": "공통 틀에서 유형 양식 호출",
+      "pos": [
+        40,
+        210
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 55,
+          "end_line": 60
+        }
+      ]
+    },
+    {
+      "id": "facts",
+      "type": "backend",
+      "label": "공통 보고서 조립",
+      "sublabel": "검증된 report_facts 수신",
+      "pos": [
+        800,
+        210
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/task_report.py",
+          "line": 20,
+          "end_line": 32
+        }
+      ]
+    },
+    {
+      "id": "tab",
+      "type": "backend",
+      "label": "표형 v2 / 기존 CSV v1",
+      "sublabel": "입력 해석 · 진단 · 서비스 연결",
+      "pos": [
+        40,
+        390
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/tabular_v2_task.py",
+          "line": 1,
+          "end_line": 37
+        }
+      ]
+    },
+    {
+      "id": "array",
+      "type": "backend",
+      "label": "배열 NPZ 어댑터",
+      "sublabel": "진단 · 후보 · 적용 서비스",
+      "pos": [
+        420,
+        390
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 75,
+          "end_line": 90
+        }
+      ]
+    },
+    {
+      "id": "services",
+      "type": "backend",
+      "label": "유형별 서비스 · 진단",
+      "sublabel": "v2 5종 / 진단 별도 경로",
+      "pos": [
+        800,
+        390
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/tabular_v2_task.py",
+          "line": 1,
+          "end_line": 37
+        }
+      ]
+    },
+    {
+      "id": "approve",
+      "type": "security",
+      "label": "동의 대조 · 위임 승인",
+      "sublabel": "1회 승인 기록 / 직접 확인과 구분",
+      "pos": [
+        800,
+        570
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/delegated_approval.py",
+          "line": 16,
+          "end_line": 36
+        },
+        {
+          "path": "src/agents/task_orchestrator.py",
+          "line": 528,
+          "end_line": 543
+        }
+      ]
+    },
+    {
+      "id": "exec",
+      "type": "backend",
+      "label": "기존 실행 관리자",
+      "sublabel": "승인 소비 · 실행 상태 · 커밋",
+      "pos": [
+        420,
+        570
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/executor.py",
+          "line": 478,
+          "end_line": 491
+        }
+      ]
+    },
+    {
+      "id": "transport",
+      "type": "backend",
+      "label": "transport · worker",
+      "sublabel": "허용 소스 / 격리 계산 코어",
+      "pos": [
+        40,
+        570
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/appcontainer_native.py",
+          "line": 123,
+          "end_line": 162
+        }
+      ]
+    },
+    {
+      "id": "results",
+      "type": "backend",
+      "label": "부모 results 검증",
+      "sublabel": "출력 · 실행 증거 · 계보 확인",
+      "pos": [
+        420,
+        750
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/agents/executor.py",
+          "line": 536,
+          "end_line": 551
+        }
+      ]
+    },
+    {
+      "id": "output",
+      "type": "backend",
+      "label": "미신뢰 worker 출력",
+      "sublabel": "정상 종료만으로 등록하지 않음",
+      "pos": [
+        40,
+        750
+      ],
+      "size": [
+        230,
+        72
+      ],
+      "sources": [
+        {
+          "path": "docs/agents/DESIGN.md",
+          "line": 96,
+          "end_line": 110
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "view-core",
+      "from": "view",
+      "to": "core",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "view-forms",
+      "from": "view",
+      "to": "forms",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "core-model",
+      "from": "core",
+      "to": "model",
+      "label": "허용 자료",
+      "variant": "default"
+    },
+    {
+      "id": "core-registry",
+      "from": "core",
+      "to": "registry",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "core-facts",
+      "from": "core",
+      "to": "facts",
+      "label": "보고서 요청",
+      "variant": "default"
+    },
+    {
+      "id": "registry-tab",
+      "from": "registry",
+      "to": "tab",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "registry-array",
+      "from": "registry",
+      "to": "array",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "tab-services",
+      "from": "tab",
+      "to": "services",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "array-services",
+      "from": "array",
+      "to": "services",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "services-approve",
+      "from": "services",
+      "to": "approve",
+      "label": "동의 대조",
+      "variant": "security"
+    },
+    {
+      "id": "approve-exec",
+      "from": "approve",
+      "to": "exec",
+      "label": "승인 기록 후",
+      "variant": "default"
+    },
+    {
+      "id": "exec-transport",
+      "from": "exec",
+      "to": "transport",
+      "label": "격리 실행",
+      "variant": "default"
+    },
+    {
+      "id": "transport-output",
+      "from": "transport",
+      "to": "output",
+      "label": "",
+      "variant": "default"
+    },
+    {
+      "id": "exec-results",
+      "from": "exec",
+      "to": "results",
+      "label": "부모 검증 호출",
+      "variant": "default"
+    },
+    {
+      "id": "output-results",
+      "from": "output",
+      "to": "results",
+      "label": "출력 읽기",
+      "variant": "default"
+    },
+    {
+      "id": "results-exec",
+      "from": "results",
+      "to": "exec",
+      "label": "통과만 등록",
+      "variant": "default"
+    },
+    {
+      "id": "tab-facts",
+      "from": "tab",
+      "to": "facts",
+      "label": "report_facts",
+      "variant": "default"
+    },
+    {
+      "id": "array-facts",
+      "from": "array",
+      "to": "facts",
+      "label": "report_facts",
+      "variant": "default"
+    }
+  ],
+  "boundaries": [],
+  "cards": [
+    {
+      "title": "작업 7의 v2 연결 반영",
+      "items": [
+        "신규 CSV는 tabular_v2, 기존 기록은 저장된 유형으로 연다.",
+        "v2는 입력 검사·생성 후 별도 모듈 파이프라인에서 진단한다.",
+        "CSV v1과 배열 경로를 없애거나 자동 전환하지 않는다."
+      ],
+      "dot": "cyan"
+    },
+    {
+      "title": "승인은 서비스 책임",
+      "items": [
+        "CSV·배열 서비스는 delegated_approval을 사용한다.",
+        "표형 진단은 자체 동의 대조·위임 기록 후 같은 실행기를 쓴다.",
+        "단계·입력·계획·코드가 동의와 맞아야 발급한다."
+      ],
+      "dot": "rose"
+    },
+    {
+      "title": "보고서 근거의 한계",
+      "items": [
+        "어댑터가 검증한 사실을 공통 task_report에 반환한다.",
+        "진단·EDA 표식의 손상 검사와 승인 결합 검증은 같은 보장이 아니다.",
+        "상세 보장·미검증 상태는 DESIGN·GUIDE 기준이다."
+      ],
+      "dot": "amber"
+    }
+  ]
+}

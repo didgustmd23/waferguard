@@ -244,6 +244,48 @@ class TabularBundleTest(unittest.TestCase):
                                 max_output_bytes=reference.size_bytes - 1)
         self.assertFalse((target / "SUCCESS.json").exists())
 
+    def test_worker_boundary_checks_only_granted_folders(self):
+        """worker 경계는 부모가 권한을 준 input·output/result·scratch/task 아래만 허용하고 그 위는 조회하지 않는다."""
+        import shutil
+        import subprocess
+        root = self.root / "worker"
+        for name in ("input", "output/result", "scratch/task", "tools"):
+            (root / name).mkdir(parents=True)
+        reference = bundle.write_bundle(pd.DataFrame({"x": [1, 2]}), root / "input/table",
+                                        provenance={"purpose": "synthetic"}, max_output_bytes=65536)
+        shutil.copytree(root / "input/table", root / "tools/table")
+        junction = root / "output/result/link"
+        if subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(root / "input/table")],
+                          capture_output=True).returncode:
+            self.skipTest("이 환경에서는 junction을 만들 수 없습니다")
+        self.addCleanup(lambda: junction.exists() and os.rmdir(junction))
+        real_lstat = Path.lstat
+        # 실제 AppContainer ACL처럼 작업 root·조상과 권한 없는 중간 폴더 output·scratch 조회를 거부한다.
+        forbidden = {root, *root.parents, root / "output", root / "scratch"}
+
+        def restricted(path, *args, **kwargs):
+            if path in forbidden:
+                raise PermissionError("모의 허용 범위 밖")
+            return real_lstat(path, *args, **kwargs)
+
+        with patch.object(Path, "lstat", restricted), bundle.worker_filesystem(root):
+            subset = bundle.write_subset(root / "input/table", [1], root / "output/result/part", expected=reference,
+                                         provenance={"purpose": "synthetic"}, max_output_bytes=65536)
+            self.assertEqual(bundle.load_bundle(root / "output/result/part", expected=subset)["x"].tolist(), [2])
+            # 권한 폴더 밖의 사본과 권한 폴더 안의 재분석 지점은 계속 거부한다.
+            for directory in (root / "tools/table", junction):
+                with self.subTest(directory=directory.name), self.assertRaises(ValueError):
+                    bundle.inspect_bundle(directory, expected=reference, max_bytes=65536)
+
+        # 권한 폴더 자체가 재분석 지점으로 바뀌어도 거부한다(권한 폴더까지는 검사한다).
+        replaced = self.root / "replaced"
+        (replaced / "output").mkdir(parents=True)
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(replaced / "output/result"), str(root / "tools")],
+                       capture_output=True, check=True)
+        self.addCleanup(lambda: os.rmdir(replaced / "output/result"))
+        with bundle.worker_filesystem(replaced), self.assertRaises(ValueError):
+            bundle.inspect_bundle(replaced / "output/result/table", expected=reference, max_bytes=65536)
+
     def test_rejects_hard_linked_payload(self):
         reference = self.write(pd.DataFrame({"x": [1]}))
         os.link(self.directory / "data.jsonl", self.root / "alias")

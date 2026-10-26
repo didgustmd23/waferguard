@@ -41,7 +41,8 @@ STEP_LABELS = shared.STEP_LABELS
 ALLOWED = tuple((module_id, TABULAR_VERSION) for module_id in TABULAR_IDS)
 # 입력 해석은 대기 화면의 선택(resume_input)으로 다시 정한다. 차단 화면의 해결 동작은 없다.
 ACTIONS = {}
-FINDING_LABELS = shared.FINDING_LABELS
+FINDING_LABELS = dict(shared.FINDING_LABELS, CLASS_MISSING_IN_SPLIT="구간에 없는 target 클래스")
+SPLIT_NAMES = {"train": "Train", "validation": "Validation", "test": "Test"}
 HINTS = shared.HINTS
 CODE_LABELS = dict(shared.CODE_LABELS, NUMERIC_ROLE_TYPE_UNSUPPORTED=(
     "수치형 역할에는 생성된 표에서 수치 자료형(정수·실수)으로 읽힌 컬럼만 지정할 수 있습니다. 숫자처럼 보이는 문자열(예: 앞자리 0)을 "
@@ -395,9 +396,13 @@ def _values(record, step_id, name):
             "max_bundle_bytes": 128 * 1024 ** 2}
 
 
+def check_saved_plan(record, directory):
+    return shared.check_saved_plan(record, directory)
+
+
 def create_step(record, directory, step_id, name):
     """기존 결합·생성 API로 한 단계를 만든다. 승인·실행은 공통 조정기가 한다."""
-    saved = plans.load_workflow(record["confirmed"]["plan_name"], root=shared._plan_root(directory))
+    saved = check_saved_plan(record, directory)
     completed = {step: item["run_name"] for step, item in record["steps"].items() if item["status"] == "completed"}
     binding = bind_workflow_step(saved["proposal"], **saved["context"], step_id=step_id,
                                  values=_values(record, step_id, name), limits=WorkerLimits(**record["limits"]),
@@ -416,6 +421,8 @@ def check_lineage(record):
 
     if source_of("tabular_split_review", tool) != _source(record).source_id:
         raise TaskProblem("SNAPSHOT_CHANGED", "분할 작업의 입력이 진단한 작업용 표와 다릅니다. 새 작업으로 시작하세요.")
+
+    shared.check_profile(record, tool.contract.profile)
 
 
 def quality_findings(record):
@@ -455,10 +462,91 @@ def quality_findings(record):
     return None if report is None else [{"code": item["code"], "subject": item.get("column")} for item in report["findings"]]
 
 
+def split_stop(record):
+    """입력 차단으로 멈춘 분할 실행의 단계와, 분할 제안에서 멈췄으면 검증한 제안의 구간별 빠진 target 클래스.
+
+    제안은 커밋되지 않아 완료 표식이 없다. 품질 지적과 같이 두 파일을 한 번만 읽은 비공개 사본을 기존 제안 검사로 검증하고,
+    현재 계약의 분할 규칙과 같고 클래스 누락 경고만 있는 제안일 때만 지적을 돌려준다. 확인하지 못하면 지적은 None이다.
+    """
+    from .task_orchestrator import _check_names
+
+    split = record["steps"].get("split")
+
+    if split is None:
+        return None, None
+
+    _check_names(record)
+    _, tool, manager = service("tabular_split_review")._open(split["run_name"])
+    state = tool.states.load()
+
+    if state.status != "blocked_input" or state.current_stage != "propose_split":
+        return state.current_stage if state.status == "blocked_input" else None, None
+
+    task = manager.approvals.get_task(manager.scope_for("propose_split"))
+
+    if task is None:
+        return state.current_stage, None
+
+    import tempfile
+    from pathlib import Path
+    from .artifacts import _root
+    from .isolated_eda import _read_file
+    from .worker_paths import _path
+
+    folder = manager._output(task)
+    names = {"proposal.json": 8 * 1024 * 1024, "proposal.md": 65536}
+
+    # 근거를 검증하지 못해도 멈춘 단계는 확인된 값이다. 단계는 유지하고 지적만 보이지 않는다.
+    try:
+        if {path.name for path in _root(folder).iterdir()} != set(names):
+            return state.current_stage, None
+        with tempfile.TemporaryDirectory() as scratch:
+            copy = Path(scratch)
+            for name, maximum in names.items():
+                (copy / name).write_bytes(_read_file(_path(folder / name, directory=False), maximum))
+            proposal = tool._check_rows(copy, "propose_split")
+    except (OSError, ValueError, KeyError, TypeError):
+        return state.current_stage, None
+
+    if (proposal["rules"] != asdict(tool.contract.profile.split_rules) or proposal["status"] != "review_required"
+            or proposal["warnings"] != ["CLASS_MISSING_IN_SPLIT"]):
+        return state.current_stage, None
+
+    classes = {row["split"]: {str(item["label"])[:80] for item in row["classes"]} for row in proposal["summary"]}
+    every = sorted(set().union(*classes.values()))
+    missing = {name: [label for label in every if label not in classes[name]] for name in SPLIT_NAMES}
+    return state.current_stage, {name: labels for name, labels in missing.items() if labels} or None
+
+
+CLASS_MISSING_MESSAGE = ("분할 전 품질 검사는 통과했지만, 분할 제안에서 일부 구간에 target 클래스가 없어 멈췄습니다(현재 설정: 모든 구간에 "
+                         "모든 클래스 요구). 아래 구간·클래스를 확인하세요. 분할 비율·시드·group 기준을 바꾸거나, 클래스가 빠진 구간을 "
+                         "허용하려면 계획 양식의 '모든 구간에 모든 클래스 요구'를 끈 뒤 다시 확인하면 새 동의로 이어서 진행합니다.")
+SPLIT_REVIEW_MESSAGE = ("분할 제안 단계에서 멈췄습니다. 제안 근거를 확인하지 못했습니다. 분할 방식·비율·시드와 target·group 역할, "
+                        "'모든 구간에 모든 클래스 요구' 설정을 확인한 뒤 다시 확인하세요.")
+SPLIT_BLOCKED_MESSAGE = ("분할 단계에서 입력 차단으로 멈췄습니다(품질 검사 지적 아님). 역할·분할 기준을 확인한 뒤 다시 확인하면 새 동의로 "
+                         "이어서 진행합니다.")
+
+
 def blocked_problem(record, step_id):
-    """분할 전 품질 검사로 멈췄을 때 계획을 고쳐 이어 갈 수 있게 한다. CSV v1과 같은 문구를 쓴다."""
+    """분할 실행이 입력 차단으로 멈췄을 때 멈춘 단계에 맞는 원인을 보이고 계획을 고쳐 이어 갈 수 있게 한다.
+
+    품질 검사(audit)나 단계를 확인하지 못한 경우는 CSV v1과 같은 품질 문구를 쓴다. 분할 제안의 클래스 누락은 검증한 제안 근거로만 보인다.
+    """
     if step_id != "split":
         return None
+
+    stage, missing = shared._safe(lambda: split_stop(record)) or (None, None)
+
+    if stage == "propose_split":
+        if missing:
+            # 작업 기록에는 구간 이름만 둔다. 라벨 값은 화면에 보일 때 검증한 제안 근거에서 다시 읽는다(display_findings).
+            return TaskProblem("SPLIT_CLASS_MISSING", CLASS_MISSING_MESSAGE, retryable=True,
+                               detail={"CLASS_MISSING_IN_SPLIT": len(missing)},
+                               findings=[{"code": "CLASS_MISSING_IN_SPLIT", "subject": SPLIT_NAMES[name]} for name in missing])
+        return TaskProblem("SPLIT_REVIEW", SPLIT_REVIEW_MESSAGE, retryable=True)
+
+    if stage not in (None, "audit"):
+        return TaskProblem("SPLIT_BLOCKED", SPLIT_BLOCKED_MESSAGE, retryable=True)
 
     findings = shared._safe(lambda: quality_findings(record)) or []
     counts = {}
@@ -471,6 +559,23 @@ def blocked_problem(record, step_id):
                "분할 전 품질 검사가 검토 필요 또는 차단으로 중단했습니다. 지적 목록을 확인하지 못했습니다. 값이 하나뿐인 컬럼·높은 결측 "
                "컬럼을 제외하거나 역할·기준을 고친 뒤 다시 확인하세요.")
     return TaskProblem("QUALITY_REVIEW", message, retryable=True, detail=counts, findings=findings)
+
+
+def display_findings(record, findings):
+    """화면 표시용 지적. 클래스 누락은 검증한 제안 근거에서 구간별 빠진 라벨을 다시 읽어 붙이고 기록에는 저장하지 않는다.
+
+    다시 확인하지 못하면 저장된 구간 이름만 보인다(라벨을 추정해 채우지 않음).
+    """
+    if not any(item["code"] == "CLASS_MISSING_IN_SPLIT" for item in findings):
+        return findings
+
+    stage, missing = shared._safe(lambda: split_stop(record)) or (None, None)
+
+    if stage != "propose_split" or not missing:
+        return findings
+
+    return [{"code": "CLASS_MISSING_IN_SPLIT", "subject": SPLIT_NAMES[name] + " · " + label}
+            for name, labels in missing.items() for label in labels]
 
 
 def failure_hint(record, step_id, diagnostic):

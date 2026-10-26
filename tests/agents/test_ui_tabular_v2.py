@@ -104,6 +104,8 @@ class TabularV2ScreenTest(unittest.TestCase):
         task = self.task()
         self.assertEqual((task["kind"], task["phase"], task["draft"]["source"]), ("tabular_v2", "awaiting_review", "default"))
         self.assertTrue(any(item.value.startswith("권장안: 기본 계획 (로컬 LLM 권장안을 사용할 수 없었습니다") for item in app.text))
+        # 기존 분할 계약의 클래스 조건을 양식에서 보이고 바꿀 수 있다. 기본은 켜짐(모든 구간에 모든 클래스 요구)이다.
+        self.assertTrue(next(item for item in app.checkbox if item.label == "모든 구간에 모든 클래스 요구").value)
 
         # 기본 계획의 필수 질문(target 등)에 답하고 최종 계획을 확인한다.
         texts = [item.value for item in app.text]
@@ -133,6 +135,45 @@ class TabularV2ScreenTest(unittest.TestCase):
         self.assertEqual(self.calls.count("apply_preparation"), 1)
         self.assertEqual(self.source.read_bytes(), before)
         self.assertEqual(self.model_calls.call_count, 1)
+
+
+    def test_required_question_from_submitted_plan_shows_text_and_fix_without_changing_inputs(self):
+        """제출한 계획에서만 생긴 필수 질문(역할·분할 방식 불일치)은 문장·관련 항목·해결 방법으로 보이고 입력값은 그대로다."""
+        from src.agents.local_ollama import LocalProposalError
+
+        def refuse(payload, config):
+            raise LocalProposalError("OLLAMA_CONNECTION_FAILED")
+
+        self.model_calls.side_effect = refuse
+        app = self.start(self.source)
+        texts = [item.value for item in app.text]
+        for number in [text.split(".")[0] for text in texts if text.startswith("질문 ") and "[필수]" in text]:
+            box = next(item for item in app.selectbox if item.label == number + " 답변")
+            box.set_value(next((option for option in box.options if option.startswith("label")), None)
+                          or next(option for option in box.options if "(권장)" in option))
+        # 기본 계획은 group 역할이 없다. 분할 방식만 group으로 바꾸면 제출한 계획에서만 불일치 필수 질문이 생긴다.
+        next(item for item in app.selectbox if item.label == "분할 방식").set_value("group")
+        screens.preview(app)
+        self.assertFalse(app.exception, [item.value for item in app.exception])
+        self.assertTrue(any(item.value.startswith("답해야 하는 질문이 남아 있습니다.") for item in app.error))
+        texts = [item.value for item in app.text]
+        self.assertIn("남은 필수 질문(제출한 계획에서 새로 생긴 질문): group 분할에는 group 역할 컬럼이 필요합니다.", texts)
+        self.assertIn("관련 항목: split.strategy", texts)
+        self.assertTrue(any(text.startswith("해결: 이 질문은 위 질문 목록에 없습니다.") for text in texts))
+        # 질문 ID를 설정 경로로 해석한 표시(이전 결함)와 충돌 안내가 없다.
+        self.assertFalse(any("split.strategy.mismatch" in text or text.startswith("함께 쓸 수 없는 값") for text in texts), texts)
+        # 입력값은 보존되고 작업·동의는 만들지 않는다.
+        self.assertEqual(next(item for item in app.selectbox if item.label == "분할 방식").value, "group")
+        self.assertNotIn("C", self.task()["consents"])
+        self.assertFalse(any(item.label.startswith("위 최종 계획과 진행 범위에 동의") for item in app.checkbox))
+
+        # 사용자가 양식을 서로 맞게 고치면(여기서는 분할 방식을 되돌림) 같은 화면에서 확정 단계로 넘어간다.
+        next(item for item in app.selectbox if item.label == "분할 방식").set_value("random")
+        next(item for item in app.selectbox if item.label == "Train에 없던 범주 처리 (unknown_category)").set_value("ignore")
+        screens.preview(app)
+        self.assertFalse(app.exception, [item.value for item in app.exception])
+        self.assertFalse(any(item.value.startswith("답해야 하는 질문") for item in app.error), [item.value for item in app.error])
+        self.assertTrue(any(item.label.startswith("위 최종 계획과 진행 범위에 동의") for item in app.checkbox))
 
 
 if __name__ == "__main__":
