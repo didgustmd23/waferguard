@@ -138,6 +138,14 @@ Step 3을 재실행할 때는 새로운 `--output-dir`과 `--log-dir`을 지정�
 
 저장 묶음은 로컬 산출물입니다. 먼저 직접 생성한 신뢰한 묶음을 준비해야 합니다. joblib 복원은 코드 실행 위험이 있으므로 출처가 불명확한 파일에 신뢰 옵션을 사용하지 않습니다.
 
+사용 순서는 다음과 같습니다. 로컬 `ml310`에서만 검증했으며 다른 PC·OS의 환경 구성은 검증 범위가 아닙니다.
+
+1. [V2 Model Card 8.1절](model_card_v2.md#81-인계-기준)의 기준 커밋을 사용합니다.
+2. 두 묶음 폴더를 비공개 경로로 받아 `models/candidates/` 아래 원래 이름으로 둡니다. 같은 이름의 폴더가 있으면 덮어쓰지 말고 먼저 내용을 확인합니다.
+3. 신뢰 옵션을 쓰기 전에 각 파일의 SHA256을 Model Card 표와 대조합니다. 하나라도 다르면 복원하지 않습니다.
+4. Model Card 7절의 고정 버전과 정확히 같은 Python 3.10 환경을 사용합니다. 공통 `requirements.txt` 환경(Python 3.12)에서는 버전 검사로 복원이 거부됩니다.
+5. 아래 복원 확인에서 `status: passed`를 확인한 뒤 예측을 실행합니다.
+
 ```powershell
 python -m src.sensor_ml.inference.sensor_bundle --bundle-dir models/candidates/v2_fixed20_recall90 --trusted-local-bundle
 python -m src.sensor_ml.inference.predict_cli --bundle-dir models/candidates/v2_fixed20_recall90 --input data/processed/new_sensor20.csv --output logs/v2_new_recall90_predictions.csv --trusted-local-bundle
@@ -174,6 +182,8 @@ python -m src.sensor_ml.inference.predict_cli --bundle-dir models/candidates/v2_
 이미 완료한 저장 작업의 재현 절차입니다. 기존 폴더를 덮어쓰거나 기록 정리를 위해 재학습·재평가하지 마세요. 새 저장은 사용자 요청과 새 출력 폴더가 필요합니다. 현재 모델·문턱·환경·평가 범위·복원 결과는 [V2 Model Card](model_card_v2.md) 한 곳을 기준으로 합니다.
 
 90% 저장은 기존 학습 범위로 재학습하고, 80%는 신뢰한 90% 묶음의 분류기·전처리를 복사해 문턱만 바꿉니다. 원본 OOF 기록과 묶음의 experiment 사본은 보존하며 두 시나리오는 연구용·배포 미승인입니다.
+
+**옛 경로 제약:** 기존 `logs/v2_fixed_sensor20_oof/execution.json`은 저장 당시 위치 `D:\workspace\secom-waferguard`의 Train·후보 폴더 경로를 기록합니다. 90% 저장은 `--train`과 이 기록 경로가 같고 후보 폴더가 존재해야 하므로, 현재 위치에서 기존 OOF 폴더로 아래 명령을 실행하면 중단됩니다. 기록 경로를 수정하거나 옛 폴더를 만들어 맞추지 않습니다. 처음부터 재현할 때는 [실험 노트](EXPERIMENT_NOTES.md)의 고정 센서 재현 명령으로 새 후보·OOF 폴더를 만들고, `--oof-dir`와 `--bundle-dir`에 새 경로를 지정합니다. 이 재현 경로와 결과 일치는 아직 실행으로 확인하지 않았습니다.
 
 ### 1. 90% 시나리오 저장
 

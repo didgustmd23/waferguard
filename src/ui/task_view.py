@@ -10,7 +10,7 @@ import pandas as pd
 from src.agents import task_adapters, task_store
 from src.agents import task_orchestrator as orchestrator
 from src.agents.task_plan import PlanError, flatten
-from src.agents.task_report import code_label
+from src.agents.task_report import code_label, recommendation_notice
 from .path_picker import path_input
 from .progress_view import show_operation_progress
 from .runtime_notice import render_permissions, require_execution_permissions
@@ -489,9 +489,19 @@ def _render_review(st, task):
                     "새 시도를 진행합니다(같은 계획 자동 재실행 없음).")
             _render_hint(st, adapter, problem)
     # 작업 기록 값은 마크다운으로 해석하지 않는다. 사유는 고정 코드의 설명만 보여 준다.
-    st.text("권장안: " + ("로컬 LLM 권장안 (형식·허용값 검사 통과. 내용의 타당성은 확인되지 않았습니다)" if draft["source"] == "model"
-                       else "기본 계획 (로컬 LLM 권장안을 사용할 수 없었습니다: "
-                       + (code_label(task, draft.get("code")) or "사유 코드 확인 불가") + ")"))
+    notice = recommendation_notice(task)
+
+    if draft["source"] == "model":
+        st.text("권장안: 로컬 LLM 권장안 (형식·허용값 검사 통과. 내용의 타당성은 확인되지 않았습니다)")
+    elif "rejection" in draft or len(notice) > 1:
+        # 계획 검증으로 권장안 전체를 거부한 기록: 전처리 실패나 권장안 성공이 아니며 확인된 하위 원인만 고정 문구로 보인다.
+        st.text("권장안: 기본 계획 — " + notice[0])
+
+        for line in notice[1:]:
+            st.text(line)
+    else:
+        st.text("권장안: 기본 계획 (로컬 LLM 권장안을 사용할 수 없었습니다: "
+                + (code_label(task, draft.get("code")) or "사유 코드 확인 불가") + ")")
     st.text(MODEL_LIMITATION_NOTICE)
 
     coverage = draft.get("coverage")
