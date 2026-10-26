@@ -325,6 +325,78 @@ class TabularTaskV2SourceBindingTest(TabularTaskV2Fixture):
         self.assertNotIn("audit", self.calls)
 
 
+class TabularTaskV2RecommendationRejectionTest(TabularTaskV2Fixture):
+    def test_rejected_split_recommendation_is_stored_with_limited_diagnostic_and_explained(self):
+        """v2에서도 group·계층 분할 권장은 역할·분할 방식 불일치로 전체 거부되고, 저장·재조회한 제한 진단으로 안내한다."""
+        from src.agents.task_report import recommendation_notice
+
+        def requester(payload, config):
+            self.requests.append(payload)
+            return model_reply(ROLES, changes=[{"path": "split.strategy", "value": "group", "reason": "이유"},
+                                               {"path": "split.stratify", "value": True, "reason": "이유"}])
+
+        task = self.diagnosed(requester=requester)
+        stored = task_store.load_task(task["task_id"], root=self.store)
+        draft = stored["draft"]
+        self.assertEqual((draft["source"], draft["code"], draft["changes"]), ("default", "SPLIT_ROLE_MISMATCH", []))
+        self.assertEqual(draft["rejection"]["reason"], "SPLIT_STRATIFY_STRATEGY")
+        self.assertEqual(draft["rejection"]["from_model"], ["strategy", "stratify"])
+        self.assertEqual(draft["plan"], task_adapters.adapter("tabular_v2").base_plan(stored))
+        lines = recommendation_notice(stored)
+        self.assertTrue(lines[0].startswith("로컬 LLM 권장안 전체를 거부해 기본 계획에서 시작했습니다"), lines)
+        self.assertIn("권장안의 변경은 적용하지 않았습니다", lines[0])
+        self.assertTrue(any(line.startswith("세부 원인: target 기준 계층 분할을") for line in lines), lines)
+        self.assertFalse(any("역할" in line and "버려" in line for line in lines), lines)
+
+        # 하위 진단이 없는 이전 기록(SPLIT_INVALID)은 상세 원인 미확인으로 보이고, 정상 읽기·안내가 된다.
+        old = dict(stored, draft={key: value for key, value in dict(draft, code="SPLIT_INVALID").items() if key != "rejection"})
+        lines = recommendation_notice(old)
+        self.assertTrue(lines[0].startswith("로컬 LLM 권장안 전체를 거부해 기본 계획에서 시작했습니다"), lines)
+        self.assertIn("세부 원인: 확인되지 않음(이 기록에는 하위 진단이 없습니다)", lines)
+        # 형태가 맞지 않는(손상·변조된) 하위 진단은 해석하지 않고 상세 원인 미확인으로 보인다.
+        for broken in ("문자열", {"reason": "SPLIT_RATIO_SUM"}, dict(draft["rejection"], values=["x"])):
+            lines = recommendation_notice(dict(stored, draft=dict(draft, rejection=broken)))
+            self.assertIn("세부 원인: 확인되지 않음(하위 진단을 읽지 못했습니다)", lines)
+        # 모델 요청 자체가 실패한 기록은 '거부' 안내를 쓰지 않는다.
+        failed = dict(stored, draft={key: value for key, value in dict(draft, code="OLLAMA_CONNECTION_FAILED").items()
+                                     if key != "rejection"})
+        self.assertTrue(recommendation_notice(failed)[0].startswith("로컬 LLM 권장안을 쓰지 못해 기본 계획에서 시작했습니다"))
+
+    def test_tampered_stored_rejection_is_not_interpreted_after_reload(self):
+        """정상 비율 합 진단은 저장·재조회 후 그대로 보이고, 저장 기록을 변조하면 재조회 후 값을 해석하지 않는다."""
+        from src.agents.task_report import recommendation_notice
+        from tests.agents.test_task_orchestrator import UNREADABLE_REJECTION, tampered_rejections
+
+        def requester(payload, config):
+            self.requests.append(payload)
+            return model_reply(ROLES, changes=[{"path": "split.train_ratio", "value": 0.6, "reason": "이유"}])
+
+        task = self.diagnosed(requester=requester)
+        stored = task_store.load_task(task["task_id"], root=self.store)
+        draft = stored["draft"]
+        self.assertEqual((draft["code"], draft["rejection"]["reason"], draft["rejection"]["from_model"]),
+                         ("SPLIT_INVALID", "SPLIT_RATIO_SUM", ["train_ratio"]))
+        self.assertTrue(task_adapters.adapter("tabular_v2").rejection_valid(draft["code"], draft["rejection"]))
+        lines = recommendation_notice(stored)
+        self.assertIn("세부 원인: Train·Validation·Test 비율의 합이 1이 아닙니다", lines)
+        # 저장 후 다시 읽은 기록은 키가 정렬되므로 값의 위치가 아니라 포함 여부를 본다.
+        self.assertTrue(any(line.startswith("거부한 분할 값(병합 결과):") and "train_ratio=0.6 " in line for line in lines), lines)
+
+        cases = tampered_rejections(draft["rejection"])
+        for name in ("unknown_value_key", "ratio_text", "unknown_section"):
+            with self.subTest(case=name):
+                current = task_store.load_task(task["task_id"], root=self.store)
+                task_store.save_task(dict(current, draft=dict(current["draft"], rejection=cases[name])),
+                                     expected_revision=current["revision"], root=self.store)
+                lines = recommendation_notice(task_store.load_task(task["task_id"], root=self.store))
+                self.assertTrue(lines[0].startswith("로컬 LLM 권장안 전체를 거부해 기본 계획에서 시작했습니다"), lines)
+                self.assertEqual(lines[1:], [UNREADABLE_REJECTION])
+
+        for name, broken in cases.items():
+            with self.subTest(case=name):
+                self.assertEqual(recommendation_notice(dict(stored, draft=dict(draft, rejection=broken)))[1:], [UNREADABLE_REJECTION])
+
+
 class TabularTaskV2SplitClassTest(TabularTaskV2Fixture):
     """그룹 c(False만)가 한 구간을 채우면 그 구간에 True가 없다. 기본 조건(모든 구간에 모든 클래스)은 분할 제안에서 멈춘다."""
 

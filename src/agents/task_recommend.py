@@ -39,9 +39,23 @@ CODE_LABELS = {
 
 
 class RecommendationRejected(ValueError):
-    def __init__(self, code):
+    def __init__(self, code, rejection=None):
         super().__init__(code)
-        self.code = code
+        self.code, self.rejection = code, rejection
+
+
+def _rejection(detail, accepted):
+    """계획 검증이 남긴 제한된 진단을 기록용으로 고정한다. 하위 코드·검사한 계약 값·모델이 바꾼 키 이름만 둔다.
+
+    모델 원문·요약·이유 문장·질문은 넣지 않는다. 값은 어댑터가 허용 목록·타입·범위로 검사한 것만 받는다.
+    """
+    if type(detail) is not dict or set(detail) != {"section", "reason", "values", "omitted"}:
+        return None
+
+    changed = {item["path"] for item in accepted}
+    return {"section": detail["section"], "reason": detail["reason"], "values": dict(detail["values"]),
+            "omitted": list(detail["omitted"]),
+            "from_model": sorted(key for key in detail["values"] if detail["section"] + "." + key in changed)}
 
 
 def _value_schema(field):
@@ -287,7 +301,7 @@ def merge(base_plan, value, fields, validate):
     try:
         validate(plan)
     except PlanError as error:
-        raise RecommendationRejected(error.code) from error
+        raise RecommendationRejected(error.code, _rejection(error.detail, accepted)) from error
 
     asked, dropped = model_questions(questions, fields)
     return {"summary": summary, "notes": notes, "changes": accepted, "questions": asked, "dropped_questions": dropped,
@@ -324,6 +338,10 @@ def request(goal, source, base_plan, fields, validate, config, *, requester=None
         return dict(fallback, source="default", code=str(error) or "MODEL_REQUEST_FAILED")
     except RecommendationRejected as error:
         draft = dict(fallback, source="default", code=error.code)
+
+        if error.rejection is not None:
+            draft["rejection"] = error.rejection
+
         return on_rejected(draft) if on_rejected is not None else draft
     except (ValueError, TypeError, KeyError):
         return dict(fallback, source="default", code="RECOMMENDATION_RESPONSE_INVALID")

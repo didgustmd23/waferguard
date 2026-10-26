@@ -17,6 +17,52 @@ def code_label(record, code):
     return labels.get(code)
 
 
+SECTION_NAMES = {"split": "분할"}
+
+
+def recommendation_notice(record):
+    """기본 계획을 쓴 사유 안내(화면·보고서 공용). 모델 권장안을 쓴 기록은 빈 목록이다.
+
+    계획 검증으로 권장안을 거부한 기록은 전체 거부·변경 미적용과 확인된 하위 원인·검사한 계약 값만 고정 문구로 보인다.
+    하위 진단이 생기는 코드인데 진단이 없는 이전 기록은 상세 원인 미확인으로 둔다. 역할 등 버려진 변경을 추정하지 않는다.
+    저장된 진단은 표시 직전에 유형 어댑터의 허용 명세(rejection_valid)로 다시 확인한다. 명세가 없는 유형은 해석하지 않는다.
+    """
+    draft = record["draft"]
+
+    if draft["source"] == "model":
+        return []
+
+    code = draft.get("code")
+    label = code_label(record, code) or "사유 코드 확인 불가"
+    rejection = draft.get("rejection")
+    adapter = task_adapters.adapter(record["kind"])
+    detailed = getattr(adapter, "REJECTION_DETAIL_CODES", ())
+    valid = getattr(adapter, "rejection_valid", None)
+
+    if rejection is None and code not in detailed:
+        return ["로컬 LLM 권장안을 쓰지 못해 기본 계획에서 시작했습니다: " + label + "."]
+
+    lines = ["로컬 LLM 권장안 전체를 거부해 기본 계획에서 시작했습니다(권장안의 변경은 적용하지 않았습니다): " + label + "."]
+
+    if rejection is None:
+        return lines + ["세부 원인: 확인되지 않음(이 기록에는 하위 진단이 없습니다)"]
+
+    if valid is None or not valid(code, rejection):
+        # 손상·변조된 진단은 해석하지 않는다(값을 지우거나 바꿔 정상처럼 보이지 않음). 화면·보고서 조립은 멈추지 않는다.
+        return lines + ["세부 원인: 확인되지 않음(하위 진단을 읽지 못했습니다)"]
+
+    lines.append("세부 원인: " + (code_label(record, rejection["reason"]) or "분류되지 않음"))
+    section = SECTION_NAMES.get(rejection["section"], rejection["section"])
+    values = " · ".join(f"{key}={value}" for key, value in rejection["values"].items())
+    changed = ", ".join(rejection["from_model"]) or "없음"
+    lines.append(f"거부한 {section} 값(병합 결과): {values} (모델이 바꾼 항목: {changed})")
+
+    if rejection["omitted"]:
+        lines.append("검사를 통과하지 못해 기록하지 않은 항목: " + ", ".join(rejection["omitted"]))
+
+    return lines
+
+
 def build_facts(record):
     """어댑터 결과 요약에 공통 항목(목표·권장안 사용 여부·실행 연결)을 더한다."""
     adapter = task_adapters.adapter(record["kind"])
@@ -27,9 +73,7 @@ def build_facts(record):
     draft = record["draft"]
     cautions = list(facts["cautions"])
 
-    if draft["source"] != "model":
-        cautions.append("로컬 LLM 권장안을 쓰지 못해 기본 계획에서 시작했습니다: "
-                        + (code_label(record, draft.get("code")) or "사유 코드 확인 불가") + ".")
+    cautions += recommendation_notice(record)
 
     coverage = draft.get("coverage") or {}
 

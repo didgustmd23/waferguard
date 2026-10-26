@@ -7,6 +7,7 @@
 from dataclasses import asdict, fields
 import hashlib
 import json
+import math
 import re
 
 from src.preprocessing.split import SplitRules
@@ -47,7 +48,28 @@ CODE_LABELS = {
     "SPLIT_STRATEGY_MISSING": "분할 방식이 정해지지 않았습니다",
     "TIME_SPLIT_UNSUPPORTED": "통합 작업에서 지원하지 않는 time 분할입니다",
     "SPLIT_ROLE_MISMATCH": "역할과 분할 방식이 맞지 않습니다(group·target 역할 조건)",
+    # 분할 계약 거부의 하위 원인(split_violation). 확인된 조건만 이름을 붙이고 나머지는 미확인으로 둔다.
+    "SPLIT_RATIO_RANGE": "분할 비율 중 0 이하·1 이상이거나 유한수가 아닌 값이 있습니다",
+    "SPLIT_RATIO_SUM": "Train·Validation·Test 비율의 합이 1이 아닙니다",
+    "SPLIT_STRATIFY_STRATEGY": "target 기준 계층 분할을 random이 아닌 분할 방식과 함께 정했습니다",
+    "SPLIT_REASON_UNCONFIRMED": "분할 계약의 다른 조건에 맞지 않습니다(하위 원인을 분류하지 않음)",
 }
+STRATIFY_MESSAGE = "target 기준 계층 분할은 random 분할이고 target 역할이 있을 때만 쓸 수 있습니다."
+# 분할 거부 진단에 남길 수 있는 계약 항목. 자유 문자열(timestamp_format)·시드·역할 컬럼명은 넣지 않는다.
+SPLIT_DIAGNOSTIC_KEYS = ("train_ratio", "validation_ratio", "test_ratio", "strategy", "stratify")
+SPLIT_RATIO_KEYS = ("train_ratio", "validation_ratio", "test_ratio")
+
+# ==========================================
+# 분할 거부 진단의 허용 명세(생성·표시 공용)
+# - 구획은 split만, 하위 원인은 계획 검증 코드별 목록 안에서만 허용한다
+# - values·omitted는 SPLIT_DIAGNOSTIC_KEYS를 겹치지 않고 빠짐없이 나눈다. 값 조건은 _split_value_ok 하나로 판정한다
+# - from_model은 values에 있는 키 이름만 중복 없이 정렬해 둔다
+# - 하위 원인과 기록한 비율 값이 split_violation과 같은 식으로 맞아야 한다
+# - 비율 0·1을 values에 남기는 생성 정책(계약은 열린 구간)은 그대로 둔다
+# ==========================================
+REJECTION_KEYS = {"section", "reason", "values", "from_model", "omitted"}
+REJECTION_REASONS = {"SPLIT_INVALID": ("SPLIT_RATIO_RANGE", "SPLIT_RATIO_SUM", "SPLIT_REASON_UNCONFIRMED"),
+                     "SPLIT_ROLE_MISMATCH": ("SPLIT_STRATIFY_STRATEGY",)}
 
 
 def _label(field):
@@ -291,7 +313,104 @@ def check_split_roles(roles, split):
         raise SplitRoleError("SPLIT_ROLE_MISMATCH", "group 역할을 지정했으면 group 분할을 선택하세요.")
 
     if split.get("stratify") is True and (strategy != "random" or _label("target") not in assigned):
-        raise SplitRoleError("SPLIT_ROLE_MISMATCH", "target 기준 계층 분할은 random 분할이고 target 역할이 있을 때만 쓸 수 있습니다.")
+        raise SplitRoleError("SPLIT_ROLE_MISMATCH", STRATIFY_MESSAGE)
+
+
+def split_violation(split):
+    """분할 계약(SplitRules.__post_init__)과 같은 순서·같은 식으로 첫 실패 조건의 고정 하위 코드를 돌려준다. 통과하면 None.
+
+    예외 문장을 해석하지 않는다. 이름 붙인 세 조건 밖의 실패(분할 방식·시드·bool·시간 형식·버전)는 미확인 코드로 둔다.
+    """
+    values = {**{field.name: field.default for field in fields(SplitRules)}, **split}
+    ratios = (values["train_ratio"], values["validation_ratio"], values["test_ratio"])
+
+    if any(type(value) not in (int, float) or not math.isfinite(value) or not 0 < value < 1 for value in ratios):
+        return "SPLIT_RATIO_RANGE"
+
+    if not math.isclose(sum(ratios), 1.0, abs_tol=1e-12):
+        return "SPLIT_RATIO_SUM"
+
+    # 집합 대신 튜플로 비교해 해시할 수 없는 값도 TypeError 없이 미확인으로 둔다(SplitRules도 이 값을 거부한다).
+    if (type(values["strategy"]) is not str or values["strategy"] not in ("random", "group", "time")
+            or type(values["random_state"]) is not int or not 0 <= values["random_state"] < 2**32
+            or type(values["stratify"]) is not bool or type(values["require_all_classes"]) is not bool):
+        return "SPLIT_REASON_UNCONFIRMED"
+
+    if values["stratify"] and values["strategy"] != "random":
+        return "SPLIT_STRATIFY_STRATEGY"
+
+    try:
+        SplitRules(**split)
+    except (ValueError, TypeError):
+        return "SPLIT_REASON_UNCONFIRMED"
+
+    return None
+
+
+def _split_values(split):
+    """분할 거부 진단에 남길 계약 값. 허용 목록·타입·범위·유한성을 통과한 값만 남기고 나머지는 키 이름만 omitted로 둔다."""
+    values, omitted = {}, []
+
+    for key in SPLIT_DIAGNOSTIC_KEYS:
+        value = split.get(key)
+
+        if _split_value_ok(key, value):
+            values[key] = value
+        else:
+            omitted.append(key)
+
+    return values, omitted
+
+
+def _split_value_ok(key, value):
+    # 범위 비교를 먼저 해 큰 정수의 float 변환 오류(OverflowError) 없이 거부한다. bool은 비율로 받지 않는다.
+    if key in SPLIT_RATIO_KEYS:
+        return type(value) in (int, float) and 0 <= value <= 1 and math.isfinite(value)
+
+    if key == "strategy":
+        # 분할 방식 없음(None)은 계획 검증이 진단 없이 먼저 거부한다. 진단 값으로 생길 수 없어 허용하지 않는다.
+        return type(value) is str and value in ("random", "group", "time")
+
+    return key == "stratify" and type(value) is bool
+
+
+def _reason_matches(reason, values):
+    # 기록한 값으로 split_violation의 비율 조건을 다시 판정한다. 비율이 빠졌거나 0·1이면 범위 위반만 맞다.
+    inside = all(key in values and 0 < values[key] < 1 for key in SPLIT_RATIO_KEYS)
+
+    if reason == "SPLIT_RATIO_RANGE" or not inside:
+        return reason == "SPLIT_RATIO_RANGE" and not inside
+
+    summed = math.isclose(sum(values[key] for key in SPLIT_RATIO_KEYS), 1.0, abs_tol=1e-12)
+
+    if reason == "SPLIT_RATIO_SUM" or not summed:
+        return reason == "SPLIT_RATIO_SUM" and not summed
+
+    if reason == "SPLIT_STRATIFY_STRATEGY":
+        return values.get("stratify") is True and values.get("strategy") in ("group", "time")
+
+    return True
+
+
+def rejection_valid(code, rejection):
+    """저장된 분할 거부 진단이 생성 규칙의 허용 명세에 맞는지 확인한다(표시 직전 경계). 값을 고치거나 버리지 않는다."""
+    if type(code) is not str or type(rejection) is not dict or set(rejection) != REJECTION_KEYS:
+        return False
+
+    values, omitted, from_model = rejection["values"], rejection["omitted"], rejection["from_model"]
+
+    if (rejection["section"] != "split" or type(rejection["reason"]) is not str
+            or rejection["reason"] not in REJECTION_REASONS.get(code, ())
+            or type(values) is not dict or type(omitted) is not list or type(from_model) is not list
+            or not all(type(key) is str for key in [*values, *omitted, *from_model])):
+        return False
+
+    if (len(set(omitted)) != len(omitted) or set(values) & set(omitted) or set(values) | set(omitted) != set(SPLIT_DIAGNOSTIC_KEYS)
+            or not all(_split_value_ok(key, value) for key, value in values.items())
+            or from_model != sorted(set(from_model)) or not set(from_model) <= set(values)):
+        return False
+
+    return _reason_matches(rejection["reason"], values)
 
 
 def _profile_reason(names, roles, split):
@@ -326,7 +445,21 @@ def validate_plan(columns, plan):
         profile = build_profile(names, roles, purpose="split", profile_id="plan_check", split=split)
     except (ValueError, TypeError) as error:
         code = _profile_reason(names, roles, split)
-        raise PlanError(code, CODE_LABELS[code]) from error
+
+        if code != "SPLIT_INVALID":
+            raise PlanError(code, CODE_LABELS[code]) from error
+
+        # 분할 계약 거부는 계약과 같은 순서의 첫 실패 조건으로 하위 원인을 정한다. 역할·형식 오류의 우선순위는 그대로다.
+        reason = split_violation(split)
+        values, omitted = _split_values(split)
+        detail = {"section": "split", "reason": reason, "values": values, "omitted": omitted}
+
+        if reason == "SPLIT_STRATIFY_STRATEGY":
+            # group 등과 계층 분할의 조합은 역할·분할 방식 교차 검사와 같은 코드·고정 문구로 알린다(일반 SPLIT_INVALID에 가리지 않음).
+            raise PlanError("SPLIT_ROLE_MISMATCH", STRATIFY_MESSAGE, subjects=["split.strategy", "split.stratify"],
+                            detail=detail) from error
+
+        raise PlanError(code, CODE_LABELS[code], detail=detail) from error
 
     try:
         check_split_roles(roles, split)

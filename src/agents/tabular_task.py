@@ -75,6 +75,10 @@ HINTS = {
         "next": "새 작업을 시작해 해당 컬럼을 식별자로 지정하세요. 같은 설정으로 다시 진행하면 같은 실패가 납니다."},
 }
 CODE_LABELS = dict(rules.CODE_LABELS)
+# 권장안 거부 중 하위 진단(draft.rejection)이 생기는 코드. 진단이 없는 이전 기록은 상세 원인 미확인으로 안내한다.
+REJECTION_DETAIL_CODES = ("SPLIT_INVALID",)
+# 저장된 하위 진단을 표시하기 직전의 허용 명세 검사. 진단을 만든 표형 계획 규칙의 명세를 그대로 쓴다.
+rejection_valid = rules.rejection_valid
 REMOVED_LABELS = {"HIGH_MISSING_RATIO": "Train 결측 비율이 기준 초과", "CONSTANT_OR_ALL_MISSING": "Train에서 값이 한 종류뿐이거나 전부 결측"}
 OLD_CANDIDATE = "미산출(영향 집계 이전 버전으로 계산한 후보)"
 OLD_APPLICATION = "미산출(영향 집계 이전 버전의 적용 기록)"

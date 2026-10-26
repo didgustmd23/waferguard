@@ -44,6 +44,8 @@ ACTIONS = {}
 FINDING_LABELS = dict(shared.FINDING_LABELS, CLASS_MISSING_IN_SPLIT="구간에 없는 target 클래스")
 SPLIT_NAMES = {"train": "Train", "validation": "Validation", "test": "Test"}
 HINTS = shared.HINTS
+REJECTION_DETAIL_CODES = shared.REJECTION_DETAIL_CODES
+rejection_valid = shared.rejection_valid
 CODE_LABELS = dict(shared.CODE_LABELS, NUMERIC_ROLE_TYPE_UNSUPPORTED=(
     "수치형 역할에는 생성된 표에서 수치 자료형(정수·실수)으로 읽힌 컬럼만 지정할 수 있습니다. 숫자처럼 보이는 문자열(예: 앞자리 0)을 "
     "수치로 바꾸는 정비는 아직 지원하지 않습니다. 해당 컬럼은 범주형·식별자·제외 중에서 고르세요."))
