@@ -118,6 +118,10 @@ python -m src.wafer_dl.dataset `
 
 `index.jsonl`은 표본 ID·클래스·shard 파일·파일 내부 위치를 연결합니다. `cache.json`은 설정·분할 프로토콜·개수·파일 해시를 기록하고 `cache.md`는 사람이 읽는 요약입니다. 해시는 자동 기록하며 안전성 인증이나 사용자 수동 해시 관리 절차가 아닙니다.
 
+캐시는 실제 `split_manifest.jsonl`의 SHA-256도 기록합니다. 새 checkpoint는 이
+해시를 포함하며 Test 캐시의 값과 다르면 평가를 거부합니다. 이 필드가 없는
+이전 checkpoint는 새 계약으로 평가할 수 없으므로 새 checkpoint를 생성해야 합니다.
+
 ```python
 from torch.utils.data import DataLoader
 from src.wafer_dl.dataset import WaferDataset
@@ -142,6 +146,10 @@ Dataset은 읽기 전용 mmap을 최대 두 파일까지 유지하고 필요한 
 ## CNN 학습과 Validation
 
 `src/wafer_dl/models.py`의 작은 CNN은 2채널 입력과 9종 logits를 사용합니다. `src/wafer_dl/train.py`는 확인된 캐시의 Train으로 학습하고 Validation으로 매 epoch 분류 지표를 계산합니다. 기본 checkpoint 선택 기준은 Validation Macro-F1이며 클래스별 Precision·Recall·F1·지원 수와 혼동행렬을 함께 기록합니다. Recall을 checkpoint 선택의 우선 기준으로 삼을 실험은 설정의 `selection_metric`을 `macro_recall`로 바꿀 수 있습니다. 이 경우에도 Precision과 클래스별 혼동을 같이 살펴야 합니다. Train 기반 class-weighted loss는 희소 패턴을 고려하는 실험 출발점이지 Recall 개선을 보장하지 않습니다. 코드 구현과 실제 모델 성능 확인은 구분합니다.
+
+학습 중 클래스 가중치·모델 파라미터·logits·loss의 NaN/무한대를 검사해 발견 즉시
+중단합니다. epoch별 weighted loss는 배치 평균을 표본 수로 단순 평균하지 않고
+정답 클래스 가중치 합을 사용해 집계합니다.
 
 먼저 Train·Validation 입력 캐시가 존재하고 GPU/PyTorch 환경이 준비되어 있어야 합니다. 프로젝트 루트에서 실행합니다.
 

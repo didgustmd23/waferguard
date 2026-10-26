@@ -5,6 +5,7 @@ from collections import OrderedDict
 import json
 import os
 from pathlib import Path
+import re
 
 import numpy as np
 import torch
@@ -23,6 +24,7 @@ from .validate_canonical import CLASS_NAMES, decode_json, read_json, require, va
 # ==========================================
 class WaferDataset(Dataset):
     def __init__(self, cache_dir, split='train', allow_test=False):
+        """선택한 구간의 캐시와 원본 분할 manifest 지문을 검증한다."""
         require(split in ('train', 'validation', 'test'), 'INVALID_DATASET_SPLIT')
         require(split != 'test' or allow_test is True, 'TEST_DATASET_APPROVAL_REQUIRED')
         self.root = Path(cache_dir).resolve(strict=True)
@@ -34,6 +36,11 @@ class WaferDataset(Dataset):
                 report['split_protocol_id'] == completion.get('split_protocol_id'), 'CACHE_NOT_COMPLETE')
         require(report.get('class_mapping') == {str(i): name for i, name in enumerate(CLASS_NAMES)},
                 'INVALID_CACHE_CLASS_MAPPING')
+        source_split_hash = report.get('source_split_manifest_sha256')
+        require(type(source_split_hash) is str and
+                re.fullmatch(r'[0-9a-f]{64}', source_split_hash) is not None,
+                'INVALID_CACHE_SPLIT_MANIFEST_HASH')
+        self.source_split_manifest_sha256 = source_split_hash
         config = report['transform_config']
         size = config.get('target_size')
         require(type(size) is list and len(size) == 2 and

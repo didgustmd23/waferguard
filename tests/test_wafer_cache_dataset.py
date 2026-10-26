@@ -80,6 +80,11 @@ class CacheDatasetTest(unittest.TestCase):
         for split in ('train', 'validation'):
             dataset = WaferDataset(self.output, split)
             self.addCleanup(dataset.close)
+            cache_report = json.loads((self.output / 'cache.json').read_text(encoding='utf-8'))
+            self.assertEqual(
+                dataset.source_split_manifest_sha256,
+                cache_report['source_split_manifest_sha256'],
+            )
             for index in range(len(dataset)):
                 sample = dataset[index]
                 row = by_id[sample['sample_id']]
