@@ -14,6 +14,7 @@ from . import task_adapters, task_consent, task_recommend, task_store
 from .input_snapshot import Snapshot, create_snapshot, verify_snapshot
 from .llm_config import LocalModelConfig
 from .llm_proposal import validate_request_text
+from .perf_timing import timed
 from .task_plan import (PlanError, TaskProblem, answer_conflicts, apply_answers, changes_between, origins, signature,
                         unanswered_required)
 from .worker_contract import WorkerLimits
@@ -533,7 +534,8 @@ def _run_step(record, directory, step_id, module_id, decision, root):
                                 "attempt": record["attempt"], "decision": decision, "delegations": {}}
     record = _save(record, root)
 
-    adapter.create_step(record, directory, step_id, name)
+    with timed("create_step", step_id):
+        adapter.create_step(record, directory, step_id, name)
 
     record["steps"][step_id]["status"] = "created"
     record = _save(record, root)
@@ -548,7 +550,8 @@ def _drive(record, step_id, module_id, decision, name, root):
     service = adapter.service(module_id)
 
     for _ in range(40):
-        state = service.status(name)
+        with timed("status", step_id):
+            state = service.status(name)
 
         if state["status"] in TERMINAL:
             if state["status"] == "completed":
@@ -574,15 +577,22 @@ def _drive(record, step_id, module_id, decision, name, root):
                 expected["attempt"] = record["attempt"]
 
             authorize = task_consent.authorizer(record, decision, module_id, state["stage"], expected=expected)
-            result = service.record_delegated_approval(name, service.preview_approval(name), authorize=authorize)
+            # 측정 기록은 호출 순서를 바꾸지 않는다(미리보기를 먼저 계산한 뒤 위임 기록).
+            with timed("preview_approval", step_id):
+                preview = service.preview_approval(name)
+            with timed("record_delegated_approval", step_id):
+                result = service.record_delegated_approval(name, preview, authorize=authorize)
             record["steps"][step_id]["delegations"][state["stage"]] = {
                 "consent_id": record["consents"][decision]["consent_id"], "scope_sha256": result["scope_sha256"]}
             record = _save(record, root)
-            current = service.status(name)
-            service.next(name, expected_stage=current["stage"], expected_revision=current["revision"],
-                         approval_id=result["approval_id"])
+            with timed("status", step_id):
+                current = service.status(name)
+            with timed("next", step_id):
+                service.next(name, expected_stage=current["stage"], expected_revision=current["revision"],
+                             approval_id=result["approval_id"])
         elif "next" in actions:
-            service.next(name, expected_stage=state["stage"], expected_revision=state["revision"])
+            with timed("next", step_id):
+                service.next(name, expected_stage=state["stage"], expected_revision=state["revision"])
         else:
             raise TaskProblem("STATE_UNCLEAR", "처리 단계 상태가 진행되지 않았습니다. 결과 확인이 필요합니다.")
 

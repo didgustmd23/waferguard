@@ -76,7 +76,7 @@ HINTS = {
 }
 CODE_LABELS = dict(rules.CODE_LABELS)
 # 권장안 거부 중 하위 진단(draft.rejection)이 생기는 코드. 진단이 없는 이전 기록은 상세 원인 미확인으로 안내한다.
-REJECTION_DETAIL_CODES = ("SPLIT_INVALID",)
+REJECTION_DETAIL_CODES = ("SPLIT_INVALID", "SPLIT_ROLE_MISMATCH")
 # 저장된 하위 진단을 표시하기 직전의 허용 명세 검사. 진단을 만든 표형 계획 규칙의 명세를 그대로 쓴다.
 rejection_valid = rules.rejection_valid
 REMOVED_LABELS = {"HIGH_MISSING_RATIO": "Train 결측 비율이 기준 초과", "CONSTANT_OR_ALL_MISSING": "Train에서 값이 한 종류뿐이거나 전부 결측"}
@@ -756,8 +756,17 @@ def _processing(record, preprocessor, candidate):
         elif item is None:
             action = MISSING
         elif item["kind"] == "numeric":
-            parts = ["결측 대치 " + _number(item.get("impute")) if item.get("impute") is not None else "대치 없음"]
-            parts.append("clip " + str(item["clip"]) if item.get("clip") else "clip 없음")
+            # 대치값(Train 기준 값)과 대치 건수(후보 worker 집계)를 다른 항목으로 쓴다. 값을 건수처럼 보이게 하지 않는다.
+            if item.get("impute") is None:
+                parts = ["대치 없음"]
+            else:
+                parts = ["대치값 " + _number(item["impute"]) + " (" + tabular_options.value_text("numeric_imputation", rules_value["numeric_imputation"]) + ")"]
+
+                if effect is not None:
+                    parts.append(f"대치 건수 Train {effect['imputed']}칸(후보 집계)" if effect["imputed"]
+                                 else "Train 결측 0칸이라 대치 대상 없음(후보 집계)")
+
+            parts.append("clip 경계 [" + _number(item["clip"][0]) + ", " + _number(item["clip"][1]) + "]" if item.get("clip") else "clip 없음")
 
             if item.get("edges") is not None:
                 parts.append(f"구간 {len(item['edges']) + 1}개 ({rules_value['bin_encoding']}, 출력 {item['width']}열)")
@@ -767,12 +776,19 @@ def _processing(record, preprocessor, candidate):
             action = ", ".join(parts)
         else:
             missing_note = "(별도 결측 범주 포함)" if "missing" in item.get("categories", []) else ""
-            fill = _category_display(item.get("fill"))
-            action = f"범주 {len(item.get('categories', []))}개{missing_note} → 출력 {item.get('width', MISSING)}열, 결측 시 {fill!r}로 채움"
+            # 범주 결측은 숫자 대치가 아니다. 별도 결측 범주로 두는지 Train 최빈값으로 채우는지만 구분한다.
+            filling = ("결측은 별도 결측 범주로 표시" if item.get("fill") == "missing"
+                       else "결측은 Train 최빈값 '" + _category_display(item.get("fill")) + "'로 대치")
+            action = f"범주 {len(item.get('categories', []))}개{missing_note} → 출력 {item.get('width', MISSING)}열, {filling}"
+
+            if effect is not None:
+                action += f" · Train 결측 {effect['missing']}칸(후보 집계)"
 
         if effect is not None:
             if effect["clipped"]:
                 action += f" · Train 값 {effect['clipped']}개 clip"
+            elif effect["clipped"] == 0:
+                action += " · clip 설정됨, Train 변경 0개(후보 집계)"
 
             if effect["constant_after"] and effect["distinct_before"] > 1:
                 action += f" · 변환 후 상수(변환 전 {effect['distinct_before']}종, 정보 손실)"
@@ -936,8 +952,9 @@ def _problems(record, quality, renamed=None):
         feature = role in ("수치형", "범주형")
 
         if column["missing_count"]:
-            action = ("수치 결측을 Train " + preparation["numeric_imputation"] + " 값으로 대치" if role == "수치형" and preparation["numeric_imputation"] != "none"
-                      else "범주 결측을 " + preparation["categorical_imputation"] + " 방식으로 채움" if role == "범주형"
+            action = ("수치 결측을 " + tabular_options.value_text("numeric_imputation", preparation["numeric_imputation"]) + "으로 대치"
+                      if role == "수치형" and preparation["numeric_imputation"] != "none"
+                      else "범주 결측: " + tabular_options.value_text("categorical_imputation", preparation["categorical_imputation"]) if role == "범주형"
                       else "특징으로 쓰지 않음" if not feature else "대치하지 않음")
             rows.append({"구분": "결측", "컬럼": name, "내용": f"{column['missing_count']}행 ({column['missing_ratio']:.1%})", "처리": action})
 
@@ -1007,6 +1024,107 @@ def _measured(application, name, key):
     return OLD_APPLICATION if impact is None else impact[name][key]
 
 
+MEASURED = "적용 결과(적용 검증기가 출력 파일로 대조)"
+CANDIDATE_BASIS = "후보 worker 집계(부모는 형식·범위·결정적 관계만 확인했으며 원본 건수를 다시 센 것이 아님)"
+COMPARISON_NOTE = ("같은 대상 구간·컬럼 범위끼리만 처리 전/후를 같은 행에 둡니다. 입력 결측은 후보가 유지한 입력 특징 기준이고 출력 결측은 "
+                   "출력 열 기준이라, 제거·원핫·구간화로 열 구성이 달라질 수 있어 서로 차감하지 않습니다. Test 구간은 변환하지 않았으며 "
+                   "Test의 결측·분포는 이 보고서에서 새로 집계하지 않았습니다. 미산출은 괄호에 사유를 적었습니다.")
+
+
+def _comparison(record, features, candidate, application, partitions, expected, output_width):
+    """처리 전후 비교 행. 각 행에 대상 구간·컬럼 범위·단위·근거를 두고, 범위가 다른 값은 같은 행에 놓지 않는다.
+
+    후보 Train 집계(worker)와 적용 출력 대조 값, 진단(전체 입력) 값을 섞어 하나의 전후 변화로 쓰지 않는다. 새로 계산하지 않는다.
+    """
+    unknown = expected.get("missing")
+    applied = (application or {}).get("partitions", {})
+    removed = (candidate or {}).get("removed")
+    impact = (candidate or {}).get("impact")
+    retained = f"후보가 유지한 입력 특징 {len(impact)}개" if impact is not None else "후보가 유지한 입력 특징"
+    outputs = f"출력 열 {output_width}개"
+    # 후보·적용이 모두 영향을 기록했으면 적용 검증기가 후보 Train 합계와 적용 Train 합계의 일치를 확인했다.
+    crossed = unknown is None and (application or {}).get("impact") is not None
+
+    def row(item, scope, columns, unit, before, after, basis):
+        return {"항목": item, "대상 구간": scope, "컬럼 범위": columns, "단위": unit, "처리 전": before, "처리 후": after, "근거": basis}
+
+    def estimate(key):
+        if unknown:
+            return " / 후보 예상: " + unknown
+        return f" / 후보 예상 {expected[key]}" + (", 적용 Train 합계와 일치(적용 검증기 교차 대조)" if crossed else "(형식·범위만 검사)")
+
+    rows = []
+
+    for name in ("train", "validation", "test"):
+        item, state = partitions.get(name), applied.get(name)
+        rows.append(row("구간 행 수", name, "-", "행", f"{item['rows']}행 (분할 확정)" if item else MISSING,
+                        f"{state['rows']}행 변환" if state else "변환하지 않음",
+                        "전: 분할 확정 결과 / 후: " + MEASURED if state
+                        else "전: 분할 확정 결과 / 이 구간은 변환하지 않았고 결측·분포를 새로 집계하지 않음"))
+
+    rows += [
+        row("특징 → 출력 열", "train·validation", "특징 역할 컬럼 → 출력 열", "개 → 열", features, output_width,
+            "후: " + MEASURED + f" / 후보 예상 {(candidate or {}).get('output_feature_count', MISSING)}열"),
+        row("Train 기준 제거 특징", "train", "특징 역할 컬럼", "개", "-", len(removed) if removed is not None else MISSING,
+            "후보 기준(적용은 같은 기준을 그대로 사용, 재산출 없음)"),
+        row("결측 칸 (진단)", "전체 입력(분할 전)", f"모든 컬럼 {len(record['diagnostic']['columns'])}개", "칸",
+            sum(column["missing_count"] for column in record["diagnostic"]["columns"]),
+            "비교 대상 없음(이 범위 전체를 변환하지 않음: Test 구간·특징이 아닌 컬럼 포함)", "진단 집계(격리 worker, 전체 입력 기준)"),
+        row("입력 결측", "train", retained, "칸", OLD_CANDIDATE if impact is None else sum(item["missing"] for item in impact),
+            "-", CANDIDATE_BASIS),
+        row("입력 결측", "validation", retained, "칸",
+            "미집계(현재 결과에 Validation 처리 전 특징별 결측 집계가 없음)", "-", "-"),
+        row("대치 건수", "train", retained, "칸", "-", OLD_CANDIDATE if impact is None else sum(item["imputed"] for item in impact),
+            CANDIDATE_BASIS),
+    ]
+
+    for name in ("train", "validation"):
+        tail = estimate("missing_after") if name == "train" else ""
+        rows.append(row("출력 결측", name, outputs, "칸", "-", _measured(application, name, "missing_values"), MEASURED + tail))
+
+    for name in ("train", "validation"):
+        tail = estimate("clipped_values") if name == "train" else ""
+        rows.append(row("clipping으로 바뀐 값", name, "clip 설정 수치 특징", "값", "-", _measured(application, name, "clipped_values"),
+                        "적용 worker 집계(부모는 범위·일관성만 검사)" + tail))
+
+    for name in ("train", "validation"):
+        tail = estimate("constant") if name == "train" else ""
+        rows.append(row("변환 후 상수 특징", name, "출력 특징(특징별 출력 열 묶음)", "특징", "-",
+                        _measured(application, name, "constant_features"), MEASURED + tail))
+
+    for name in ("train", "validation"):
+        rows.append(row("미등록 범주 발생", name, "범주 특징(Train에 없던 값)", "건(특징별 발생 합계)", "-",
+                        _measured(application, name, "unknown_categories"), MEASURED + " / 고유 행 수가 아님"))
+
+    return rows
+
+
+IMAGE_NOTES = {
+    "missing.png": ("결측률 그래프 · 대상: 전체 입력(분할·대치 전), 특징 {features}개 · 선정: 결측률 내림차순 {shown} · "
+                    "결측이 없는 특징도 포함될 수 있음"),
+    "distributions.png": ("수치 특징 분포(히스토그램 30구간, 결측 제외) · 대상: 전체 입력(분할·대치·스케일 전), 수치 특징 {numeric}개 · "
+                          "선정: 입력 순서 앞쪽 {numeric_shown}"),
+    "correlations.png": ("Pearson 상관행렬 · 대상: 전체 입력(분할·대치 전), 쌍별 관측값 · 선정: 수치 특징 입력 순서 앞쪽 {numeric_shown} · "
+                         "수치 특징이 1개면 자기 상관만 표시되어 해석 대상이 아님"),
+}
+
+
+def _image_notes(plan, limit):
+    """분할 EDA 그래프 3종의 대상·시점·선정 기준. 개수는 확정 계획의 역할 수, 상한은 승인된 분할 설정값만 쓴다."""
+    roles = plan["roles"].values()
+    features = sum(1 for role in roles if role in ("수치형", "범주형"))
+    numeric = sum(1 for role in roles if role == "수치형")
+
+    def shown(total):
+        if type(limit) is not int:
+            return "일부(표시 상한: 이 보고서에서 미확인)"
+        return f"상위 {min(limit, total)}개 (상한 {limit})" if total else "해당 없음"
+
+    values = {"features": features, "numeric": numeric, "shown": shown(features),
+              "numeric_shown": shown(numeric).replace("상위 ", "") if type(limit) is int else shown(numeric)}
+    return {name: text.format(**values) for name, text in IMAGE_NOTES.items()}
+
+
 def report_facts(record):
     """검증된 결과 파일에서 보고서 사실만 모은다. 계산·추정은 하지 않는다.
 
@@ -1053,46 +1171,18 @@ def report_from_sources(record, sources):
     unknown = expected.get("missing")
     removed = (candidate or {}).get("removed")
     output_width = ((application or {}).get("binding") or {}).get("output_feature_count", MISSING)
-    measured = "적용 결과(적용 검증기가 출력 파일로 대조)"
-    estimate = "Train 후보 계산(적용 전, 격리 worker 집계)"
-    # 후보·적용이 모두 영향을 기록했으면 적용 검증기가 후보 Train 합계와 적용 Train 합계의 일치를 확인했다.
-    crossed = unknown is None and (application or {}).get("impact") is not None
-    expected_basis = ("예상: 후보 worker 집계, 적용 Train 합계와 일치(적용 검증기 교차 대조)" if crossed
-                      else "예상: 후보 worker 집계(형식·범위만 검사)")
-    comparison = [
-        {"항목": "입력 행", "전": summary["row_count"],
-         "후 (실측)": " · ".join(f"{name} {applied[name]['rows']}행 변환" for name in ("train", "validation") if name in applied) or MISSING,
-         "예상 (후보)": " · ".join(f"{name} {partitions[name]['rows']}행" for name in ("train", "validation", "test") if name in partitions) or MISSING,
-         "근거": "분할 확정 결과 / " + measured},
-        {"항목": "입력 특징 → 출력 열", "전": features, "후 (실측)": output_width,
-         "예상 (후보)": (candidate or {}).get("output_feature_count", MISSING), "근거": measured},
-        {"항목": "Train 기준 제거 특징", "전": "-", "후 (실측)": len(removed) if removed is not None else MISSING,
-         "예상 (후보)": len(removed) if removed is not None else MISSING, "근거": "적용은 후보 기준을 그대로 사용(재산출 없음)"},
-        {"항목": "결측 칸", "전": sum(column["missing_count"] for column in record["diagnostic"]["columns"]),
-         "후 (실측)": " · ".join(f"{name} {_measured(application, name, 'missing_values')}" for name in ("train", "validation")),
-         "예상 (후보)": unknown or f"train {expected['missing_after']}",
-         "근거": "전: 진단(전체 입력·모든 컬럼) / 후: 출력 특징 파일 대조 / " + expected_basis},
-        {"항목": "clipping으로 바뀐 값", "전": "-",
-         "후 (실측)": " · ".join(f"{name} {_measured(application, name, 'clipped_values')}" for name in ("train", "validation")),
-         "예상 (후보)": unknown or f"train {expected['clipped_values']}",
-         "근거": "후: 적용 worker 집계(부모는 범위·일관성만 검사) / " + expected_basis},
-        {"항목": "변환 후 상수 특징", "전": "-",
-         "후 (실측)": " · ".join(f"{name} {_measured(application, name, 'constant_features')}" for name in ("train", "validation")),
-         "예상 (후보)": unknown or f"train {expected['constant']}", "근거": "후: " + measured + " / " + expected_basis},
-        {"항목": "Train에 없던 범주 값", "전": "-",
-         "후 (실측)": " · ".join(f"{name} {_measured(application, name, 'unknown_categories')}" for name in ("train", "validation")),
-         "예상 (후보)": "-", "근거": measured},
-    ]
+    comparison = _comparison(record, features, candidate, application, partitions, expected, output_width)
+    split_rules = plan["split"]
+    split_rows = []
 
     for name in ("train", "validation", "test"):
         item = partitions.get(name)
-        classes = ", ".join(f"{entry['label']}: {entry['count']}" for entry in item["classes"]) if item and item.get("classes") else MISSING
-        state = applied.get(name)
-        comparison.append({"항목": f"{name} 구간", "전": f"{item['rows']}행 · 클래스 {classes}" if item else MISSING,
-                           "후 (실측)": f"{state['rows']}행 변환" if state else "변환 적용 안 함", "예상 (후보)": "-",
-                           "근거": "분할 확정 결과 / " + measured})
-
-    split_rules = plan["split"]
+        classes = ", ".join(f"{entry['label']}: {entry['count']}" for entry in item["classes"]) if item and item.get("classes") else "-"
+        split_rows.append({"구간": name, "요청 비율": split_rules.get(name + "_ratio", MISSING),
+                           "확정 비율": f"{item['ratio']:.3f}" if item and isinstance(item.get("ratio"), (int, float)) else MISSING,
+                           "행 수": item["rows"] if item else MISSING,
+                           "그룹 수": item["group_count"] if item and item.get("group_count") is not None else "-",
+                           "클래스": classes, "변환": "적용" if name in applied else "적용 안 함"})
     no_target = [] if any(role == "target" for role in plan["roles"].values()) else [
         "target(예측 대상) 없이 처리했습니다. 확정 때 사용자가 '예측 대상 없음'을 골랐습니다. 예측용이라면 이 결과를 쓰지 마세요."]
     warnings = []
@@ -1125,7 +1215,8 @@ def report_from_sources(record, sources):
         *no_target,
         *sources["notices"],
         "진단 집계(결측률·이상치 후보 등)는 전체 입력 기준입니다. 전처리 기준(대치값 등)은 Train 구간에서만 산출했습니다.",
-        "분할 EDA의 사람 검토 단계는 결정 C 동의로 위임 승인했습니다. 아래 그래프와 EDA 보고서로 확인하세요.",
+        "분할 EDA의 사람 검토 단계는 결정 C 동의로 위임 승인했습니다. EDA 결과는 이 보고서의 '그래프' 절과 기술 상세의 "
+        "보고서 경로에서 확인하세요.",
     ]
     files = [{"파일": name, "용도": FILE_USES.get(name, "설명 없음"), "크기(byte)": info["size"]}
              for name, info in sorted(sources["files"].items())]
@@ -1147,15 +1238,19 @@ def report_from_sources(record, sources):
     return {
         "title": "표형 전처리 결과 보고서",
         "highlights": highlights,
-        "lines": [f"분할: {split_rules['strategy']} {split_rules['train_ratio']}/{split_rules['validation_ratio']}/"
-                  f"{split_rules['test_ratio']} (시드 {split_rules['random_state']})."],
+        "lines": [f"분할: {split_rules['strategy']} · 요청 비율 {split_rules['train_ratio']}/{split_rules['validation_ratio']}/"
+                  f"{split_rules['test_ratio']} → 확정 비율 "
+                  + "/".join(row["확정 비율"] for row in split_rows) + " (train/validation/test, 행 기준, 시드 "
+                  f"{split_rules['random_state']}). group·시간 경계를 지키면 확정 비율이 요청과 다를 수 있습니다."],
+        "split_table": {"title": "분할 결과 (요청 설정과 확정 결과)", "rows": split_rows},
         "metrics": [{"label": "입력 행", "value": summary["row_count"]}, {"label": "입력 컬럼", "value": summary["column_count"]},
                     {"label": "특징 수 (전→후)", "value": f"{features} → {output_width}"},
                     {"label": "품질 검사", "value": (quality or {}).get("status", MISSING)}],
         "problems": problems, "processing": _processing(record, preprocessor, candidate),
-        "comparison": comparison, "comparison_note": f"후 (실측)은 {measured}, 예상 (후보)은 {estimate}입니다. 미산출은 괄호에 사유를 적었습니다.",
+        "comparison": comparison, "comparison_note": COMPARISON_NOTE,
         "warnings": warnings, "usage": usage,
         "images": [{"label": label} for label in sources["image_labels"]],
+        "image_notes": _image_notes(plan, sources.get("plot_limit")),
         "cautions": cautions, "files": files, "files_title": "결과 파일 (로컬 전달 묶음)",
         "technical": {**sources["input"], "bundle_path": bundle, "preprocessor_sha256": (candidate or {}).get("preprocessor_sha256"),
                       "candidate_schema": (candidate or {}).get("schema_version"), "application_schema": (application or {}).get("schema_version"),

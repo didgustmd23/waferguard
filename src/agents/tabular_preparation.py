@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import shutil
 
-from src.preprocessing.tabular_bundle import read_bundle_schema, iter_bundle_rows, inspect_bundle
+from src.preprocessing.tabular_bundle import read_bundle_schema, iter_bundle_rows, inspect_bundle, scoped_result
 from src.preprocessing.transform import _category
 from .artifacts import _root, _fingerprint
 from .tabular_source_contract import TabularPartitionInputContract
@@ -58,9 +58,16 @@ def checked_feature_types(part):
             warnings.append({"code": "FLOAT64_PRECISION_POSSIBLE", "column": name})
     if categorical_features:
         offsets = {item["name"]: i for i, item in enumerate(schema["columns"])}
-        for _, _, values in iter_bundle_rows(part.bundle_directory, expected=part.bundle):
-            for name in categorical_features:
-                _category(values[offsets[name]])
+
+        def categories_pass():
+            for _, _, values in iter_bundle_rows(part.bundle_directory, expected=part.bundle):
+                for name in categorical_features:
+                    _category(values[offsets[name]])
+            return True
+
+        # 같은 공개 호출 안에서는 같은 바이트·역할·검사 컬럼일 때만 범주 값 검사 통과를 공유한다(행은 보관하지 않음).
+        scoped_result(part.bundle_directory, expected=part.bundle,
+                      condition=("categories", part.roles_json, tuple(categorical_features)), compute=categories_pass)
     return warnings
 
 

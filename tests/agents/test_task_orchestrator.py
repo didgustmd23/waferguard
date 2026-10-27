@@ -177,14 +177,16 @@ class TaskOrchestratorTest(unittest.TestCase):
 
         # 검증된 결과 파일에서 재계산 없이 조립한다. 실측(적용 결과)과 예상(후보)을 나눈다(2026-10-22, 설계 7.22).
         self.assertEqual({item["label"]: item["value"] for item in facts["metrics"]}["입력 행"], 120)
-        comparison = {row["항목"]: row for row in facts["comparison"]}
-        applied = {name: int(text.split()[0][:-1]) for name, text in
-                   (part.split(" ", 1) for part in comparison["입력 행"]["후 (실측)"].split(" · "))}
-        self.assertEqual(set(applied), {"train", "validation"})
-        # 변환 후 결측 칸은 적용 검증기가 출력 파일로 대조한 실측치다(이전에는 미집계).
-        self.assertEqual(comparison["결측 칸"]["후 (실측)"], "train 0 · validation 0")
-        self.assertEqual(comparison["test 구간"]["후 (실측)"], "변환 적용 안 함")
-        self.assertTrue(comparison["train 구간"]["후 (실측)"].endswith("행 변환"))
+        # 비교 행은 대상 구간·컬럼 범위별로 나뉜다. 분할 행 수는 후보 예상치가 아니라 분할 확정 결과다.
+        partitions = {row["대상 구간"]: row for row in facts["comparison"] if row["항목"] == "구간 행 수"}
+        self.assertEqual(set(partitions), {"train", "validation", "test"})
+        self.assertTrue(partitions["train"]["처리 후"].endswith("행 변환"))
+        self.assertEqual(partitions["test"]["처리 후"], "변환하지 않음")
+        # 출력 결측은 적용 검증기가 출력 파일로 대조한 구간별 값이며 전체 입력 진단 결측과 같은 행에 두지 않는다.
+        output = {row["대상 구간"]: row["처리 후"] for row in facts["comparison"] if row["항목"] == "출력 결측"}
+        self.assertEqual(output, {"train": 0, "validation": 0})
+        self.assertEqual(next(row for row in facts["comparison"] if row["항목"] == "결측 칸 (진단)")["대상 구간"], "전체 입력(분할 전)")
+        self.assertEqual([row["구간"] for row in facts["split_table"]["rows"]], ["train", "validation", "test"])
         self.assertEqual({row["컬럼"]: row["역할"] for row in facts["processing"]}["label"], "target")
         self.assertTrue(facts["images"])
         # 2026-10-22부터 Test 미적용은 경고 절의 '미처리'로 분류한다.
@@ -635,7 +637,8 @@ class TaskOrchestratorTest(unittest.TestCase):
         ratios = (0.0, 0.15, 0.6, 0.7, 1.0, float("nan"), "0.6", True)
         seen = set()
 
-        for roles, train, test, strategy, stratify in product((ROLES, dict(ROLES, id="group")), ratios, (0.15, 1.0),
+        for roles, train, test, strategy, stratify in product((ROLES, dict(ROLES, id="group"), dict(ROLES, label="수치형")),
+                                                              ratios, (0.15, 1.0),
                                                               ("random", "group", "x"), (False, True, 1)):
             split = dict(SPLIT, train_ratio=train, test_ratio=test, strategy=strategy, stratify=stratify)
             try:
@@ -651,9 +654,10 @@ class TaskOrchestratorTest(unittest.TestCase):
             with self.subTest(split=split, roles=roles):
                 self.assertTrue(rejection_valid(code, rejection), rejection)
 
-        # 네 하위 원인과 omitted가 있는 진단이 모두 검사 대상에 들어갔는지 확인한다.
+        # 분할 계약 하위 원인 넷, 역할×분할 교차 하위 원인 셋과 omitted가 있는 진단이 모두 검사 대상에 들어갔는지 확인한다.
         self.assertEqual({reason for _, reason, _ in seen},
-                         {"SPLIT_RATIO_RANGE", "SPLIT_RATIO_SUM", "SPLIT_REASON_UNCONFIRMED", "SPLIT_STRATIFY_STRATEGY"})
+                         {"SPLIT_RATIO_RANGE", "SPLIT_RATIO_SUM", "SPLIT_REASON_UNCONFIRMED", "SPLIT_STRATIFY_STRATEGY",
+                          "SPLIT_ROLE_REQUIRED_MISSING", "SPLIT_GROUP_STRATEGY", "SPLIT_STRATIFY_TARGET_MISSING"})
         self.assertIn(True, {omitted for _, _, omitted in seen})
 
     def test_model_questions_are_advisory_and_out_of_schema_ones_are_dropped(self):

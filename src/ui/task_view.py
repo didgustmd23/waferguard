@@ -10,7 +10,7 @@ import pandas as pd
 from src.agents import task_adapters, task_store
 from src.agents import task_orchestrator as orchestrator
 from src.agents.task_plan import PlanError, flatten
-from src.agents.task_report import code_label, recommendation_notice
+from src.agents.task_report import chart_rows, code_label, recommendation_notice
 from .path_picker import path_input
 from .progress_view import show_operation_progress
 from .runtime_notice import render_permissions, require_execution_permissions
@@ -88,6 +88,41 @@ def _rows(st, rows):
         st.dataframe(pd.DataFrame([{key: str(value) for key, value in row.items()} for row in rows]), hide_index=True)
     else:
         st.text("(없음)")
+
+
+def _chart(st, chart):
+    """보고서 그래프 한 개. 값이 없으면 사유만 보인다. 이름·문구는 Markdown으로 해석하지 않고 축·범례 글자로만 쓴다."""
+    import altair as alt
+
+    st.text("■ " + chart["title"])
+
+    for text in chart["notes"]:
+        st.text("- " + text)
+
+    if not chart["rows"]:
+        return
+
+    category, values = chart["category"], chart["values"]
+    # 막대 순서는 사실의 행 순서 그대로다(구간 순서·건수 순위). 축 이름 길이는 사실에서 이미 제한했다.
+    order = [row[category] for row in chart["rows"]]
+    data = pd.DataFrame([{category: row[category], "계열": key, "값": row[key]} for row in chart["rows"] for key in values])
+    # 가로 막대(클래스처럼 이름이 긴 축)는 이름 축을 y에, 값을 x에 둔다. 계열이 여럿이면 같은 이름 안에 나란히 둔다.
+    across, along, offset = (alt.Y, alt.X, alt.YOffset) if chart["horizontal"] else (alt.X, alt.Y, alt.XOffset)
+    # 한글 라벨은 그릴 때 계산보다 넓어질 수 있어, 가로 막대의 이름 축 제목은 라벨 옆이 아니라 축 위에 가로로 둔다.
+    title = {"titleAngle": 0, "titleAlign": "right", "titleBaseline": "bottom", "titleX": 0, "titleY": -6} if chart["horizontal"] else {}
+    encoding = [across(category + ":N", sort=order, title=category, axis=alt.Axis(labelLimit=240, **title)),
+                along("값:Q", title=chart["unit"]),
+                alt.Color("계열:N", sort=list(values), title=None, legend=alt.Legend(orient="bottom"))]
+
+    if len(values) > 1:
+        encoding.append(offset("계열:N", sort=list(values)))
+
+    # 높이는 막대 영역만 정한다(fit-x). 기본 fit은 축·범례까지 이 높이에 넣어 가로 막대가 0px로 눌린다.
+    height = max(80, 28 * len(order) * len(values)) if chart["horizontal"] else 240
+    figure = alt.Chart(data).mark_bar().encode(*encoding, tooltip=[category + ":N", "계열:N", "값:Q"])
+    st.altair_chart(figure.properties(height=height, autosize=alt.AutoSizeParams(type="fit-x", contains="padding")),
+                    width="stretch")
+    _rows(st, chart_rows(chart))
 
 
 def render_task(st):
@@ -853,6 +888,30 @@ def _render_result(st, task):
     with st.expander("주요 문제 (진단·품질 검사)", expanded=legacy):
         _rows(st, facts["problems"])
 
+    # 처리 전 EDA·계획과 결정 절은 이를 주는 유형만 채운다. 저장된 문구는 Markdown으로 해석하지 않는다.
+    for key, heading, note in (("eda_tables", "#### 처리 전 데이터와 기본 EDA", facts.get("eda_note")),
+                               ("decision_tables", "#### 계획과 결정", None)):
+        if facts.get(key):
+            st.markdown(heading)
+
+            if note:
+                st.text(note)
+
+            for table in facts[key]:
+                st.text("■ " + table["title"])
+
+                for text in table["notes"]:
+                    st.text("- " + text)
+
+                _rows(st, table["rows"])
+
+    # 분할 표는 이를 주는 유형만 채운다. 이전 형식·다른 유형 보고서에는 없다.
+    if facts.get("split_table"):
+        st.markdown("#### 분할 결과")
+        # 저장된 사실 문자열은 Markdown으로 해석하지 않는다.
+        st.text(facts["split_table"]["title"])
+        _rows(st, facts["split_table"]["rows"])
+
     st.markdown("#### 컬럼별 처리와 제외 사유")
     _rows(st, facts["processing"])
     st.markdown("#### 실제 전후 비교")
@@ -864,6 +923,13 @@ def _render_result(st, task):
     st.caption("검증된 결과 파일에 없는 수치는 계산하지 않고 '미집계' 또는 '미산출(사유)'로 표시합니다.")
     st.markdown("#### 그래프")
 
+    # 보고서 그래프는 이를 주는 유형만 채운다. 저장 보고서의 값 표와 같은 사실로 그린다.
+    for chart in facts.get("charts") or []:
+        _chart(st, chart)
+
+    if facts.get("charts"):
+        st.text("■ 분할 EDA 그래프 (검증된 PNG)")
+
     # 저장된 경로를 다시 열지 않고, 표시할 때마다 기록 검사·결과 검증을 거친 그래프만 보여 준다.
     try:
         images = verified_images(task)
@@ -871,8 +937,14 @@ def _render_result(st, task):
         images = []
         st.text("그래프를 결과 검증으로 다시 확인하지 못해 표시하지 않습니다.")
 
+    notes = facts.get("image_notes") or {}
+
     for image in images:
         st.image(image["data"], caption=image["label"])
+
+        # 설명은 보고서 사실에 저장된 문구이므로 Markdown으로 해석하지 않는 글자로 보인다. 설명이 없으면 이름만 보인다.
+        if image["label"] in notes:
+            st.text(notes[image["label"]])
 
     if not images:
         st.text("(검증된 그래프 없음)")

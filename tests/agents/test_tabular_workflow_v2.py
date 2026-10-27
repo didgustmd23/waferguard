@@ -332,17 +332,40 @@ class TabularWorkflowServiceTest(TabularWorkflowFixture):
             with self.subTest(relative=relative, reseal=reseal):
                 rejected_after_verification(parent, relative, message, reseal=reseal)
 
+        # 분할 EDA 표는 같은 분할 실행의 run_eda 문맥에 묶인 고정 파일 전체를 검증한 바이트로 돌려준다.
+        from src.agents.adapters.tabular import REPORT_FILES
+
+        self.assertEqual(set(facts["eda"]), REPORT_FILES)
+        self.assertEqual(facts["split_rules"], asdict(self.profile.split_rules))
+        eda_path, _ = committed_file("split", "eda/missing.csv")
+        self.assertEqual(facts["eda"]["missing.csv"], eda_path.read_bytes())
+        real_eda, eda_calls = service_module._committed_eda, []
+        original = eda_path.read_bytes()
+
+        def tampered_eda(output, context, profile, rows):
+            eda_calls.append(context.tool_id)
+            eda_path.write_bytes(original[:-1] + (b"9" if original[-1:] != b"9" else b"8"))
+            return real_eda(output, context, profile, rows)
+
+        try:
+            with patch.object(service_module, "_committed_eda", tampered_eda):
+                with self.assertRaisesRegex(ValueError, "보고 근거 파일이 완료 기록과 다릅니다"):
+                    report_sources(runs, source_id)
+        finally:
+            eda_path.write_bytes(original)
+        self.assertEqual(eda_calls, ["run_eda"])
+
         # R-1: 보고 근거로 받은 후보 증거가 승인된 적용 계약의 후보와 다르면 근거를 돌려주지 않는다.
         swapped = []
 
         def other_candidate(*args, **kwargs):
             result = real_pipeline(*args, **kwargs)
-            if sys._getframe(1).f_code.co_name != "report_sources":
+            if sys._getframe(1).f_code.co_name != "_report_sources":
                 return result
             swapped.append(args)
             return result[:3] + (replace(result[3], output_columns_json="[]"),) + result[4:]
 
-        # side_effect를 쓰지 않고 함수로 바꿔 호출자 프레임이 바로 report_sources가 되게 한다.
+        # side_effect를 쓰지 않고 함수로 바꿔 호출자 프레임이 바로 _report_sources(검증 범위 안의 본문)가 되게 한다.
         with patch.object(service_module, "_pipeline", other_candidate):
             with self.assertRaisesRegex(ValueError, "승인된 적용 계약의 후보와 다릅니다"):
                 report_sources(runs, source_id)

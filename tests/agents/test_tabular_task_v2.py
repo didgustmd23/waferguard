@@ -123,15 +123,39 @@ class TabularTaskV2Test(TabularTaskV2Fixture):
         self.assertTrue(Path(task["report"]["path"]).is_file())
         self.assertIn("로컬 전달 묶음", task["report"]["text"])
         self.assertEqual({item["label"]: item["value"] for item in facts["metrics"]}["입력 행"], 6)
-        comparison = {row["항목"]: row for row in facts["comparison"]}
-        self.assertEqual(comparison["입력 행"]["후 (실측)"], "train 3행 변환 · validation 2행 변환")
-        self.assertTrue(any(line.startswith("입력 해석: ") for line in facts["lines"]))
+        partitions = {row["대상 구간"]: row["처리 후"] for row in facts["comparison"] if row["항목"] == "구간 행 수"}
+        self.assertEqual(partitions, {"train": "3행 변환", "validation": "2행 변환", "test": "변환하지 않음"})
+        # 원래 입력 해석 키는 본문에 두지 않고 기술 상세에만 둔다. 사용자용 설명은 참고 사항에 있다.
+        self.assertFalse(any("read_spec" in line or "header_repair=" in line for line in facts["lines"]))
+        self.assertTrue(any(text.startswith("입력 해석: ") for text in facts["cautions"]))
+        self.assertIn("read_spec", facts["technical"])
+        # 그래프 설명의 표시 상한은 승인된 분할 설정값이다.
+        self.assertIn(f"상한 {self.profile.max_plot_features}", facts["image_notes"]["missing.png"])
         self.assertTrue(any("load_handoff_partition" in line for line in facts["usage"]))
         uses = {row["파일"]: row["용도"] for row in facts["files"]}
         self.assertIn("원래 자료형 보존", uses["prepared/train_rows.json"])
         self.assertEqual(facts["technical"]["source_contract_id"], source_id)
         self.assertEqual(len(facts["technical"]["manifest_sha256"]), 64)
         self.assertTrue(any(row["컬럼"] == "id" and row["역할"] == "식별자" for row in facts["processing"]))
+        # 처리 전 EDA·계획과 결정 절은 검증된 분할 EDA·진단·실행 값으로 채우고 화면과 같은 사실을 Markdown에 쓴다.
+        eda = {table["title"]: table for table in facts["eda_tables"]}
+        self.assertEqual({row["항목"]: row["값"] for row in eda["입력 개요"]["rows"]}["행 수"], 6)
+        self.assertEqual(eda["컬럼별 결측·고유값·비유한 값"]["rows"][0]["컬럼"], "x")
+        self.assertIn("분할 전 전체 입력", facts["eda_note"])
+        settings = {row["설정 이름"]: row for row in facts["decision_tables"][1]["rows"]}
+        self.assertEqual(settings["numeric_imputation"]["실행 기록 대조"], "실행 값과 같음")
+        self.assertEqual(settings["train_ratio"]["실행 기록 대조"], "실행 값과 같음")
+        self.assertIn("## 처리 전 데이터와 기본 EDA", task["report"]["text"])
+        self.assertIn("### 최종 실행 설정 (분할·전처리)", task["report"]["text"])
+        self.assertTrue(any("'처리 전 데이터와 기본 EDA' 절" in text for text in facts["cautions"]))
+        # 보고서 그래프는 분할 결과 표·target 표와 같은 값이며 Markdown에 값 표와 텍스트 막대로 남는다.
+        split_chart, target_chart = facts["charts"]
+        self.assertEqual([(row["구간"], f"{row['확정 비율']:.3f}", row["행 수"]) for row in split_chart["rows"]],
+                         [(row["구간"], row["확정 비율"], row["행 수"]) for row in facts["split_table"]["rows"]])
+        target_rows = next(table for table in facts["eda_tables"] if table["title"] == "target 클래스 분포")["rows"]
+        self.assertEqual([row["건수"] for row in target_chart["rows"]], [row["건수"] for row in target_rows])
+        self.assertIn("### 요청·확정 분할 비율 (구간별)", task["report"]["text"])
+        self.assertIn("### target 클래스 분포 (전체 입력, 분할 전)", task["report"]["text"])
         # 결과 파일은 자료형을 보존한 reader로 바로 쓸 수 있다.
         features, rows = load_handoff_partition(Path(facts["outputs"]["bundle"]), "train")
         self.assertEqual(rows["id"].tolist(), ["0012", "0034", "0056"])

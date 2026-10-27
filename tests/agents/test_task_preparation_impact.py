@@ -297,10 +297,12 @@ class PlanPreviewAndImpactFlowTest(unittest.TestCase):
         task = orchestrator.approve_apply(task["task_id"], root=self.store)
         self.assertEqual(task["phase"], "completed", task.get("problem"))
         facts = task["report"]["facts"]
-        comparison = {row["항목"]: row for row in facts["comparison"]}
-        self.assertIn("validation", comparison["변환 후 상수 특징"]["후 (실측)"])
-        self.assertTrue(comparison["변환 후 상수 특징"]["예상 (후보)"].startswith("train "))
-        self.assertNotIn("미집계", comparison["결측 칸"]["후 (실측)"])
+        constant = {row["대상 구간"]: row for row in facts["comparison"] if row["항목"] == "변환 후 상수 특징"}
+        self.assertEqual(set(constant), {"train", "validation"})
+        self.assertIn("후보 예상", constant["train"]["근거"])
+        self.assertNotIn("후보 예상", constant["validation"]["근거"])
+        output = [row["처리 후"] for row in facts["comparison"] if row["항목"] == "출력 결측"]
+        self.assertTrue(output and all(type(value) is int for value in output))
         processing = {row["컬럼"]: row for row in facts["processing"]}
         self.assertEqual(processing["time"]["제외 사유"], "모델 권장으로 제외(모델 의견: 의미에 맞는 역할)")
         self.assertIn("보존", processing["label"]["제외 사유"])
