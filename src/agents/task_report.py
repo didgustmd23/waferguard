@@ -100,7 +100,9 @@ def _plain(value):
     import html
 
     # 백슬래시를 먼저 바꿔야 뒤에 붙이는 이스케이프가 원래 글자의 백슬래시와 합쳐지지 않는다.
-    text = html.escape(str(value).replace("\\", "\\\\")).replace("\r", " ").replace("\n", " ").replace("|", "/")
+    # 따옴표는 태그 밖 본문에서 해석되지 않으므로 그대로 둔다(quote=True면 &#x27;의 #가 아래에서 다시 escape되어 표시가 깨진다).
+    # <, >, &는 계속 바꿔 HTML로 해석되지 않게 한다.
+    text = html.escape(str(value).replace("\\", "\\\\"), quote=False).replace("\r", " ").replace("\n", " ").replace("|", "/")
 
     for character in "`*_[]#!":
         text = text.replace(character, "\\" + character)
@@ -117,13 +119,32 @@ def _table(rows):
             *["| " + " | ".join(_plain(row[key]) for key in keys) + " |" for row in rows]]
 
 
-TECHNICAL_HEAD = "## 기술 상세\n<details><summary>경로·해시·내부 작업 (펼치기)</summary>\n\n```json\n"
+BAR_WIDTH = 20
+
+
+def _bars(chart):
+    """그래프 값 행에 계열별 텍스트 막대 열을 더한다. 막대 길이는 그래프 안 최댓값 기준이며 값 자체는 바꾸지 않는다.
+    0보다 큰 값은 최소 한 칸이라 작은 클래스·구간도 0처럼 보이지 않는다."""
+    peak = max((row[key] for row in chart["rows"] for key in chart["values"]), default=0)
+    return [dict(row, **{"막대 " + key: "█" * max(1, round(BAR_WIDTH * row[key] / peak)) if row[key] > 0 else ""
+                         for key in chart["values"]}) for row in chart["rows"]]
+
+
+def chart_rows(chart):
+    """그래프 값 표의 표시용 행. 사실이 자릿수(digits)를 정한 열만 고정 소수로 쓰고, 정하지 않은 이전 사실은 그대로다.
+    화면 표와 Markdown 표가 같이 쓴다. 그래프에 그리는 값은 바꾸지 않는다."""
+    digits = chart.get("digits") or {}
+    return [{key: f"{value:.{digits[key]}f}" if key in digits else value for key, value in row.items()} for row in chart["rows"]]
+
+
+TECHNICAL_HEAD ="## 기술 상세\n<details><summary>경로·해시·내부 작업 (펼치기)</summary>\n\n```json\n"
 TECHNICAL_TAIL = "\n```\n\n</details>"
 WARNING_KINDS = ("정보 손실", "미처리", "미검증")
 
 
 def render_markdown(facts):
-    """공통 절 구성: 핵심 결과·주요 문제 → 컬럼별 처리 → 실제 전후 비교 → 경고 → 활용 → 접힌 기술 상세.
+    """공통 절 구성: 핵심 결과·주요 문제 → (처리 전 EDA·계획과 결정·분할, 유형이 줄 때) → 컬럼별 처리 → 실제 전후 비교 →
+    그래프(보고서 그래프 값 표, 유형이 줄 때 → 검증된 PNG 이름) → 경고 → 활용 → 접힌 기술 상세.
 
     유형 어댑터가 준 사실만 배치한다. 이전 형식 사실(highlights·warnings·usage 없음)은 해당 줄을 비워 둔다.
     입력 유래 문자열은 _plain으로 한 줄 글자로 바꾼다. 절 제목만 고정 Markdown이다.
@@ -132,10 +153,39 @@ def render_markdown(facts):
              "## 핵심 결과와 주요 문제", *["- " + _plain(text) for text in facts.get("highlights", [])], "",
              _plain(" · ".join(f"{item['label']}: {item['value']}" for item in facts["metrics"])), "",
              *[_plain(text) for text in facts.get("lines", [])], "",
-             "### 주요 문제", *_table(facts["problems"]), "",
-             "## 컬럼별 처리와 제외 사유", *_table(facts["processing"]), "",
-             "## 실제 전후 비교", *([_plain(facts["comparison_note"]), ""] if facts.get("comparison_note") else []), *_table(facts["comparison"]), "",
-             "## 그래프", *(["- " + _plain(item["label"]) for item in facts["images"]] or ["(검증된 그래프 없음)"]), ""]
+             "### 주요 문제", *_table(facts["problems"]), ""]
+    # 처리 전 EDA·계획과 결정 절은 이를 주는 유형 어댑터만 채운다. 표마다 제목·대상·선정 안내(notes)·행을 둔다.
+    for key, heading, note in (("eda_tables", "## 처리 전 데이터와 기본 EDA", facts.get("eda_note")),
+                               ("decision_tables", "## 계획과 결정", None)):
+        if facts.get(key):
+            lines += [heading, *([_plain(note), ""] if note else [])]
+
+            for table in facts[key]:
+                lines += ["### " + _plain(table["title"]), *["- " + _plain(text) for text in table["notes"]], "", *_table(table["rows"]), ""]
+
+    # 분할 표·그래프 설명은 이를 주는 유형 어댑터만 채운다. 없는 이전 형식·다른 유형 사실은 기존 줄 그대로 둔다.
+    split = facts.get("split_table")
+
+    if split:
+        lines += ["## 분할 결과", _plain(split["title"]), "", *_table(split["rows"]), ""]
+
+    notes = facts.get("image_notes") or {}
+    lines += ["## 컬럼별 처리와 제외 사유", *_table(facts["processing"]), "",
+              "## 실제 전후 비교", *([_plain(facts["comparison_note"]), ""] if facts.get("comparison_note") else []), *_table(facts["comparison"]), "",
+              "## 그래프"]
+    # 보고서 그래프(charts)는 이를 주는 유형만 채운다. 화면 그래프와 같은 값을 표와 텍스트 막대로 남긴다.
+    for chart in facts.get("charts") or []:
+        lines += ["### " + _plain(chart["title"]), *["- " + _plain(text) for text in chart["notes"]], ""]
+
+        if chart["rows"]:
+            lines += ["- 막대: 이 그래프의 최댓값을 " + str(BAR_WIDTH) + "칸으로 한 텍스트 막대입니다(화면 그래프와 같은 값).", "",
+                      *_table(chart_rows(dict(chart, rows=_bars(chart)))), ""]
+
+    if facts.get("charts"):
+        lines += ["### 분할 EDA 그래프 (검증된 PNG, 화면에서 표시)"]
+
+    lines += [*(["- " + _plain(item["label"]) + (" — " + _plain(notes[item["label"]]) if item["label"] in notes else "")
+                 for item in facts["images"]] or ["(검증된 그래프 없음)"]), ""]
     warnings = facts.get("warnings", [])
     lines += ["## 경고: 정보 손실·미처리·미검증"]
 

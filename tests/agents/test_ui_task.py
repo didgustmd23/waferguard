@@ -95,6 +95,11 @@ class TaskScreenTest(unittest.TestCase):
                       "#### 경고: 정보 손실·미처리·미검증", "#### 참고 사항", "#### 적용 구간과 결과 파일 활용"):
             self.assertIn(title, headings)
         self.assertTrue(app.dataframe)
+        # 보고서 그래프 2종(요청·확정 분할 비율, target 분포)은 저장 보고서의 같은 사실로 화면에 그린다.
+        texts = [item.value for item in app.text]
+        for title in ("■ 요청·확정 분할 비율 (구간별)", "■ target 클래스 분포 (전체 입력, 분할 전)", "■ 분할 EDA 그래프 (검증된 PNG)"):
+            self.assertIn(title, texts)
+        self.assertEqual(len(app.get("vega_lite_chart")), 2)
         self.assertFalse(any(self.root.name in str(item.value) for item in app.text if "보고서 파일" not in item.value))
         self.assertEqual(self.calls.count("apply_preparation"), 1)
         self.assertEqual(self.model_calls.call_count, 1)

@@ -9,10 +9,12 @@ from dataclasses import asdict, replace
 import json
 
 from src.preprocessing.input_profile import bind_input_profile_plan, input_profile_pipeline
+from src.preprocessing.tabular_bundle import verification_scope
 from . import llm_task_assist as rules
 from . import llm_workflow_store as plans
 from . import pipeline_approval_cli as diagnostics
 from . import tabular_input_flow as flow
+from . import tabular_report_evidence as evidence
 from . import tabular_task as shared
 from .csv_workflow_creation import _pipeline
 from .csv_workflow_proposal_catalogue import workflow_proposal_specifications
@@ -404,6 +406,12 @@ def check_saved_plan(record, directory):
 
 def create_step(record, directory, step_id, name):
     """기존 결합·생성 API로 한 단계를 만든다. 승인·실행은 공통 조정기가 한다."""
+    # 결합과 생성 직전 재결합이 완료 단계 증거를 다시 검증한다. 이 호출 안에서만 같은 표형 묶음 검증을 공유한다.
+    with verification_scope():
+        return _create_step(record, directory, step_id, name)
+
+
+def _create_step(record, directory, step_id, name):
     saved = check_saved_plan(record, directory)
     completed = {step: item["run_name"] for step, item in record["steps"].items() if item["status"] == "completed"}
     binding = bind_workflow_step(saved["proposal"], **saved["context"], step_id=step_id,
@@ -644,13 +652,39 @@ def report_facts(record):
         "preprocessor": facts["preprocessor"], "application": facts["application"], "files": handoff["files"],
         "bundle": handoff["directory"], "reports": facts["reports"],
         "image_labels": [item["label"] for item in images(record)], "renamed": _renamed(record),
-        "notices": input_notices(record),
+        "notices": input_notices(record), "plot_limit": facts["plot_limit"],
         "input": {"source_path": record["source"]["path"], "snapshot_sha256": record["snapshot"]["snapshot"]["sha256"],
                   "source_contract_id": source.source_id, "read_spec": facts["source"]["read_spec"],
                   "inspection_id": facts["source"]["inspection_id"], "manifest_sha256": handoff["manifest_sha256"]}})
     report["files"] = [dict(row, 용도=FILE_USES.get(row["파일"], row["용도"])) for row in report["files"]]
     report["usage"].insert(2, "rows.json은 target·식별자의 원래 자료형(예: 문자열 '0012', 정수 1)을 보존합니다. 전달 묶음의 "
                               "load_handoff_partition으로 읽으면 특징 표와 같은 행 순서·원래 자료형으로 받습니다(README 예제).")
-    report["lines"].append("입력 해석: " + ", ".join(f"{key}={value}" for key, value in sorted(facts["source"]["read_spec"].items()))
-                           + f" · 생성된 표 {facts['source']['rows']}행·{len(facts['source']['columns'])}열")
+    # 입력 해석 설정의 사용자용 설명은 참고 사항(input_notices)에 있고 원래 키(read_spec)는 기술 상세에 있다. 본문에는 생성 결과만 둔다.
+    report["lines"].append(f"생성된 표: {facts['source']['rows']}행·{len(facts['source']['columns'])}열 (입력 해석 설정은 참고 사항 참조)")
+    # 처리 전 EDA·계획과 결정 절은 v2 보고 근거(검증한 같은 EDA 바이트·승인된 실행 값)로만 만든다. v1·배열 보고서에는 없다.
+    plan = shared._plan(record)
+    report["eda_tables"] = evidence.eda_tables(facts["eda"], record["diagnostic"], plan)
+    report["eda_note"] = evidence.EDA_SCOPE_NOTE
+    report["decision_tables"] = evidence.decision_tables(
+        record, plan, shared._origin, _recommendation(record), facts["candidate"], facts["application"],
+        shared._expected_impact(facts["candidate"], facts["preprocessor"]), facts["split_rules"])
+    # 보고서 그래프는 위 분할 결과 표·target 표와 같은 검증된 값으로만 만든다. 그림 파일을 새로 쓰지 않는다.
+    report["charts"] = [evidence.split_chart(plan["split"], facts["proposal"]), evidence.target_chart(facts["eda"])]
+    report["cautions"] = [EDA_CAUTION if text.startswith("분할 EDA의 사람 검토 단계") else text for text in report["cautions"]]
     return report
+
+
+EDA_CAUTION = ("분할 EDA의 사람 검토 단계는 결정 C 동의로 위임 승인했습니다. 처리 전 EDA 요약은 이 보고서의 '처리 전 데이터와 기본 EDA' 절에, "
+               "그래프는 '그래프' 절에, 전체 EDA 표는 기술 상세의 보고서 경로와 같은 폴더에 있습니다.")
+
+
+def _recommendation(record):
+    """권장안 사용 여부 한 줄. 거부 사유의 상세는 참고 사항(recommendation_notice)에 있다."""
+    from .task_report import code_label
+
+    draft = record["draft"]
+
+    if draft["source"] == "model":
+        return (f"사용함: 모델 변경 제안 {len(draft.get('changes') or [])}개. 확정 계획에 남은 항목은 결정 출처 '모델 권장'으로 표시합니다.")
+
+    return "사용 못 함: 기본 계획에서 시작(" + (code_label(record, draft.get("code")) or "사유 코드 확인 불가") + "). 상세 사유는 참고 사항에 있습니다."

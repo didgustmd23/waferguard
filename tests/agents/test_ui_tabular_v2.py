@@ -130,7 +130,11 @@ class TabularV2ScreenTest(unittest.TestCase):
         self.assertEqual(stored["phase"], "completed", stored.get("problem"))
         self.assertTrue(any(item.value == "최종 결과" for item in app.subheader))
         self.assertTrue(any(item.value.startswith("처리: 완료 · 로컬 LLM 권장안: 사용 못 함") for item in app.text))
-        self.assertTrue(any(item.value.startswith("입력 해석: ") for item in app.text))
+        # 결과 화면은 사용자용 입력 해석 설명만 보이고 원래 설정 키는 기술 상세에 둔다.
+        self.assertTrue(any(item.value.startswith("- 입력 해석: ") for item in app.text))
+        self.assertFalse(any("header_repair=" in item.value for item in app.text))
+        # 분할 결과 표 제목은 Markdown 해석 없는 글자로 보인다.
+        self.assertTrue(any(item.value == "분할 결과 (요청 설정과 확정 결과)" for item in app.text))
         self.assertTrue(any("load_handoff_partition" in item.value for item in app.text))
         self.assertEqual(self.calls.count("apply_preparation"), 1)
         self.assertEqual(self.source.read_bytes(), before)

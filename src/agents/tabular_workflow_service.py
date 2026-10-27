@@ -18,6 +18,7 @@ from .preparation_module_plan import validate_preparation_modules
 from .split_evidence import read_committed_artifact, read_metadata
 from .worker_contract import WorkerLimits
 from src.preprocessing.profiles import profile_from_dict
+from src.preprocessing.tabular_bundle import verification_scope
 
 
 def code_id():
@@ -263,27 +264,94 @@ def _committed_bytes(output, relative, *, marker_sha256=None, file_sha256=None):
     표식 해시(marker_sha256)나 파일 해시(file_sha256)가 묶인 산출물은 그 값과도 대조해 표식 재작성 위조를 거부한다.
     기대 해시가 없는 산출물은 완료 표식의 보장 범위(손상 검사)까지만 확인한다.
     """
-    from .artifacts import MARKER_NAME, MAX_MARKER_BYTES, _safe_relative
+    from .artifacts import _safe_relative
+
+    _safe_relative(relative)
+    marker = _marker(output, marker_sha256)
+    files = marker.get("files")
+    expected = files.get(relative) if type(files) is dict else None
+    if file_sha256 is not None and type(expected) is dict and expected.get("sha256") != file_sha256:
+        raise ValueError("보고 근거 파일이 검증된 결과와 다릅니다.")
+    return _marked_bytes(output, relative, expected)
+
+
+def _marker(output, marker_sha256=None):
+    """커밋 폴더의 완료 표식을 한 번 읽어 strict JSON으로 돌려준다. 기대 표식 해시가 있으면 대조한다."""
+    from .artifacts import MARKER_NAME, MAX_MARKER_BYTES
     from .isolated_eda import _read_file
     from .strict_json import loads
     from .worker_paths import _path
 
-    _safe_relative(relative)
     sealed = _read_file(_path(output / MARKER_NAME, directory=False), MAX_MARKER_BYTES)
     if marker_sha256 is not None and hashlib.sha256(sealed).hexdigest() != marker_sha256:
         raise ValueError("보고 근거의 완료 기록이 검증 시점과 다릅니다.")
     marker = loads(sealed.decode("utf-8"), MAX_MARKER_BYTES)
-    files = marker.get("files")
-    expected = files.get(relative) if type(files) is dict else None
+    if type(marker) is not dict:
+        raise ValueError("보고 근거의 완료 기록 형식이 올바르지 않습니다.")
+    return marker
+
+
+def _marked_bytes(output, relative, expected):
+    """이미 읽은 표식 항목(expected)의 크기·해시와 같은 바이트만 한 번 읽는다."""
+    from .isolated_eda import _read_file
+    from .worker_paths import _path
+
     if (type(expected) is not dict or type(expected.get("size")) is not int or not 0 < expected["size"] <= 8 * 1024 * 1024
             or type(expected.get("sha256")) is not str or len(expected["sha256"]) != 64):
         raise ValueError("보고 근거 파일이 완료 기록에 없습니다.")
-    if file_sha256 is not None and expected["sha256"] != file_sha256:
-        raise ValueError("보고 근거 파일이 검증된 결과와 다릅니다.")
     raw = _read_file(_path(output / relative, directory=False), expected["size"])
     if len(raw) != expected["size"] or hashlib.sha256(raw).hexdigest() != expected["sha256"]:
         raise ValueError("보고 근거 파일이 완료 기록과 다릅니다.")
     return raw
+
+
+def _committed_eda(output, context, profile, rows):
+    """분할 EDA 결과를 한 번만 읽어 검증하고, 검증한 같은 바이트(파일 이름 → bytes)를 돌려준다.
+
+    표식은 한 번 읽고 그 표식의 실행 문맥이 현재 분할 실행의 run_eda 단계와 같아야 한다(다른 실행 혼합 거부).
+    eda/ 아래 파일 목록은 고정 보고서 구성과 정확히 같아야 하며 크기 합계도 기존 검증기 상한 안이어야 한다.
+    읽은 바이트는 새 비공개 임시 폴더에 고정 사본으로 쓴 뒤 기존 EDA 결과 검증기로 검사하고, 검사 뒤 사본이 그대로인지
+    다시 대조한다. 원본 폴더는 검증 뒤 다시 열지 않는다. EDA 표식은 승인 체인에 기대 해시가 없어 손상 검사 수준이다.
+    """
+    import tempfile
+
+    from .adapters.tabular import REPORT_FILES
+    from .eda_result_validation import MAX_FILE_BYTES, MAX_TOTAL_BYTES, validate_eda_report
+
+    marker = _marker(output)
+    files = marker.get("files")
+    if set(marker) != {"version", "context", "files"} or marker["version"] != 1 or type(marker["version"]) is not int:
+        raise ValueError("분할 EDA 근거의 완료 기록 형식이 올바르지 않습니다.")
+    if marker["context"] != asdict(context) or type(files) is not dict:
+        raise ValueError("분할 EDA 근거가 이 분할 실행의 결과가 아닙니다.")
+    listed = {name[len("eda/"):]: info for name, info in files.items() if name.startswith("eda/")}
+    if set(listed) != REPORT_FILES:
+        raise ValueError("분할 EDA 근거의 파일 구성이 고정 보고서와 다릅니다.")
+    if any(type(info) is not dict or type(info.get("size")) is not int or not 0 < info["size"] <= MAX_FILE_BYTES
+           for info in listed.values()) or sum(info["size"] for info in listed.values()) > MAX_TOTAL_BYTES:
+        raise ValueError("분할 EDA 근거의 크기가 상한을 넘습니다.")
+    payloads = {name: _marked_bytes(output, "eda/" + name, listed[name]) for name in sorted(listed)}
+
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            copy = Path(scratch) / "eda"
+            copy.mkdir()
+            for name, data in payloads.items():
+                with (copy / name).open("xb") as stream:
+                    stream.write(data)
+            verified = validate_eda_report(copy, profile)
+            # 검증 중 사본이 바뀌었으면 검증한 내용과 해석할 내용이 다를 수 있으므로 거부한다.
+            unchanged = all((copy / name).read_bytes() == data for name, data in payloads.items())
+    except OSError as error:
+        # 결과 손상과 구분한다. 임시 폴더 쓰기·정리 실패(권한·잠금)는 환경 문제이며 근거를 통과시키지 않는다.
+        raise ValueError("분할 EDA 근거를 검증할 임시 사본을 만들거나 정리하지 못했습니다(임시 폴더 권한·잠금 확인).") from error
+    if not verified or not unchanged:
+        raise ValueError("분할 EDA 근거가 결과 계약 검사를 통과하지 못했습니다.")
+    # v2 분할 도메인 검증과 같이 EDA 행 수가 승인된 입력 묶음의 행 수와 같아야 한다.
+    from .strict_json import loads
+    if loads(payloads["summary.json"].decode("utf-8"), len(payloads["summary.json"]))["row_count"] != rows:
+        raise ValueError("분할 EDA 근거의 행 수가 승인된 입력과 다릅니다.")
+    return payloads
 
 
 def candidate_sources(pipeline_name):
@@ -322,13 +390,19 @@ def report_sources(runs, source_contract_id):
     runs는 split·export·candidate·apply·handoff 단계의 실행 이름이다. 모든 단계는 원래 도메인 검증을 통과해야 하고
     같은 출처·분할·내보내기·후보에 이어져 있어야 한다. 반환값은 로컬 전용이며 모델 전송 자료가 아니다.
     """
+    # 다섯 단계 재검증과 _pipeline이 같은 표형 묶음을 반복 검증하지 않도록 이 호출 안에서만 검증 결과를 공유한다.
+    with verification_scope():
+        return _report_sources(runs, source_contract_id)
+
+
+def _report_sources(runs, source_contract_id):
     from .workflow_service_registry import TABULAR_IDS, TABULAR_VERSION, workflow_service
 
     steps = dict(zip(("split", "export", "candidate", "apply", "handoff"), TABULAR_IDS))
     if type(runs) is not dict or set(runs) != set(steps) or runs["apply"] != runs["candidate"]:
         raise ValueError("다섯 단계의 실행 이름과 같은 전처리 통합 작업이 필요합니다.")
 
-    verified, tools = {}, {}
+    verified, tools, managers = {}, {}, {}
     for step, module_id in steps.items():
         service = workflow_service(module_id, TABULAR_VERSION)
         # 결과 조회(results)와 같은 열기·도메인 검증을 한 번만 수행하고 그 도구로 출처를 확인한다.
@@ -337,7 +411,7 @@ def report_sources(runs, source_contract_id):
         if result["status"] != "completed":
             raise ValueError("완료되지 않은 단계가 있어 보고서 근거를 만들지 않습니다.")
         _same_source(source_of(module_id, tool), source_contract_id)
-        verified[step], tools[step] = result, tool
+        verified[step], tools[step], managers[step] = result, tool, manager
 
     split, scope, evidence = _split(runs["split"], typed=True)
     _, _, _, candidate, application = _pipeline(runs["candidate"], applied=True, typed=True)
@@ -362,6 +436,7 @@ def report_sources(runs, source_contract_id):
     manifest = tools["handoff"].verified_bundle(_outputs(verified["handoff"])["ingest"], tools["handoff"].arguments)
     if manifest is None:
         raise ValueError("전달 묶음이 승인된 적용 결과와 다릅니다.")
+    eda_step = next(item for item in managers["split"].plan.steps if item.stage == "run_eda")
     return {
         "source": {"source_contract_id": source.source_id, "snapshot_sha256": source.snapshot.sha256,
                    "loader": source.loader_id, "read_spec": json.loads(source.read_spec_json),
@@ -370,6 +445,9 @@ def report_sources(runs, source_contract_id):
         # 검증을 마친 커밋 폴더라도 원본을 다시 열 때는 완료 표식의 해시에 묶인 바이트만 쓴다.
         # quality는 승인 체인에 묶인 기대 해시가 없어 완료 표식의 손상 검사 수준이다.
         "quality": _committed_json(split_outputs["audit"], "quality/quality.json"),
+        # 분할 EDA 표(분할 전 전체 입력·특징 역할 컬럼)는 같은 분할 실행의 run_eda 문맥에 묶인 바이트만 검증 뒤 쓴다.
+        "eda": _committed_eda(split_outputs["run_eda"], managers["split"]._context(eda_step), split.contract.profile,
+                              split.contract.source.bundle.rows),
         # 분할안은 확정 증거가 미리보기 표식과 대조해 보존한 값을 쓴다.
         "proposal": evidence.proposal,
         "candidate": _committed_json(candidate.artifact.directory, "candidate/candidate.json",
@@ -382,5 +460,9 @@ def report_sources(runs, source_contract_id):
                     "files": manifest["files"], "manifest_sha256": manifest["manifest_sha256"],
                     "readme": str(bundle / "README.md")},
         "reports": [item["path"] for result in verified.values() for item in result["items"] if item["kind"] == "report"],
+        # 분할 EDA 그래프 표시 상한. 검증을 마친 분할 실행의 승인 계약 값이며 다시 계산하지 않는다.
+        "plot_limit": split.contract.profile.max_plot_features,
+        # 실제 분할 실행에 쓴 규칙(승인 계약 값). 확정 계획 표시값과 대조할 때만 쓴다.
+        "split_rules": asdict(split.contract.profile.split_rules),
         "local_only": True,
     }

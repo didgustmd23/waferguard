@@ -22,6 +22,7 @@ from .split_evidence import read_confirmed_split, read_metadata
 from .worker_contract import WorkerLimits
 from .worker_paths import _path
 from src.preprocessing.profiles import profile_from_dict
+from src.preprocessing.tabular_bundle import verification_scope
 
 
 def code_id():
@@ -78,6 +79,12 @@ def _split(name, *, typed=False):
 
 
 def _pipeline(name, *, applied=False, typed=False):
+    # 중첩 검사가 같은 표형 묶음을 반복 검증하지 않도록 이 호출 안에서만 검증 결과를 공유한다.
+    with verification_scope():
+        return _checked_pipeline(name, applied=applied, typed=typed)
+
+
+def _checked_pipeline(name, *, applied, typed):
     directory, record, candidate = pipeline_cli.open_run(name)
     if typed_run(candidate) is not typed:
         raise ValueError("이 작업 버전의 전처리 통합 작업이 아닙니다.")

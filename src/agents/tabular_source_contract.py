@@ -9,7 +9,7 @@ import re
 from src.preprocessing.contracts import ColumnRoles
 from src.preprocessing.profiles import profile_from_dict
 from src.preprocessing.tabular_bundle import (
-    BundleRef, inspect_bundle, iter_bundle_rows, read_bundle_schema, read_bundle_provenance,
+    BundleRef, inspect_bundle, iter_bundle_rows, read_bundle_schema, read_bundle_provenance, scoped_result,
 )
 from src.preprocessing.tabular_loaders import CsvReadSpec
 from .artifacts import _root
@@ -264,7 +264,10 @@ class TabularPartitionInputContract:
         _require(BundleRef.from_dict(record["bundle"]) == self.bundle)
         _require(record["row_positions_sha256"] == _digest(list(self.row_positions)) and self.bundle.rows == len(self.row_positions))
         inspect_bundle(self.bundle_directory, expected=self.bundle, max_bytes=self.bundle.size_bytes)
-        _require(tuple(row[0] for row in iter_bundle_rows(self.bundle_directory, expected=self.bundle)) == self.row_positions)
+        # 실제 행 위치는 기대 지문에 묶인 바이트에서 읽는다. 같은 공개 호출 안의 반복 검사는 그 위치의 해시만 공유한다.
+        positions = scoped_result(self.bundle_directory, expected=self.bundle, condition=("row_positions",),
+                                  compute=lambda: _digest([row[0] for row in iter_bundle_rows(self.bundle_directory, expected=self.bundle)]))
+        _require(positions == _digest(list(self.row_positions)))
         schema = read_bundle_schema(self.bundle_directory, expected=self.bundle)
         _require(set(self.roles.required_columns).issubset(column["name"] for column in schema["columns"]))
         provenance = read_bundle_provenance(self.bundle_directory, expected=self.bundle)

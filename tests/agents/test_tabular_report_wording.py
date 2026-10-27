@@ -26,7 +26,7 @@ class ReportWordingTests(unittest.TestCase):
     def test_most_frequent_has_no_extra_missing_category(self):
         action = self.action('["str", "Male"]', ['["str", "Male"]', '["str", "Female"]'])
         self.assertIn("범주 2개 → 출력 2열", action)
-        self.assertIn("결측 시 'Male'로 채움", action)
+        self.assertIn("결측은 Train 최빈값 'Male'로 대치", action)
         self.assertNotIn("결측 범주 포함", action)
         self.assertNotIn('["str"', action)
 
