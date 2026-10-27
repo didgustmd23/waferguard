@@ -52,6 +52,10 @@ CODE_LABELS = {
     "SPLIT_RATIO_RANGE": "분할 비율 중 0 이하·1 이상이거나 유한수가 아닌 값이 있습니다",
     "SPLIT_RATIO_SUM": "Train·Validation·Test 비율의 합이 1이 아닙니다",
     "SPLIT_STRATIFY_STRATEGY": "target 기준 계층 분할을 random이 아닌 분할 방식과 함께 정했습니다",
+    # 역할×분할 교차 거부(check_split_roles)의 하위 원인. 역할 컬럼명은 남기지 않고 분할 방식·계층 여부로만 구분한다.
+    "SPLIT_ROLE_REQUIRED_MISSING": "분할 방식에 필요한 역할 컬럼이 없습니다(group 분할에는 group 역할 필요)",
+    "SPLIT_GROUP_STRATEGY": "group 역할을 지정했는데 group이 아닌 분할 방식을 정했습니다",
+    "SPLIT_STRATIFY_TARGET_MISSING": "target 기준 계층 분할을 정했지만 target 역할이 없습니다",
     "SPLIT_REASON_UNCONFIRMED": "분할 계약의 다른 조건에 맞지 않습니다(하위 원인을 분류하지 않음)",
 }
 STRATIFY_MESSAGE = "target 기준 계층 분할은 random 분할이고 target 역할이 있을 때만 쓸 수 있습니다."
@@ -69,7 +73,8 @@ SPLIT_RATIO_KEYS = ("train_ratio", "validation_ratio", "test_ratio")
 # ==========================================
 REJECTION_KEYS = {"section", "reason", "values", "from_model", "omitted"}
 REJECTION_REASONS = {"SPLIT_INVALID": ("SPLIT_RATIO_RANGE", "SPLIT_RATIO_SUM", "SPLIT_REASON_UNCONFIRMED"),
-                     "SPLIT_ROLE_MISMATCH": ("SPLIT_STRATIFY_STRATEGY",)}
+                     "SPLIT_ROLE_MISMATCH": ("SPLIT_STRATIFY_STRATEGY", "SPLIT_ROLE_REQUIRED_MISSING", "SPLIT_GROUP_STRATEGY",
+                                             "SPLIT_STRATIFY_TARGET_MISSING")}
 
 
 def _label(field):
@@ -105,6 +110,7 @@ def instructions():
         "값이 하나뿐이거나 모두 비어 있는 컬럼, observed_unique가 row_count와 같은 문자열 컬럼처럼 행마다 다른 식별 번호로 "
         "보이는 컬럼은 특징으로 쓰지 마세요. 목표에 예측 대상이 있으면 해당 컬럼을 target으로 두세요. "
         "split 제약: train_ratio·validation_ratio·test_ratio는 각각 0과 1 사이이고 합이 1; " + "; ".join(strategies) + ". "
+        "병합한 계획 전체가 이 제약을 만족해야 하며(아니면 권장안 전체 거부), 역할을 바꾸면 관련 split 항목도 함께 쓰세요. "
         "Test 구간에 맞추는 규칙은 없습니다."
     )
 
@@ -285,11 +291,11 @@ def base_plan(columns):
 # ==========================================
 
 class SplitRoleError(ValueError):
-    """역할과 분할 방식의 조합 오류. 메시지는 입력 자료가 들어가지 않는 고정 문구다."""
+    """역할과 분할 방식의 조합 오류. 메시지는 입력 자료가 들어가지 않는 고정 문구, reason은 SPLIT_ROLE_MISMATCH의 고정 하위 코드다."""
 
-    def __init__(self, code, message):
+    def __init__(self, code, message, reason=None):
         super().__init__(message)
-        self.code, self.message = code, message
+        self.code, self.message, self.reason = code, message, reason
 
 
 def check_split_roles(roles, split):
@@ -306,14 +312,16 @@ def check_split_roles(roles, split):
     required = STRATEGY_ROLES.get(strategy)
 
     if required is not None and _label(required) not in assigned:
-        raise SplitRoleError("SPLIT_ROLE_MISMATCH", f"{strategy} 분할에는 {_label(required)} 역할 컬럼이 필요합니다.")
+        raise SplitRoleError("SPLIT_ROLE_MISMATCH", f"{strategy} 분할에는 {_label(required)} 역할 컬럼이 필요합니다.",
+                             "SPLIT_ROLE_REQUIRED_MISSING")
 
     if strategy == "random" and _label("group") in assigned:
         # 같은 묶음을 행 단위로 섞어 누수 위험을 숨기지 않는다.
-        raise SplitRoleError("SPLIT_ROLE_MISMATCH", "group 역할을 지정했으면 group 분할을 선택하세요.")
+        raise SplitRoleError("SPLIT_ROLE_MISMATCH", "group 역할을 지정했으면 group 분할을 선택하세요.", "SPLIT_GROUP_STRATEGY")
 
     if split.get("stratify") is True and (strategy != "random" or _label("target") not in assigned):
-        raise SplitRoleError("SPLIT_ROLE_MISMATCH", STRATIFY_MESSAGE)
+        raise SplitRoleError("SPLIT_ROLE_MISMATCH", STRATIFY_MESSAGE,
+                             "SPLIT_STRATIFY_STRATEGY" if strategy != "random" else "SPLIT_STRATIFY_TARGET_MISSING")
 
 
 def split_violation(split):
@@ -386,8 +394,20 @@ def _reason_matches(reason, values):
     if reason == "SPLIT_RATIO_SUM" or not summed:
         return reason == "SPLIT_RATIO_SUM" and not summed
 
+    strategy, stratify = values.get("strategy"), values.get("stratify")
+
     if reason == "SPLIT_STRATIFY_STRATEGY":
-        return values.get("stratify") is True and values.get("strategy") in ("group", "time")
+        return stratify is True and strategy in ("group", "time")
+
+    # 역할×분할 교차 하위 원인은 분할 계약을 통과한 값에서만 생긴다(계층+비random은 계약 단계가 먼저 거부한다).
+    if reason == "SPLIT_ROLE_REQUIRED_MISSING":
+        return stratify is False and strategy in STRATEGY_ROLES and (strategy != "time" or TIME_SPLIT_AVAILABLE)
+
+    if reason == "SPLIT_GROUP_STRATEGY":
+        return strategy == "random" and type(stratify) is bool
+
+    if reason == "SPLIT_STRATIFY_TARGET_MISSING":
+        return strategy == "random" and stratify is True
 
     return True
 
@@ -464,7 +484,14 @@ def validate_plan(columns, plan):
     try:
         check_split_roles(roles, split)
     except SplitRoleError as error:
-        raise PlanError(error.code, error.message) from error
+        detail = None
+
+        if error.reason is not None:
+            # 분할 계약 거부와 같은 진단 구조. 하위 코드와 허용 명세를 통과한 분할 값만 두고 역할 컬럼명은 넣지 않는다.
+            values, omitted = _split_values(split)
+            detail = {"section": "split", "reason": error.reason, "values": values, "omitted": omitted}
+
+        raise PlanError(error.code, error.message, detail=detail) from error
 
     preparation = plan["preparation"]
 

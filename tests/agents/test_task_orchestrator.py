@@ -637,7 +637,8 @@ class TaskOrchestratorTest(unittest.TestCase):
         ratios = (0.0, 0.15, 0.6, 0.7, 1.0, float("nan"), "0.6", True)
         seen = set()
 
-        for roles, train, test, strategy, stratify in product((ROLES, dict(ROLES, id="group")), ratios, (0.15, 1.0),
+        for roles, train, test, strategy, stratify in product((ROLES, dict(ROLES, id="group"), dict(ROLES, label="수치형")),
+                                                              ratios, (0.15, 1.0),
                                                               ("random", "group", "x"), (False, True, 1)):
             split = dict(SPLIT, train_ratio=train, test_ratio=test, strategy=strategy, stratify=stratify)
             try:
@@ -653,9 +654,10 @@ class TaskOrchestratorTest(unittest.TestCase):
             with self.subTest(split=split, roles=roles):
                 self.assertTrue(rejection_valid(code, rejection), rejection)
 
-        # 네 하위 원인과 omitted가 있는 진단이 모두 검사 대상에 들어갔는지 확인한다.
+        # 분할 계약 하위 원인 넷, 역할×분할 교차 하위 원인 셋과 omitted가 있는 진단이 모두 검사 대상에 들어갔는지 확인한다.
         self.assertEqual({reason for _, reason, _ in seen},
-                         {"SPLIT_RATIO_RANGE", "SPLIT_RATIO_SUM", "SPLIT_REASON_UNCONFIRMED", "SPLIT_STRATIFY_STRATEGY"})
+                         {"SPLIT_RATIO_RANGE", "SPLIT_RATIO_SUM", "SPLIT_REASON_UNCONFIRMED", "SPLIT_STRATIFY_STRATEGY",
+                          "SPLIT_ROLE_REQUIRED_MISSING", "SPLIT_GROUP_STRATEGY", "SPLIT_STRATIFY_TARGET_MISSING"})
         self.assertIn(True, {omitted for _, _, omitted in seen})
 
     def test_model_questions_are_advisory_and_out_of_schema_ones_are_dropped(self):

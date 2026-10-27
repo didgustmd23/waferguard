@@ -76,7 +76,7 @@ HINTS = {
 }
 CODE_LABELS = dict(rules.CODE_LABELS)
 # 권장안 거부 중 하위 진단(draft.rejection)이 생기는 코드. 진단이 없는 이전 기록은 상세 원인 미확인으로 안내한다.
-REJECTION_DETAIL_CODES = ("SPLIT_INVALID",)
+REJECTION_DETAIL_CODES = ("SPLIT_INVALID", "SPLIT_ROLE_MISMATCH")
 # 저장된 하위 진단을 표시하기 직전의 허용 명세 검사. 진단을 만든 표형 계획 규칙의 명세를 그대로 쓴다.
 rejection_valid = rules.rejection_valid
 REMOVED_LABELS = {"HIGH_MISSING_RATIO": "Train 결측 비율이 기준 초과", "CONSTANT_OR_ALL_MISSING": "Train에서 값이 한 종류뿐이거나 전부 결측"}

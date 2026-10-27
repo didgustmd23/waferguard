@@ -254,7 +254,15 @@ def diagnosis_view(record):
 # ==========================================
 
 def plan_fields(record):
-    return shared.plan_fields(record)
+    """CSV v1 명세에서 수치 자료형이 아닌 컬럼의 수치형 역할 선택지를 뺀다. 요청 허용 값·응답 형식·병합 검사가 이 명세를 같이 쓴다."""
+    numeric = _numeric_columns(record)
+    result = shared.plan_fields(record)
+
+    for field in result:
+        if field["path"].startswith("roles.") and field["path"][len("roles."):] not in numeric:
+            field["options"] = [option for option in field["options"] if option != "수치형"]
+
+    return result
 
 
 def base_plan(record):
@@ -262,7 +270,10 @@ def base_plan(record):
 
 
 def recommendation_input(record):
-    return shared.recommendation_input(record)
+    """CSV v1 권장안 입력에 v2 실행 계약(수치형 역할의 자료형 조건) 안내를 더한다."""
+    source = shared.recommendation_input(record)
+    source["instructions"] += " 숫자처럼 보이는 문자열도 숫자로 자동 변환하지 않으므로 수치형은 dtype_group=numeric 컬럼에만 쓰세요."
+    return source
 
 
 def questions(record, plan):
@@ -277,10 +288,15 @@ def option_guide(record, plan, origins):
     return shared.option_guide(record, plan, origins)
 
 
+def _numeric_columns(record):
+    """생성된 표에서 수치 자료형으로 읽힌 컬럼. 수치형 역할 허용 범위로 계획 명세와 계획 검증이 같이 쓴다."""
+    return {column["column"] for column in record["diagnostic"]["columns"] if column["dtype_group"] == "numeric"}
+
+
 def _numeric_types(record, plan):
     """수치형 역할은 생성된 표에서 수치 자료형으로 읽힌 컬럼만 허용한다. 자동으로 다른 역할로 바꾸지 않는다."""
-    groups = {column["column"]: column["dtype_group"] for column in record["diagnostic"]["columns"]}
-    wrong = [name for name, role in plan["roles"].items() if role == "수치형" and groups.get(name) != "numeric"]
+    numeric = _numeric_columns(record)
+    wrong = [name for name, role in plan["roles"].items() if role == "수치형" and name not in numeric]
     if wrong:
         raise PlanError("NUMERIC_ROLE_TYPE_UNSUPPORTED", CODE_LABELS["NUMERIC_ROLE_TYPE_UNSUPPORTED"],
                         subjects=["roles." + name for name in wrong])

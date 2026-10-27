@@ -14,6 +14,7 @@ from .csv_workflow_creation import (CsvCreationPreview, _pipeline, _split, check
                                     create_application, typed_run)
 from .csv_workflow_schema import creation_schema
 from .csv_workflow_service import CsvWorkflowService
+from .perf_timing import timed
 from .preparation_module_plan import validate_preparation_modules
 from .split_evidence import read_committed_artifact, read_metadata
 from .worker_contract import WorkerLimits
@@ -391,7 +392,7 @@ def report_sources(runs, source_contract_id):
     같은 출처·분할·내보내기·후보에 이어져 있어야 한다. 반환값은 로컬 전용이며 모델 전송 자료가 아니다.
     """
     # 다섯 단계 재검증과 _pipeline이 같은 표형 묶음을 반복 검증하지 않도록 이 호출 안에서만 검증 결과를 공유한다.
-    with verification_scope():
+    with timed("report_sources"), verification_scope():
         return _report_sources(runs, source_contract_id)
 
 
