@@ -45,7 +45,13 @@ def load_train_config(path):
     return config
 
 
+def _require_finite_tensor(tensor, code):
+    """Tensor가 NaN·무한대를 포함하지 않는지 지정한 실패 코드로 검사한다."""
+    require(bool(torch.isfinite(tensor).all().item()), code)
+
+
 def class_weights(class_counts, max_weight):
+    """Train 클래스 빈도에서 평균 1·상한 이하의 유한 가중치를 계산한다."""
     require(type(class_counts) in (list, tuple) and len(class_counts) == len(CLASS_NAMES) and
             all(type(count) is int and count > 0 for count in class_counts),
             'INVALID_TRAIN_CLASS_COUNTS')
@@ -61,17 +67,53 @@ def class_weights(class_counts, max_weight):
         else:
             high = scale
     weights = raw_weights.mul(high).clamp(max=float(max_weight))
-    return weights.to(dtype=torch.float32)
+    weights = weights.to(dtype=torch.float32)
+    _require_finite_tensor(weights, 'NONFINITE_CLASS_WEIGHT')
+    return weights
+
+
+def _accumulate_epoch_loss(loss_total, normalizer_total, loss, targets, weights):
+    """배치 loss를 표본 수 또는 정답 클래스 가중치 합으로 환산해 누적한다."""
+    denominator = (
+        float(targets.numel())
+        if weights is None else float(weights[targets].sum().item())
+    )
+    return (
+        loss_total + float(loss.detach().item()) * denominator,
+        normalizer_total + denominator,
+    )
+
+
+def _require_finite_model_weights(model):
+    """모델 파라미터·버퍼에 NaN 또는 무한대가 없는지 확인한다."""
+    for value in model.state_dict().values():
+        _require_finite_tensor(value, 'NONFINITE_MODEL_WEIGHT')
+
+
+def _validate_train_validation_contract(train_dataset, validation_dataset):
+    """Train·Validation 캐시가 동일 프로토콜과 실제 분할 목록인지 확인한다."""
+    require(
+        train_dataset.protocol == validation_dataset.protocol,
+        'TRAIN_VALIDATION_PROTOCOL_MISMATCH',
+    )
+    require(
+        train_dataset.source_split_manifest_sha256 ==
+        validation_dataset.source_split_manifest_sha256,
+        'TRAIN_VALIDATION_SPLIT_MANIFEST_MISMATCH',
+    )
 
 
 def _evaluate(model, loader, device):
+    """Validation logits를 검사하고 분류 지표를 계산한다."""
     matrix = torch.zeros((len(CLASS_NAMES), len(CLASS_NAMES)), dtype=torch.int64)
     model.eval()
     with torch.inference_mode():
         for batch in loader:
             images = batch['image'].to(device, non_blocking=device.type == 'cuda')
             targets = batch['target'].to(device, non_blocking=device.type == 'cuda')
-            predictions = model(images).argmax(dim=1)
+            logits = model(images)
+            _require_finite_tensor(logits, 'NONFINITE_LOGITS')
+            predictions = logits.argmax(dim=1)
             encoded = targets * len(CLASS_NAMES) + predictions
             matrix += torch.bincount(
                 encoded.to(device='cpu'), minlength=len(CLASS_NAMES) ** 2
@@ -80,19 +122,22 @@ def _evaluate(model, loader, device):
 
 
 def _save_checkpoint(path, model, config, train_dataset, metrics, epoch):
+    """실제 분할 manifest 지문을 포함한 동결 checkpoint를 저장한다."""
+    _require_finite_model_weights(model)
     temporary = path.with_name(path.name + '.tmp')
     model_state = {
         name: value.detach().to(device='cpu')
         for name, value in model.state_dict().items()
     }
     torch.save({
-        'checkpoint_version': 'wm_cnn_checkpoint_v1',
+        'checkpoint_version': 'wm_cnn_checkpoint_v2',
         'model_name': 'SmallWaferCNN',
         'model_config': {'num_classes': len(CLASS_NAMES), 'input_channels': 2},
         'model_state_dict': model_state,
         'class_mapping': {str(i): name for i, name in enumerate(CLASS_NAMES)},
         'transform_config': train_dataset.transform_config,
         'split_protocol_id': train_dataset.protocol,
+        'source_split_manifest_sha256': train_dataset.source_split_manifest_sha256,
         'training_config': config,
         'selected_epoch': epoch,
         'selection_metric': config['selection_metric'],
@@ -102,6 +147,7 @@ def _save_checkpoint(path, model, config, train_dataset, metrics, epoch):
 
 
 def train(cache_dir, output_dir, config_path, device='auto', max_epochs=None):
+    """Train으로 CNN을 학습하고 Validation 선택 결과와 checkpoint를 저장한다."""
     config = load_train_config(config_path)
     if max_epochs is not None:
         require(type(max_epochs) is int and 1 <= max_epochs <= 500, 'INVALID_EPOCH_OVERRIDE')
@@ -128,8 +174,7 @@ def train(cache_dir, output_dir, config_path, device='auto', max_epochs=None):
     validation_dataset = None
     try:
         validation_dataset = WaferDataset(cache_dir, split='validation')
-        require(train_dataset.protocol == validation_dataset.protocol,
-                'TRAIN_VALIDATION_PROTOCOL_MISMATCH')
+        _validate_train_validation_contract(train_dataset, validation_dataset)
         train_loader = DataLoader(
             train_dataset,
             batch_size=config['batch_size'],
@@ -148,10 +193,12 @@ def train(cache_dir, output_dir, config_path, device='auto', max_epochs=None):
         weights = class_weights(train_dataset.class_counts, config['max_class_weight'])
         if not config['class_weighted']:
             weights = None
+        elif weights is not None:
+            weights = weights.to(selected_device)
+            _require_finite_tensor(weights, 'NONFINITE_CLASS_WEIGHT')
         model = SmallWaferCNN(num_classes=len(CLASS_NAMES)).to(selected_device)
-        criterion = nn.CrossEntropyLoss(
-            weight=weights.to(selected_device) if weights is not None else None
-        )
+        _require_finite_model_weights(model)
+        criterion = nn.CrossEntropyLoss(weight=weights)
         optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=float(config['learning_rate']),
@@ -166,23 +213,27 @@ def train(cache_dir, output_dir, config_path, device='auto', max_epochs=None):
         for epoch in range(1, config['epochs'] + 1):
             model.train()
             loss_total = 0.0
-            samples = 0
+            loss_normalizer = 0.0
             for batch in train_loader:
                 images = batch['image'].to(selected_device, non_blocking=selected_device.type == 'cuda')
                 targets = batch['target'].to(selected_device, non_blocking=selected_device.type == 'cuda')
                 optimizer.zero_grad(set_to_none=True)
-                loss = criterion(model(images), targets)
+                logits = model(images)
+                _require_finite_tensor(logits, 'NONFINITE_LOGITS')
+                loss = criterion(logits, targets)
+                _require_finite_tensor(loss, 'NONFINITE_LOSS')
                 loss.backward()
                 optimizer.step()
-                batch_size = targets.size(0)
-                loss_total += float(loss.detach().item()) * batch_size
-                samples += batch_size
+                _require_finite_model_weights(model)
+                loss_total, loss_normalizer = _accumulate_epoch_loss(
+                    loss_total, loss_normalizer, loss, targets, weights
+                )
 
             metrics = _evaluate(model, validation_loader, selected_device)
             score = metrics[config['selection_metric']]
             epoch_result = {
                 'epoch': epoch,
-                'train_loss': loss_total / samples,
+                'train_loss': loss_total / loss_normalizer,
                 'validation': metrics,
             }
             history.append(epoch_result)

@@ -14,15 +14,29 @@ from .models import SmallWaferCNN
 from .validate_canonical import CLASS_NAMES, require, validation_stage
 
 
+def _require_finite_tensor(tensor, code):
+    """추론 Tensor가 NaN·무한대를 포함하면 지정한 코드로 중단한다."""
+    require(bool(torch.isfinite(tensor).all().item()), code)
+
+
+def _require_finite_model_weights(model):
+    """동결 모델의 파라미터·버퍼가 유한한 값인지 확인한다."""
+    for value in model.state_dict().values():
+        _require_finite_tensor(value, 'NONFINITE_MODEL_WEIGHT')
+
+
 def validate_checkpoint(checkpoint, dataset, train_class_counts):
+    """Checkpoint와 Test 캐시의 모델·변환·실제 분할 계약을 대조한다."""
     require(type(checkpoint) is dict and
-            checkpoint.get('checkpoint_version') == 'wm_cnn_checkpoint_v1' and
+            checkpoint.get('checkpoint_version') == 'wm_cnn_checkpoint_v2' and
             checkpoint.get('model_name') == 'SmallWaferCNN' and
             checkpoint.get('model_config') == {
                 'num_classes': len(CLASS_NAMES), 'input_channels': 2,
             } and checkpoint.get('class_mapping') ==
             {str(index): name for index, name in enumerate(CLASS_NAMES)} and
             checkpoint.get('split_protocol_id') == dataset.protocol and
+            checkpoint.get('source_split_manifest_sha256') ==
+            dataset.source_split_manifest_sha256 and
             checkpoint.get('transform_config') == dataset.transform_config and
             checkpoint.get('selection_metric') in ('macro_f1', 'macro_recall') and
             type(checkpoint.get('selected_epoch')) is int and
@@ -36,6 +50,7 @@ def validate_checkpoint(checkpoint, dataset, train_class_counts):
 
 
 def evaluate(cache_dir, checkpoint_path, output_dir, device='auto', approved=False):
+    """승인된 Test 캐시와 동결 checkpoint로 단일 평가를 수행한다."""
     require(approved is True, 'TEST_EVALUATION_APPROVAL_REQUIRED')
     require(device in ('auto', 'cpu', 'cuda'), 'INVALID_EVALUATION_DEVICE')
     if device == 'cuda' and not torch.cuda.is_available():
@@ -66,6 +81,7 @@ def evaluate(cache_dir, checkpoint_path, output_dir, device='auto', approved=Fal
         majority_class = validate_checkpoint(checkpoint, dataset, train_counts)
         model = SmallWaferCNN(num_classes=len(CLASS_NAMES)).to(selected_device)
         model.load_state_dict(checkpoint['model_state_dict'], strict=True)
+        _require_finite_model_weights(model)
         model.eval()
         loader = DataLoader(
             dataset,
@@ -90,7 +106,9 @@ def evaluate(cache_dir, checkpoint_path, output_dir, device='auto', approved=Fal
                 targets = batch['target'].to(
                     selected_device, non_blocking=selected_device.type == 'cuda'
                 )
-                predictions = model(images).argmax(dim=1)
+                logits = model(images)
+                _require_finite_tensor(logits, 'NONFINITE_LOGITS')
+                predictions = logits.argmax(dim=1)
                 model_encoded = (targets * len(CLASS_NAMES) + predictions).cpu()
                 baseline_encoded = (
                     targets * len(CLASS_NAMES) + majority_class
