@@ -13,14 +13,36 @@ def plot_missing(tables, limit):
     """결측률 상위 특징만 표시한다. 전체 집계는 계산 결과에 남는다."""
     import matplotlib.pyplot as plt
 
+    from matplotlib.ticker import PercentFormatter
+
     selected = tables["missing"].sort_values("missing_ratio", ascending=False).head(limit)
+    ratios = [float(value) for value in selected["missing_ratio"]]
+    peak = max(ratios, default=0.0)
+    # 축은 0에서 시작하고 상한은 표시한 최댓값에 여유를 둔 값(최대 100%)이다. 막대 높이는 실제 비율 그대로이며,
+    # 축보다 아주 작은 값도 막대 위 값 라벨로 0과 구분된다.
+    top = min(1.0, peak * 1.15) if peak > 0 else 1.0
     figure, axis = plt.subplots(figsize=(10, 5))
-    axis.bar(selected.index, selected["missing_ratio"])
-    axis.set(ylabel="Missing ratio", ylim=(0, 1), title="Missingness")
+    bars = axis.bar(selected.index, ratios)
+    axis.bar_label(bars, labels=[_percent(value) for value in ratios], padding=2, fontsize=8)
+    axis.yaxis.set_major_formatter(PercentFormatter(xmax=1))
+    axis.set(ylabel=f"Missing ratio (%, axis 0-{_percent(top)})", ylim=(0, top),
+             title=f"Missingness (top {len(ratios)} of {len(tables['missing'])} features by missing ratio)")
+
+    if peak == 0:
+        axis.text(0.5, 0.5, "No missing values (0% in all shown features)", ha="center", va="center", transform=axis.transAxes)
+
     axis.tick_params(axis="x", rotation=60)
     figure.tight_layout()
 
     return figure
+
+
+def _percent(ratio):
+    """비율을 그래프 라벨용 백분율로 쓴다. 1% 미만은 유효숫자 2자리로 두어 0과 구분되게 한다."""
+    if ratio == 0:
+        return "0%"
+
+    return f"{ratio * 100:.2g}%" if ratio < 0.01 else f"{ratio * 100:.3g}%"
 
 
 def plot_numeric(data, limit):

@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | 전처리 에이전트 | CSV·웨이퍼맵 전처리의 모듈 선택·사용자 승인·격리 실행·결과 관리 | 양현승 | CSV v2·`.npz` 통합 작업 구현, 합성 입력의 실제 격리·사용자 흐름 확인. 검증 범위·모델 한계는 에이전트 안내 참조 |
 | SECOM 머신러닝 | 공정 센서로 불량 위험 선별, 핵심 센서 20개 선택, OOF 문턱 비교·저장·추론 | ML: 양현승 / 데이터·EDA: 이종수 | V2 실험·저장·복원·기존 Test 비교 완료 |
-| WM-811K 딥러닝 | 검사 결과 맵의 9종 패턴 분류, 작은 CNN·ResNet18 비교, 클래스별 오류 분석 | 이종수 | 전처리·캐시·Dataset 구현, 모델 학습·평가는 계획 단계 |
+| WM-811K 딥러닝 | 검사 결과 맵의 9종 패턴 분류, 작은 CNN 학습·평가와 클래스별 오류 분석 | 이종수 | 작은 CNN 학습·동결·Test 1회 평가 이력 있음. 현행 checkpoint v2로의 재검증은 별개이며 ResNet18 비교는 후속 |
 
 ## 세 가지 구성 요소
 
@@ -22,7 +22,7 @@
 
 ### 전체 구성도
 
-세 영역은 로컬에서 각각 시작하는 **독립 실행 경로**입니다. 실행 간 결과를 자동 전달하는 연결은 없습니다. 코드 위치는 각 영역과 아래 설명에 표시하며, 점선은 아직 실행이 연결되지 않은 향후 학습·평가 계획입니다.
+세 영역은 로컬에서 각각 시작하는 **독립 실행 경로**입니다. 실행 간 결과를 자동 전달하는 연결은 없습니다. 아래 그림은 커밋 `4fd209c` 시점의 구조 기록입니다. 그림의 WM 점선은 당시 계획을 뜻하며, 현재는 작은 CNN 학습·평가가 구현됐고 ResNet18 비교는 후속입니다.
 
 [![WaferGuard 전체 구성도 — 전처리 에이전트·SECOM·WM의 독립 실행 경로](docs/architecture/overview.svg)](https://didgustmd23.github.io/waferguard/overview.html)
 
@@ -30,7 +30,7 @@
 
 > 인터랙티브 링크는 GitHub Pages 배포 후 열립니다. 배포 전에는 [구성도 HTML](docs/architecture/overview.html)을 내려받아 브라우저에서 열 수 있습니다. 그림은 커밋 `4fd209c` 기준이며, 상세 계약은 [DESIGN](docs/agents/DESIGN.md)을 따릅니다.
 
-- **일반 연결선:** 각 영역 내부의 주요 실행·처리 흐름(SECOM의 머신러닝 학습 포함). **붉은 승인 경로:** 동의 범위에서만 실행. **WM 학습·평가 점선:** 아직 실행이 연결되지 않은 계획 단계. 세 영역 사이의 자동 실행·데이터 전달 화살표는 없습니다.
+- **일반 연결선:** 각 영역 내부의 주요 실행·처리 흐름(SECOM의 머신러닝 학습 포함). **붉은 승인 경로:** 동의 범위에서만 실행. **WM 학습·평가 점선:** 기준 커밋 당시의 계획 표시이며 현재 미구현을 뜻하지 않습니다. 세 영역 사이의 자동 실행·데이터 전달 화살표는 없습니다.
 - 에이전트 격리 worker의 계산은 `src/preprocessing`(표형·배열), 고급 WM 등록 모듈은 `src/wafer_dl`·`scripts/wm_sandbox`를 씁니다. SECOM 실험 전처리는 `src/modeling_preprocessing.py` 등 기존 Pipeline입니다.
 - 로컬 Ollama에는 동의 범위의 목표·허용 이름/구조·집계·계획/선택지만 보내고, 검증 대상 권장안·질문과 별도 정책의 해설만 받습니다.
 - 에이전트는 SECOM 저장 모델·평가 결과를 사용하지 않습니다. SECOM·WM의 기존 실행은 에이전트 없이 수행할 수 있습니다.
@@ -38,7 +38,7 @@
 - 모든 전처리가 하나의 엔진으로 통합된 것은 아닙니다. 표형/배열 공통 계산, 기존 SECOM Pipeline, 웨이퍼 전용 계산의 실제 위치를 구분합니다.
 - `logs/agents`에는 작업 기록·보고서와 배열 적용 결과가 있고, CSV 전달 묶음은 `data/processed/agents/handoffs`에 있습니다.
 - LLM에는 요청 계약이 허용한 자료만 전달합니다. 원본 행·이미지/배열·로컬 경로·승인 정보는 자동 첨부하지 않으며 실행·승인 권한도 없습니다.
-- 에이전트 내부 구조는 [에이전트 설계](docs/agents/DESIGN.md#내부-구조), WM 학습 계획은 [도메인 설계](docs/WM811K/PREPROCESSING_DESIGN.md#학습평가-계획)를 따릅니다.
+- 에이전트 내부 구조는 [에이전트 설계](docs/agents/DESIGN.md#내부-구조), WM 학습·평가의 현재 범위와 후속 계획은 [도메인 설계](docs/WM811K/PREPROCESSING_DESIGN.md#학습평가-계획)를 따릅니다.
 
 두 데이터셋에는 동일 웨이퍼 대응 관계가 없으므로 **독립 학습·평가**를 수행합니다. 향후 `센서 위험 선별 → 검사맵 확보 가정 → 패턴 진단` 연결은 가상 흐름 데모이며 실제 통합 검출 성능을 뜻하지 않습니다. WM-811K는 광학 사진이 아닌 다이별 검사 결과 맵이고, `None` 패턴도 최종 양품 판정과 같지 않습니다.
 
@@ -95,7 +95,7 @@ AP는 V1 **0.040461 → V2 0.075077**, ROC-AUC는 **0.488008 → 0.682330**으�
 
 데이터 출처는 [UCI SECOM](https://archive.ics.uci.edu/dataset/179/secom)입니다. 센서 파일과 label·timestamp 파일을 병합하며, label은 `-1`(정상), `1`(불량)입니다. 원본 데이터는 저장소에 포함하지 않습니다.
 
-WM-811K는 [Kaggle 배포본](https://www.kaggle.com/datasets/qingyi/wm811k-wafer-map)을 사용합니다. Lot 비중첩 분할로 학습한 작은 CNN을 동결해 Test 25,834건을 1회 평가했습니다: Accuracy **96.13%**, Macro-Recall **85.61%**, Macro-F1 **77.17%**. 기준선 대비 Macro-Recall은 **74.50%p** 높지만 `Loc` Recall은 58.10%, `Scratch` Precision은 30.56%입니다. 이는 9종 패턴 분류 결과이지 실제 현장 불량 검출률이 아닙니다. 같은 Test로 추가 튜닝하지 않습니다. 원본·가공 데이터, checkpoint, 실행별 보고서는 저장소에 포함하지 않습니다. 재현 절차와 한계는 [WM-811K 기록](docs/WM811K/CACHE_DATASET.md)에 정리했습니다.
+WM-811K는 [Kaggle 배포본](https://www.kaggle.com/datasets/qingyi/wm811k-wafer-map)을 사용합니다. Lot 비중첩 분할로 학습한 작은 CNN을 동결해 Test 25,834건을 1회 평가한 기록이 있습니다: Accuracy **96.13%**, Macro-Recall **85.61%**, Macro-F1 **77.17%**. 기준선 대비 Macro-Recall은 **74.50%p** 높지만 `Loc` Recall은 58.10%, `Scratch` Precision은 30.56%입니다. 이 수치는 2026-10-24~25 코드의 실행 기록이며 현행 checkpoint v2·수치 검증 보완 코드로 재평가한 결과는 아닙니다. 이는 9종 패턴 분류 결과이지 실제 현장 불량 검출률이 아닙니다. 같은 Test로 추가 튜닝하지 않습니다. 원본·가공 데이터, checkpoint, 실행별 보고서는 저장소에 포함하지 않습니다. 재현 절차와 한계는 [WM-811K 기록](docs/WM811K/CACHE_DATASET.md)에 정리했습니다.
 
 ![SECOM 클래스 분포](reports/secom/figures/eda/step3/class_distribution.png)
 

@@ -13,7 +13,7 @@
     → 모델 학습·Validation 선택 → 동결 → Test 캐시·단일 평가 (완료)
 ```
 
-Train 약 70%·Validation 약 15%·Test 약 15%의 분할은 이미 확정했습니다. Test가 없는 것이 아니라 Test용 입력 캐시 준비를 미룬 상태입니다. 원본 맵을 세 폴더에 복사해서 나누는 대신, manifest에 각 행의 소속을 기록합니다.
+Train 약 70%·Validation 약 15%·Test 약 15%의 분할을 확정했습니다. 개발 구간을 준비할 당시에는 Test 캐시 생성을 미뤘고, 이후 동결 모델의 1회 평가를 위해 별도 Test 캐시를 준비했습니다. 원본 맵을 세 폴더에 복사해서 나누는 대신, manifest에 각 행의 소속을 기록합니다.
 
 | 파일·컬럼 | 역할 |
 | --- | --- |
@@ -120,7 +120,9 @@ python -m src.wafer_dl.dataset `
 
 캐시는 실제 `split_manifest.jsonl`의 SHA-256도 기록합니다. 새 checkpoint는 이
 해시를 포함하며 Test 캐시의 값과 다르면 평가를 거부합니다. 이 필드가 없는
-이전 checkpoint는 새 계약으로 평가할 수 없으므로 새 checkpoint를 생성해야 합니다.
+이전 checkpoint는 새 계약으로 평가할 수 없습니다. 기존 파일에 해시를 임의로
+추가하지 않으며, 현행 계약으로 새 평가를 하려면 그 계약으로 생성한 checkpoint가
+필요합니다. 아래 과거 성능 기록을 새 코드로 재검증한 결과로 읽지 마세요.
 
 ```python
 from torch.utils.data import DataLoader
@@ -141,7 +143,7 @@ Dataset은 읽기 전용 mmap을 최대 두 파일까지 유지하고 필요한 
 
 `configs/wm811k/cache.json`의 `shard_max_rows` 기본값은 4,096, `buffer_max_bytes`는 64MiB입니다. 두 상한 중 작은 기준으로 나눕니다. Train·Validation writer 버퍼는 각각 할당되므로 버퍼 합계는 기본 최대 약 128MiB이고, 검사·변환의 추가 메모리는 별도입니다.
 
-`suggested_train_class_weights`는 Train 빈도만 사용한 `N_train/(9×클래스 표본 수)` 후보입니다. 학습 코드는 Train 빈도에서 같은 형태의 가중치를 계산하고 설정의 상한으로 제한해 class-weighted loss를 적용합니다. class-weighted 설정과 상한은 비교 실험으로 검증해야 합니다. 증강·추가 정규화·통계 재학습은 하지 않습니다.
+`suggested_train_class_weights`는 Train 빈도만 사용한 `N_train/(9×클래스 표본 수)` 후보입니다. 학습 코드는 이 역빈도 값에 공통 배율과 상한을 적용해 클래스별 가중치 평균이 1이 되도록 맞춥니다. 따라서 캐시의 원시 후보에 상한만 적용한 값과는 다를 수 있습니다. class-weighted 설정과 상한의 효과는 비교 실험으로 검증해야 합니다. 현재 학습은 증강·추가 정규화 없이 진행하며, 저장된 입력 변환을 다시 학습하지 않습니다.
 
 ## CNN 학습과 Validation
 
@@ -164,6 +166,8 @@ python -m src.wafer_dl.train `
 `--device auto`는 CUDA를 사용할 수 있으면 GPU를, 아니면 CPU를 선택합니다. 실행은 Test를 열지 않습니다. 완료 시 `best_model.pt`와 `training_report.json`이 출력 폴더에 저장되고, 기존 출력 폴더가 있으면 덮어쓰지 않고 실패합니다. 보고서에는 split protocol, 선택 epoch, epoch별 Macro-F1·Macro-Recall·클래스별 Recall과 혼동행렬이 들어갑니다. 같은 경로에 재실행하려면 기존 결과를 보존한 채 새 `--output-dir`을 지정하세요.
 
 ### 실제 실행 기록 — 2026-10-24
+
+아래 Validation·Test 수치는 당시 checkpoint v1 코드의 실행 기록입니다. 이후 실제 분할 manifest 해시를 묶은 checkpoint v2와 NaN/무한대 검사·weighted epoch loss 집계를 보완했지만, 이 성능을 현행 코드로 재학습·재평가한 것은 아닙니다. 과거 기록과 파일은 보존하며 문서 정정을 이유로 Test를 다시 실행하지 않습니다.
 
 검증한 canonical 데이터와 새 Lot 비중첩 분할로 Train 121,261건·Validation 25,827건의 캐시를 만들었습니다. RTX 4060 Ti의 CUDA PyTorch에서 최대 30 epoch, patience 6으로 실행했고 Validation Macro-F1이 6 epoch 연속 개선되지 않아 20 epoch에서 조기 종료했습니다. 최고 Macro-F1 checkpoint는 14 epoch입니다.
 
@@ -193,7 +197,7 @@ Accuracy만으로는 불균형 영향을 가릴 수 있어 Macro 지표와 클�
 
 전체 클래스 지표·혼동행렬·실행 시간·장치 정보는 로컬의 `reports/wm811k/test_evaluation_group_v2_macro_f1/test_evaluation.json`, 동결 checkpoint는 `models/wm811k/cnn_v2_gpu_30epoch/best_model.pt`에 있습니다. 이 실행별 보고서와 checkpoint는 저장소에 올리지 않습니다. 저장소에는 소스·설정·테스트와 요약 지표만 포함합니다.
 
-다음은 같은 절차를 재현하기 위한 명령입니다. 이미 생성된 출력 폴더는 덮어쓰지 않습니다. Test 배열을 읽는 단계임을 확인한 경우에만 승인 플래그를 사용합니다.
+다음은 Test 캐시 준비와 현행 평가기의 사용 예시입니다. 2026-10-25 수치를 그대로 재현한다고 보장하는 명령이 아닙니다. 새 평가에는 현재 계약에 맞는 checkpoint와 별도 실행 결정이 필요합니다. 이미 생성된 출력 폴더는 덮어쓰지 않으며, 아래 캐시 경로가 이미 있으면 재생성하지 않습니다. Test 배열을 읽는 단계임을 확인한 경우에만 승인 플래그를 사용합니다.
 
 ```powershell
 python -m src.wafer_dl.cache `
@@ -206,7 +210,7 @@ python -m src.wafer_dl.cache `
   --confirm-test-preparation
 ```
 
-첫 배치 확인과 동결 평가 예시는 다음과 같습니다.
+첫 배치 확인과 동결 평가 예시는 다음과 같습니다. 평가 예시의 `models/wm811k/<새_checkpoint_v2_폴더>/best_model.pt`는 실제로 준비한 현행 v2 묶음 경로로 바꿔야 합니다. 과거 `cnn_v2_gpu_30epoch`는 실험 이름의 v2이지 checkpoint 계약 버전이 아닙니다.
 
 ```powershell
 python -m src.wafer_dl.dataset `
@@ -216,7 +220,7 @@ python -m src.wafer_dl.dataset `
 
 python -m src.wafer_dl.evaluate `
   --cache-dir data/processed/wm811k/input_cache/wm_resize_v2_test `
-  --checkpoint models/wm811k/cnn_v2_gpu_30epoch/best_model.pt `
+  --checkpoint "models/wm811k/<새_checkpoint_v2_폴더>/best_model.pt" `
   --output-dir reports/wm811k/test_evaluation_reproduction `
   --device auto `
   --confirm-test-evaluation

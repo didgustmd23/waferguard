@@ -10,7 +10,7 @@ import pandas as pd
 from src.agents import task_adapters, task_store
 from src.agents import task_orchestrator as orchestrator
 from src.agents.task_plan import PlanError, flatten
-from src.agents.task_report import chart_rows, code_label, recommendation_notice
+from src.agents.task_report import chart_rows, code_label, recommendation_notice, table_columns
 from .path_picker import path_input
 from .progress_view import show_operation_progress
 from .runtime_notice import render_permissions, require_execution_permissions
@@ -84,8 +84,11 @@ def _start_revise(st, task_id, attempt):
 
 def _rows(st, rows):
     # 컬럼명·값은 입력 데이터에서 온 문자열이다. 마크다운이 아니라 표로만 표시한다.
+    # 저장된 사실은 키가 정렬돼 있으므로 열 순서는 Markdown 보고서와 같은 table_columns로 정한다.
     if rows:
-        st.dataframe(pd.DataFrame([{key: str(value) for key, value in row.items()} for row in rows]), hide_index=True)
+        columns = table_columns(rows)
+        st.dataframe(pd.DataFrame([{key: str(row.get(key, "")) for key in columns} for row in rows], columns=columns),
+                     hide_index=True)
     else:
         st.text("(없음)")
 

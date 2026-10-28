@@ -149,7 +149,7 @@ manifest·관리 문서만 읽고 배열 내용은 다시 검사하지 않는다
 
 `reports/wm811k/analysis.ipynb`를 열고 프로젝트 환경의 Python 커널을 선택한다. 원본 pickle은 읽지 않으며, 먼저 정합성 검증을 통과한 `wm_label_v2` canonical 묶음을 사용한다. 후보가 하나일 때만 자동 선택하고, 여러 후보면 `CANONICAL_DIR`를 명시한다. 전체 metadata 집계에는 RAM이 필요하며 전체 맵을 동시에 적재하지 않는다. 예시 셀에서만 클래스별 첫 유효 맵을 숫자 전용으로 읽는다. 예시는 대표성을 보장하지 않는다. Notebook 셀은 배포 시 미실행·출력 없는 상태이며, 실제 사용 후 Git 공유 전 출력 제거가 필요하다.
 
-공통 코어 `src.wafer_dl.eda.run_eda()`는 로컬 표·그림·보고서를 생성한다. 에이전트 실행기 구현 시 같은 함수를 정해진 로컬 승인 노드에서 호출하며, 노트북 코드를 실행 도구로 사용하지 않는다. 현재 LangChain/LangGraph 도구 등록·LLM 연결은 하지 않았으며 기존 외부 상태/동작 열거값을 확장하지 않았다. 반환 `{"status":"eda_complete"}`는 로컬 실행 결과일 뿐 provider DTO가 아니다. 이미지·집계·경로·오류 상세는 LLM·LangSmith로 전송하지 않고 새 상태가 필요하면 기존 고정 매핑과 승인을 거친다. EDA 결과만으로 라벨·분할·해상도를 자동 변경하지 않는다.
+공통 코어 `src.wafer_dl.eda.run_eda()`는 로컬 표·그림·보고서를 생성한다. 현재 등록 모듈 `wm_canonical_eda`는 승인된 실행에서 `wm_canonical_worker`를 통해 같은 코어를 호출하며, 노트북 코드를 실행 도구로 사용하지 않는다. 이는 WM 단독 모듈 경로이고 통합 작업의 웨이퍼 입력 연결이나 LLM의 직접 도구 실행을 뜻하지 않는다. 반환 `{"status":"eda_complete"}`는 로컬 실행 결과일 뿐 provider DTO가 아니다. 이미지·집계·경로·오류 상세는 LLM·LangSmith로 자동 전송하지 않는다. EDA 결과만으로 라벨·분할·해상도를 자동 변경하지 않는다.
 
 ```powershell
 python -m src.wafer_dl.eda `
