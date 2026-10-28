@@ -306,11 +306,11 @@ Train·Validation 147,088건의 변환 검사 결과는 `transform_check_passed`
 | --- | ---: | ---: | --- |
 | Train | 121,261 | 30 | `dataset_batch_passed` |
 | Validation | 25,827 | 7 | `dataset_batch_passed` |
-| Test | 분할 25,834건 | 미생성 | 미검사 |
+| Test | 분할 25,834건 | 평가용 캐시 준비 완료 | 동결 모델 1회 평가 완료 |
 
 캐시 생성 완료 상태는 `cache_complete`이며 선택한 파일과 색인의 해시·개수·분할 연결을 기록합니다. 원본 전체를 RAM에 올리는 방식이 아니라 bounded buffer로 저장하고 Dataset은 읽기 전용 mmap으로 필요한 파일을 읽습니다.
 
-사용자가 공유한 Train·Validation 첫 배치 결과는 모두 이미지 `[32,2,128,128]`, `torch.float32`, 라벨 `torch.int64`입니다. 같은 분할 프로토콜이며 Test 맵 접근·모델 학습·성능 평가를 수행하지 않았습니다. 합성 데이터 기반 관련 회귀 검사 57개 통과 기록과 실제 첫 배치 결과는 서로 다른 근거입니다.
+사용자가 공유한 Train·Validation 첫 배치 결과는 모두 이미지 `[32,2,128,128]`, `torch.float32`, 라벨 `torch.int64`입니다. 이 보고서의 Train·Validation 기록과 최신 Test 평가는 서로 다른 분할 프로토콜일 수 있으므로 아래 평가 절의 `split_protocol_id`를 기준으로 구분합니다. 합성 데이터 기반 회귀 검사와 실제 GPU 평가·첫 배치 결과는 서로 다른 근거입니다.
 
 캐시의 `training_ready=false`는 첫 배치 CLI 실행 후에도 자동 변경하지 않습니다. 이번 확인 범위는 선택 구간 파일 정합성과 첫 배치 계약이며 전체 Epoch·다중 worker 처리량·학습 시 RAM·GPU 전송 시간은 아직 검증하지 않았습니다. 따라서 전처리 전달 준비와 학습 실행의 완전한 검증을 구분합니다.
 
@@ -321,7 +321,71 @@ Train·Validation 147,088건의 변환 검사 결과는 `transform_check_passed`
 - 코드·설정·의존성·실행 방법은 Git으로 전달합니다. 상세 명령은 [캐시·Dataset 사용법](../../docs/WM811K/CACHE_DATASET.md)을 따릅니다.
 - 데이터는 Git으로 전달하지 않습니다. 캐시 폴더 전체의 `cache.json`, `cache.md`, `SUCCESS.json`, train·validation의 NPY와 `index.jsonl`을 별도 전달합니다. 맵 파일만 복사하면 Dataset 계약이 충족되지 않습니다.
 - 데이터를 받은 환경에서 Train·Validation 첫 배치 명령을 다시 실행합니다. Dataset은 고정된 split을 읽으므로 다시 무작위 분할하지 않습니다.
-- Test 분할은 완료했으나 캐시는 미준비입니다. 같은 변환 설정으로 별도 생성할 수 있습니다.
-- Test 결과를 본 뒤 전처리·모델·문턱을 반복 조절하지 않습니다. 향후 Test 사용 이력과 실패·변경 이력은 별도로 기록합니다.
+- 최신 동결 모델 평가에서는 Test 캐시를 별도로 준비했으며 25,834건을 CUDA에서 1회 추론했습니다. 동일한 Test를 모델 선택이나 전처리 조정에 재사용하지 않습니다.
+- Test 결과를 본 뒤 전처리·모델·문턱을 반복 조절하지 않습니다. 향후 Test 재사용 이력과 실패·변경 이력은 별도로 기록합니다.
 - 상세 맵·표본 색인·실제 집계·그래프·경로를 향후 에이전트의 외부 LLM·추적 서비스에 자동 전송하지 않습니다. Git 공개 여부는 별도 검토이며 LLM 입력 허용과 같지 않습니다.
+
+## 15. 동결 모델의 Test 1회 평가 결과
+
+평가 근거는 [Test 평가 JSON](test_evaluation_group_v2_macro_f1/test_evaluation.json)이며 상태는 `test_evaluation_complete`입니다. 모델과 평가 설정은 다음과 같습니다.
+
+| 항목 | 값 |
+| --- | --- |
+| 모델 | `SmallWaferCNN` |
+| checkpoint | `models/wm811k/cnn_v2_gpu_30epoch/best_model.pt` |
+| checkpoint 버전 | `wm_cnn_checkpoint_v1` |
+| 선택 epoch | 14 |
+| 선택 지표 | `macro_f1` |
+| 분할 프로토콜 | `wm_split_f0c03dc081950bdf70c185f2f446d3bcb94716da415d4af491ba3ba3e64e4e93` |
+| Test 표본 | 25,834건 |
+| 추론 장치 | CUDA |
+| 추론 시간 | 약 11.428초 |
+| 표본당 추론 시간 | 약 0.442ms |
+| peak CUDA 메모리 | 약 286,510,592 bytes |
+
+| 지표 | Majority baseline | 동결 모델 | 변화 |
+| --- | ---: | ---: | ---: |
+| Accuracy | 88.3758% | 96.1253% | +7.7495%p |
+| Macro Precision | 9.8195% | 73.6340% | - |
+| Macro Recall | 11.1111% | 85.6073% | +74.4962%p |
+| Macro F1 | 10.4255% | 77.1651% | +66.7396%p |
+
+동결 모델은 `None` 다수를 예측하는 Majority baseline보다 높은 Accuracy와 Macro F1을 기록했습니다. 다만 이는 단일 Test 구간의 결과이며 반복 seed, bootstrap 신뢰구간, 추가 데이터셋 검증을 거친 미래 성능 보장은 아닙니다.
+
+### 클래스별 Test 성능
+
+| 클래스 | Support | Precision | Recall | F1 |
+| --- | ---: | ---: | ---: | ---: |
+| None | 22,831 | 99.3913% | 97.9852% | 98.6833% |
+| Center | 574 | 76.5414% | 88.6760% | 82.1630% |
+| Donut | 58 | 63.9344% | 67.2414% | 65.5462% |
+| Edge-Loc | 763 | 72.8873% | 81.3893% | 76.9040% |
+| Edge-Ring | 996 | 97.9310% | 85.5422% | 91.3183% |
+| Loc | 389 | 63.8418% | 58.0977% | 60.8345% |
+| Near-Full | 18 | 94.7368% | 100.0000% | 97.2973% |
+| Random | 89 | 62.8788% | 93.2584% | 75.1131% |
+| Scratch | 116 | 30.5630% | 98.2759% | 46.6258% |
+
+Near-Full은 Support 18건이고 Scratch는 Recall은 높지만 Precision 30.5630%로 False Positive가 상대적으로 많습니다. Donut·Loc·Scratch의 소수 표본과 낮은 F1은 단일 평가 값만으로 일반화 성능을 확정하지 않도록 해석해야 합니다.
+
+### 혼동행렬 해석
+
+동결 모델의 오류에서 큰 축은 다음과 같습니다.
+
+- `None` 중 223건을 Scratch로 오예측했습니다.
+- `Edge-Ring` 중 115건을 Edge-Loc로 오예측했습니다.
+- `Loc` 중 73건을 Center로 오예측했습니다.
+- `Loc` 중 33건을 Edge-Loc로 오예측했습니다.
+- Scratch 116건 중 114건을 Scratch로 맞혔으며 Recall 98.2759%입니다.
+- 전체 25,834건 중 정확한 예측은 `0.9612526128357978 × 25,834`로 계산하면 약 24,833건입니다. 소수점 반올림 전 행 단위 혼동행렬 합계는 JSON을 기준으로 확인해야 합니다.
+
+전체 혼동행렬과 클래스별 오분류 수치는 [Test 평가 JSON](test_evaluation_group_v2_macro_f1/test_evaluation.json)에서 확인합니다.
+
+### 평가의 한계와 사용 조건
+
+- `test_used_for_model_selection=false`이며 Test는 checkpoint 동결 후 1회 사용했습니다.
+- 이 결과는 개발 중 재조정된 threshold나 전처리 설정의 재검증 수치가 아니므로 Test 결과를 보고 다시 모델·전처리·threshold를 선택하면 안 됩니다.
+- single Test split, 소수 클래스 Support, 비독립 반복 평가 부재를 분명히 기록했습니다.
+- WM-811K 광학 사진 성능이나 SECOM 성능과 결합해 평가하지 않습니다. WM-811K는 웨이퍼 검사 맵입니다.
+- 현재 표본 수가 충분하지 않은 클래스의 정확도·Recall은 신규 Test 표본에서 크게 변동할 수 있습니다.
 
