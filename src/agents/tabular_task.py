@@ -801,7 +801,10 @@ def _processing(record, preprocessor, candidate):
 
 
 def _expected_impact(candidate, preprocessor):
-    """결정 D와 보고서에 쓸 Train 후보 기준 예상 영향. 이전 버전 후보면 미산출 사유를 돌려준다."""
+    """결정 D와 보고서에 쓸 Train 후보 기준 예상 영향. 이전 버전 후보면 미산출 사유를 돌려준다.
+
+    impact가 없는 이전 후보(영향 집계 이전 버전)는 표·값 변화 없이 미산출 사유만 돌려줘, 화면이 영향 표를 생략하고 사유를 안내한다.
+    """
     impact = (candidate or {}).get("impact")
 
     if candidate is None:
@@ -815,11 +818,15 @@ def _expected_impact(candidate, preprocessor):
     lost = [item for item in impact if item["constant_after"] and item["distinct_before"] > 1]
     clipped = [item for item in impact if item["clipped"]]
     observed = sum(rows - item["missing"] for item in impact if item["clipped"] is not None)
-    table = []
+    table, changes, merged = [], {}, []
 
     for item in impact:
         record = records.get(item["column"], {})
         binned = record.get("edges") is not None
+        changes[item["column"]] = change = _value_change(item, record)
+
+        if change["kind"] == "merged":
+            merged.append(item)
 
         if not (item["clipped"] or item["constant_after"] or binned or item["width"] > 1):
             continue
@@ -828,7 +835,8 @@ def _expected_impact(candidate, preprocessor):
                       "clipping 변경 값": MISSING if item["clipped"] is None else f"{item['clipped']} ({item['clipped'] / max(rows - item['missing'], 1):.1%})",
                       "구간 수": len(record["edges"]) + 1 if binned else "-", "출력 열": item["width"],
                       "변환 후 상수": "예" if item["constant_after"] else "아니오",
-                      "정보 손실": "예" if item in lost else "-"})
+                      "정보 손실": "예" if item in lost else "-",
+                      "변환 후 고유값": change["after"], "값 변화": change["label"], "관련 설정": change["settings"]})
 
     widths = []
 
@@ -842,22 +850,77 @@ def _expected_impact(candidate, preprocessor):
 
     return {"rows": rows, "lost": lost, "clipped_values": sum(item["clipped"] for item in clipped), "clipped_features": len(clipped),
             "clip_observed": observed, "constant": sum(1 for item in impact if item["constant_after"]),
-            "missing_after": sum(item["missing_after"] for item in impact), "table": table, "widths": widths}
+            "missing_after": sum(item["missing_after"] for item in impact), "table": table, "widths": widths,
+            "changes": changes, "merged": merged}
+
+
+# 결정 D 영향 표의 열 순서. 이미 검증한 7개 열 뒤에 값 변화 근거 3개 열을 둔다(저장 facts는 키가 정렬되므로 함께 저장).
+IMPACT_COLUMNS = ["특징", "변환 전 고유값", "clipping 변경 값", "구간 수", "출력 열", "변환 후 상수", "정보 손실",
+                  "변환 후 고유값", "값 변화", "관련 설정"]
+MAX_BINS_NOTE = ("'변환 후 고유값'의 '최대 N'은 저장된 구간 수로 계산한 상한이며, 실제 변환 결과에서 센 고유값 수가 아닙니다. "
+                 "'1'은 변환 후 상수로 확인된 값이고, '" + MISSING + "'는 세지 않은 값입니다.")
+
+
+def _value_change(item, record):
+    """특징 하나의 값 변화 구분. 근거는 후보 impact(변환 전 고유값·변환 후 상수)와 저장 기준(구간 경계·clip 경계)뿐이다.
+
+    변환 후 고유값은 세 가지로만 쓴다: 확정값 '1'(worker가 센 변환 후 상수), 상한 '최대 N'(저장된 구간 수), 그 밖은 미집계.
+    worker는 변환 후 고유값을 세지 않으므로 여기서 추정하거나 새로 계산하지 않는다.
+
+    - 상수화: 여러 값 → 1개. 관련 설정은 이 특징에 실제로 적용된 구간화·극단값 자르기이며, 둘 다면 원인을 하나로 정하지 않는다
+      (저장 근거만으로는 어느 설정이 값을 모았는지 분리할 수 없다).
+    - 일부 병합: 구간 수가 변환 전 고유값보다 적어 일부 값이 반드시 같은 구간에 모인다(비둘기집 원리, 구간화의 의도된 결과일 수 있음).
+      구간 수 이상이면 병합 여부를 알 수 없으므로 표시하지 않는다.
+    - 원래 상수: 변환 전부터 값이 1종이라 새 정보 손실이 아니다.
+    """
+    edges, clip = record.get("edges"), record.get("clip")
+    settings = [label for label, used in (("구간화", edges is not None), ("극단값 자르기", clip is not None)) if used]
+
+    if item["constant_after"]:
+        if item["distinct_before"] <= 1:
+            return {"kind": "original", "after": "1", "label": "원래 상수(변환 전 1종)", "settings": "-"}
+
+        return {"kind": "constant", "after": "1", "label": "상수화(여러 값 → 1)", "settings": " · ".join(settings) or "확인 불가"}
+
+    if edges is not None and len(edges) + 1 < item["distinct_before"]:
+        bins = len(edges) + 1
+        return {"kind": "merged", "after": f"최대 {bins}", "label": f"일부 병합({item['distinct_before']}종 → 구간 {bins}개)",
+                "settings": "구간화"}
+
+    return {"kind": "none", "after": MISSING, "label": "-", "settings": "-"}
 
 
 def _impact_warnings(expected, removed_count):
-    """정보 손실 사전 경고. 설정은 바꾸지 않고 사실과 다음 행동만 적는다."""
+    """정보 손실 사전 경고. 설정은 바꾸지 않고 사실과 다음 행동만 적는다.
+
+    상수화는 정보 손실로, 일부 병합은 구간화의 의도된 결과일 수 있는 안내로 나눈다. 해결 예시에는 이 후보에서 실제로 적용된
+    설정만 들며, 한 특징에 둘 이상 적용됐으면 원인을 하나로 단정하지 않는다.
+    """
     if "missing" in expected:
         return ["처리 영향(clipping 변경 값·변환 후 상수)은 " + expected["missing"] + "입니다."]
 
-    warnings = []
+    warnings, related = [], []
+    changes = expected.get("changes", {})
+
+    def listed(items, describe):
+        return ", ".join(describe(item) for item in items[:10]) + (" 외" if len(items) > 10 else "")
 
     if expected["lost"]:
-        names = ", ".join(item["column"] for item in expected["lost"][:10]) + (" 외" if len(expected["lost"]) > 10 else "")
-        warnings.append(f"변환 전에는 값이 여러 종류였지만 변환 후 모든 값이 같아지는 특징 {len(expected['lost'])}개(Train 후보 계산 집계): {names}. "
-                        "이 특징은 학습에 정보를 주지 못합니다(정보 손실). clipping 경계가 한 값으로 모였거나 구간이 하나로 합쳐진 경우입니다.")
+        settings = [changes[item["column"]]["settings"] for item in expected["lost"] if item["column"] in changes]
+        related += settings
+        names = listed(expected["lost"], lambda item: item["column"] + (f"({changes[item['column']]['settings']})" if item["column"] in changes else ""))
+        warnings.append(f"변환 전에는 값이 여러 종류였지만 변환 후 모든 값이 같아지는 특징 {len(expected['lost'])}개(상수화, Train 후보 계산 집계): {names}. "
+                        "이 특징은 학습에 정보를 주지 못합니다(정보 손실). 괄호는 이 특징에 적용된 관련 설정이며, 둘 이상이면 어느 설정 때문인지 "
+                        "분리하지 않았습니다.")
+
+    if expected.get("merged"):
+        related.append("구간화")
+        names = listed(expected["merged"], lambda item: item["column"] + "(" + changes[item["column"]]["label"].split("(", 1)[1])
+        warnings.append(f"구간화로 일부 값이 같은 구간에 모이는 특징 {len(expected['merged'])}개: {names}. 구간화의 의도된 결과일 수 있으며 "
+                        "오류나 성능 저하를 뜻하지 않습니다. 숫자로 저장된 범주 코드처럼 값마다 의미가 다른 특징이라면 역할을 확인하세요.")
 
     if expected["clipped_values"]:
+        related.append("극단값 자르기")
         warnings.append(f"clipping으로 Train 값 {expected['clipped_values']}개(특징 {expected['clipped_features']}개, clip 대상 관측값의 "
                         f"{expected['clipped_values'] / max(expected['clip_observed'], 1):.1%})가 경계값으로 바뀝니다.")
 
@@ -865,8 +928,11 @@ def _impact_warnings(expected, removed_count):
         warnings.append(f"Train 기준으로 제거되는 특징 {removed_count}개가 있습니다. 사유는 제거 후보 표를 확인하세요.")
 
     if warnings:
-        warnings.append("경고 때문에 설정을 자동으로 바꾸지 않았습니다. 바꾸려면 적용하지 말고 '계획 수정'에서 해당 옵션(예: 극단값 자르기 none) "
-                        "이나 특징 역할을 고친 뒤 다시 확인하세요(새 시도, 새 동의).")
+        # 해결 예시는 이 후보에서 실제로 관련된 설정만 든다(관련 없는 옵션을 제시하지 않음).
+        names = list(dict.fromkeys(name for text in related for name in text.split(" · ") if name not in ("-", "확인 불가")))
+        target = "관련 설정(" + "·".join(names) + ")" if names else "관련 옵션"
+        warnings.append(f"경고 때문에 설정을 자동으로 바꾸지 않았습니다. 바꾸려면 적용하지 말고 '계획 수정'에서 {target}이나 특징 역할을 "
+                        "검토한 뒤 다시 확인하세요(새 시도, 새 동의).")
 
     return warnings
 
@@ -906,8 +972,13 @@ def review_facts(record, candidate, preprocessor, raw):
               {"title": "제거 후보", "rows": removed}]
 
     if unknown is None:
-        tables += [{"title": "예상 처리 영향 (Train 후보 계산, 영향이 있는 특징만)", "rows": expected["table"]},
-                   {"title": "출력 폭 (구간화·원핫)", "rows": expected["widths"]}]
+        # '최대 N'이 표에 있을 때만 상한이라는 뜻을 표 바로 아래에 붙인다(영향 집계가 없는 이전 후보는 표 자체를 생략).
+        impact = {"title": "예상 처리 영향 (Train 후보 계산, 영향이 있는 특징만)", "rows": expected["table"], "columns": IMPACT_COLUMNS}
+
+        if expected["merged"]:
+            impact["notes"] = [MAX_BINS_NOTE]
+
+        tables += [impact, {"title": "출력 폭 (구간화·원핫)", "rows": expected["widths"]}]
 
     tables.append({"title": "실제 실행 설정 (후보 계산에 쓴 값)", "rows": settings})
     facts = {"metrics": metrics, "tables": tables, "warnings": _impact_warnings(expected, len(removed)),

@@ -88,7 +88,11 @@ def _defaults():
 
 
 def instructions():
-    """표형 계획의 역할 의미·분할 제약. 기본값은 user 메시지의 base_plan으로 따로 보낸다."""
+    """표형 계획의 역할 의미·분할 제약. 기본값은 user 메시지의 base_plan으로 따로 보낸다.
+
+    표형 v1·v2가 공유하는 안내일 뿐 계약이 아니다. 모델이 따르지 않아도 병합한 계획은 별도 검증(허용 값·분할 제약)에서
+    전체 거부되고 기본 계획으로 진행한다. 길이는 전달 범위(token_budget)를 줄이므로 판단에 필요한 의미만 둔다.
+    """
     roles = [f"{label}={ROLE_MEANINGS[key]}(여러 컬럼 가능)" for label, key in LIST_ROLES.items()]
     roles += [f"{label}={ROLE_MEANINGS[key]}(최대 1개, 해당 컬럼이 없으면 쓰지 않음)" for label, key in SINGLE_ROLES.items()]
     roles.append(f"{EXCLUDED}=사용하지 않음")
@@ -111,7 +115,12 @@ def instructions():
         "보이는 컬럼은 특징으로 쓰지 마세요. 목표에 예측 대상이 있으면 해당 컬럼을 target으로 두세요. "
         "split 제약: train_ratio·validation_ratio·test_ratio는 각각 0과 1 사이이고 합이 1; " + "; ".join(strategies) + ". "
         "병합한 계획 전체가 이 제약을 만족해야 하며(아니면 권장안 전체 거부), 역할을 바꾸면 관련 split 항목도 함께 쓰세요. "
-        "Test 구간에 맞추는 규칙은 없습니다."
+        "Test 구간에 맞추는 규칙은 없습니다. "
+        # 전처리 옵션의 적용 범위와 few_values 의미. 컬럼별 의미는 데이터마다 다르므로 특정 컬럼명을 예로 들지 않는다.
+        "전처리 옵션은 최종 역할 기준으로 일괄 적용됩니다(numeric_imputation·outlier·scaling·binning은 수치형 전체, "
+        "categorical_imputation·unknown_category는 범주형 전체). binning은 수치형 특징의 구간화이며 범주형 인코딩이 아닙니다. "
+        "few_values는 관측값 종류가 적다는 뜻으로 숫자 범주 코드일 수 있으니 역할을 검토하되 이것만으로 단정하지 마세요. "
+        "역할과 옵션을 함께 적용한 계획 전체를 고려하고, 데이터 설명은 제공된 집계와 일치시키세요."
     )
 
 

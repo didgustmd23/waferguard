@@ -808,6 +808,10 @@ def _render_apply(st, task):
             st.markdown("#### " + table["title"])
             _rows(st, table["rows"], table.get("columns"))
 
+            # 표 단위 설명(있는 유형·후보만)은 해당 표 바로 아래에 둔다. 이전 facts에는 없다.
+            for text in table.get("notes", []):
+                st.caption(text)
+
         with st.expander("원문 보고서 (일반 텍스트)"):
             st.text(facts["text"] or "원문 보고서를 표시할 수 없습니다.")
 
