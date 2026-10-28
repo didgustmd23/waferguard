@@ -6,6 +6,7 @@ LLM을 쓰지 않는다. 사실에 없는 수치는 추측하지 않고 '미집�
 import json
 
 from . import task_adapters, task_recommend
+from .task_plan import PlanError, get_path
 
 
 MISSING = "미집계"
@@ -81,8 +82,7 @@ def build_facts(record):
         cautions.append(f"모델 검토 범위: 판단 대상 {coverage['total']}개 중 {coverage['summarized']}개는 요약만 제공해 모델이 "
                         "역할을 권하지 않았습니다(기본 계획 또는 사용자 편집 값 사용).")
 
-    for item in (record["confirmed"] or {}).get("answers", []):
-        cautions.append("질문 답변으로 정한 항목: " + str(item["path"] or item["id"]) + " = " + str(item["value"]))
+    cautions += answer_notes(record)
 
     technical = dict(facts["technical"], runs={step: item["run_name"] for step, item in record["steps"].items()},
                      delegations={step: len(item["delegations"]) for step, item in record["steps"].items()},
@@ -93,6 +93,36 @@ def build_facts(record):
     return dict(facts, goal=record["goal"], cautions=cautions, technical=technical,
                 highlights=facts.get("highlights", []), warnings=facts.get("warnings", []), usage=facts.get("usage", []),
                 recommendation={"source": draft["source"], "code": draft.get("code")})
+
+
+def answer_notes(record):
+    """질문 답변 한 줄씩. 응답값(고른 선택지)·계획 경로·확정 계획 값을 구분한다.
+
+    컬럼 선택 질문은 응답값이 컬럼 이름이고 선택지가 정한 역할은 확정 계획에 있다(확정 계획은 답변을 마지막에 반영한 결과).
+    응답값이 곧 그 항목 값이면 기존 표기를 쓴다. 확정 계획에 경로가 없는 이전 기록은 값을 추정하지 않는다.
+    """
+    confirmed = record.get("confirmed") or {}
+    lines = []
+
+    for item in confirmed.get("answers", []):
+        path, value = item.get("path"), item["value"]
+
+        if path is None:
+            lines.append("질문 답변(질문 " + str(item["id"]) + "): 고른 선택지 " + str(value) + " · 바꾼 계획 항목 없음")
+            continue
+
+        try:
+            final = get_path(confirmed["plan"], path)
+        except (KeyError, TypeError, PlanError):
+            lines.append("질문 답변 항목: " + str(path) + " · 확정 계획 값 확인되지 않음 (고른 선택지: " + str(value) + ")")
+            continue
+
+        if final == value:
+            lines.append("질문 답변으로 정한 항목: " + str(path) + " = " + str(value))
+        else:
+            lines.append("질문 답변으로 정한 항목: " + str(path) + " = " + str(final) + " (확정 계획 값, 고른 선택지: " + str(value) + ")")
+
+    return lines
 
 
 def _plain(value):
@@ -110,13 +140,34 @@ def _plain(value):
     return text
 
 
+# 보고서 표의 열 순서. 저장한 사실을 다시 읽으면 행 키가 가나다순으로 정렬되므로 화면·Markdown 모두 이 순서로 열을 놓는다.
+# 기존 표 머리글(유형 어댑터의 조립 순서)을 모두 그대로 재현하는 하나의 순서다. 목록에 없는 열은 처음 나온 순서로 뒤에 둔다.
+COLUMN_ORDER = (
+    "구분", "순위", "항목", "설정 이름", "최종 값", "파일", "용도", "컬럼", "특징", "특징 A", "특징 B", "구간", "대상 구간", "대상",
+    "컬럼 범위", "단위", "역할", "자료형", "결측(건)", "결측 비율", "관측 고유값", "상수·전체 결측", "공백 문자열", "+무한대", "-무한대",
+    "유한 관측 수", "하한", "상한", "후보 수", "후보 비율", "관측 수", "평균", "표준편차", "최솟값", "25%", "중앙값", "75%", "최댓값",
+    "범주 수", "빈 표기(건)", "최빈 범주 점유율", "희소 범주 수", "희소 범주 행 비율", "Pearson", "Spearman", "쌍별 관측 수",
+    "요청 비율", "확정 비율", "행 수", "그룹 수", "클래스", "건수", "비율", "변환", "값", "전", "후", "후 (실측)", "예상 (후보)",
+    "처리 전", "처리 후", "결정 출처", "모델 의견", "실행 기록 대조", "실제 변경(근거)", "내용", "처리", "제외 사유", "대상·분모",
+    "근거", "비고", "크기(byte)",
+)
+
+
+def table_columns(rows):
+    """표의 열 이름. 행마다 키가 달라도 모든 키를 모아 COLUMN_ORDER 순으로 둔다. 화면 표와 Markdown 표가 같이 쓴다."""
+    seen = list(dict.fromkeys(key for row in rows for key in row))
+    rank = {name: index for index, name in enumerate(COLUMN_ORDER)}
+    return sorted(seen, key=lambda key: (rank.get(key, len(rank)), seen.index(key)))
+
+
 def _table(rows):
     if not rows:
         return ["(없음)"]
 
-    keys = list(rows[0])
+    keys = table_columns(rows)
+    # 일부 행에 없는 열은 빈 칸으로 둔다(값을 만들지 않는다).
     return ["| " + " | ".join(keys) + " |", "| " + " | ".join("---" for _ in keys) + " |",
-            *["| " + " | ".join(_plain(row[key]) for key in keys) + " |" for row in rows]]
+            *["| " + " | ".join(_plain(row.get(key, "")) for key in keys) + " |" for row in rows]]
 
 
 BAR_WIDTH = 20

@@ -19,7 +19,7 @@
 | `configs/agents/preparation_candidate_example.json` | 데이터셋과 독립적인 후보 규칙 예시 |
 | `tests/agents/test_preparation_candidate.py` | Train-only·변환 금지·승인·상한·변조·취소·복사 패키지 합성 검증 |
 
-현재 `module_pipeline_cli`의 비파괴 모듈 목록에 변환을 몰아넣은 것이 아니다. 중간 적용 승인 경계를 보존하는 별도 후보 실행 경로이며, 모듈 등록부의 제안 ID 등록과 저장 상태 적용 연결은 후속 범위다.
+후보 산출은 변환 적용과 구분된 실행 경로이며 중간 적용 승인 경계를 보존한다. 현재 모듈 등록과 실행 연결은 [준비 파이프라인 실행](PREPARATION_PIPELINE_EXECUTION.md)에, 저장된 후보를 사용하는 별도 적용 경로는 [준비 적용](PREPARATION_APPLY.md)에 정리되어 있다. 후보 생성 승인이 변환 적용 승인까지 포함하지는 않는다.
 
 ## 입력과 승인
 

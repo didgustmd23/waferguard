@@ -1015,6 +1015,11 @@ FILE_USES = {
 }
 
 
+def _class_key(label):
+    """구간별 클래스 순서를 맞출 때의 식별 키. 타입과 저장 표기를 함께 써 1·'1'·True를 서로 다른 클래스로 둔다."""
+    return type(label).__name__, json.dumps(label, ensure_ascii=False, sort_keys=True)
+
+
 def _measured(application, name, key):
     impact = (application or {}).get("impact")
 
@@ -1174,10 +1179,18 @@ def report_from_sources(record, sources):
     comparison = _comparison(record, features, candidate, application, partitions, expected, output_width)
     split_rules = plan["split"]
     split_rows = []
+    # 구간마다 worker가 준 클래스 순서가 달라도 모든 구간을 같은 순서(train→validation→test 첫 출현 순)로 적는다.
+    # 같은 표기라도 타입이 다르면 다른 클래스로 둔다(숫자로 다시 해석하거나 합치지 않음). 개수는 그대로다.
+    class_order = {}
+
+    for name in ("train", "validation", "test"):
+        for entry in (partitions.get(name) or {}).get("classes") or []:
+            class_order.setdefault(_class_key(entry["label"]), len(class_order))
 
     for name in ("train", "validation", "test"):
         item = partitions.get(name)
-        classes = ", ".join(f"{entry['label']}: {entry['count']}" for entry in item["classes"]) if item and item.get("classes") else "-"
+        entries = sorted(item["classes"], key=lambda entry: class_order[_class_key(entry["label"])]) if item and item.get("classes") else []
+        classes = ", ".join(f"{entry['label']}: {entry['count']}" for entry in entries) or "-"
         split_rows.append({"구간": name, "요청 비율": split_rules.get(name + "_ratio", MISSING),
                            "확정 비율": f"{item['ratio']:.3f}" if item and isinstance(item.get("ratio"), (int, float)) else MISSING,
                            "행 수": item["rows"] if item else MISSING,

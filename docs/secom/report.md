@@ -101,7 +101,7 @@ TP·FP·FN·TN은 실제 정답과 모델의 위험 대상 선별 여부를 비�
 | F1 | `2 × TP / (2 × TP + FP + FN)`. Precision과 Recall의 조화평균으로, 현장 비용·검사 용량 기준을 대신하지 않는다. |
 | FPR(정상 오탐률) | `FP / (FP + TN)`. 실제 정상 중 잘못 양성으로 판정한 비율이다. |
 | 양성 판정 비율 / Alarm ratio / Reinspection ratio | `(TP + FP) / N`. 전체 중 모델이 양성으로 선별한 비율이다. 기존 로그의 재검사율은 이 값이며, 사람이 검사했거나 실제 추가 검사가 수행됐다는 뜻은 아니다. |
-| 분류 임계값(threshold, 기존 표현: 문턱) | 점수가 이 값 이상이면 양성으로 판정하는 기준. 동일한 평가 데이터와 점수에서 임계값을 낮추면 선별 대상이 늘고 Recall은 감소하지 않지만 Precision은 반드시 좋아지지 않는다. 본문의 ‘문턱’과 threshold는 같은 뜻이다. |
+| 분류 임계값(threshold, 본문에서는 ‘문턱’과 병용) | 점수가 이 값 이상이면 양성으로 판정하는 기준. 동일한 평가 데이터와 점수에서 임계값을 낮추면 선별 대상이 늘고 Recall은 감소하지 않지만 Precision은 반드시 좋아지지 않는다. 본문의 ‘문턱’과 threshold는 같은 뜻이다. |
 | FN/FP trade-off | 불량 미검을 줄이려 할 때 정상 오탐·선별 부담이 늘 수 있는 관계. Recall만으로 최종 후보를 판단하지 않는다. |
 
 Recall·Precision·F1의 정의는 [scikit-learn 평가 지표 문서](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.precision_recall_fscore_support.html)를 따른다. 예측 양성이 없을 때 이 프로젝트의 Precision 기록값은 0이다.
@@ -477,6 +477,8 @@ Time Train 1,096행만 사용해 과거 구간을 학습하고 이후 구간을 
 | 3 | L1 Logistic Regression balanced | 0.0783714913 | 0.2222 | 0.0217 | 0.0396 | 2 | 90 | 7 | 173 |
 
 서로 다른 세 threshold로 나온 건수를 합산하면 다음과 같다. 세 구간의 평가는 각각 다른 운영 threshold를 사용하므로, 이는 threshold 하나의 성능이 아니라 전이 안정성을 살피기 위한 요약이다.
+
+**합산표 사용 제한:** 아래 Random Forest 행은 위 구간별 표와 일치하지 않는다. 위 세 구간을 합하면 TP 28·FP 453·FN 11·TN 332지만 아래 보존값은 TP 7·FP 214·FN 32·TN 571이다. 당시 전용 CSV가 없어 어느 쪽이 정답인지 확인되지 않았다. 원본 근거를 확인하기 전에는 이 절의 Random Forest 합산 지표를 성능 비교·발표 근거로 사용하지 않는다. 기존 수치를 임의로 대체하거나 재실행으로 과거 결과를 덮어쓰지 않는다.
 
 | 모델 | TP | FP | FN | TN | 전체 양성 판정 비율 | pooled Recall | pooled Precision |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -1012,7 +1014,7 @@ S0의 AP 유지율은 **98.76%**, 상대 하락률은 **1.24%**로 설정한 목
 
 ### Recall·양성 판정 비율과 threshold 구분
 
-시간순 기본 threshold 0.50에서 전체 모델은 TP 0·FP 0·FN 39, S0는 TP 2·FP 9·FN 37이었다. 낮은 기본 문턱 검출력을 AP 판정과 구분해 기록한다.
+시간순 기본 threshold 0.50에서 전체 모델은 TP 0·FP 0·FN 39, S0는 TP 2·FP 9·FN 37이었다. 기본 임계값 0.50에서의 낮은 검출률을 AP 판정과 구분해 기록한다.
 
 아래는 각 과거 학습 구간의 내부 OOF에서 **F1 최대 진단 threshold**를 정해 다음 구간에 적용한 결과다. 구간별 모델·threshold가 달라 단일 최종 모델의 결과가 아니며, 정책을 통과한 threshold도 아니다. Recall과 Precision은 fold 평균 대신 합산 confusion matrix로 계산했다.
 

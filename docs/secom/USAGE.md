@@ -6,11 +6,11 @@
 
 ## 시작하기
 
-아래 명령은 프로젝트 루트에서 실행합니다. 데이터와 모델 묶음은 저장소에 포함하지 않으므로 원본 준비 또는 별도 재현이 필요합니다.
+아래 명령은 프로젝트 루트에서 실행합니다. 현재 통합 requirements는 Windows x64·Python 3.12 기준입니다. 저장 V2 묶음의 복원은 이 환경과 별개로 아래에 명시한 저장 당시 고정 환경을 사용합니다. 데이터와 모델 묶음은 저장소에 포함하지 않으므로 원본 준비 또는 별도 재현이 필요합니다.
 
 ```bash
-git clone <repository-url>
-cd secom-waferguard
+git clone https://github.com/didgustmd23/waferguard.git
+cd waferguard
 python -m venv .venv
 ```
 
@@ -31,7 +31,7 @@ python -m unittest discover -s tests -v
 
 UCI의 원본 데이터 CSV는 저장소에 포함하지 않습니다. [UCI SECOM Data Set](https://archive.ics.uci.edu/dataset/179/secom)에서 `secom.data`, `secom_labels.data`를 받아 `data/raw/`에 저장합니다. 원본 파일은 수정하지 않고, 아래 Script로 재현 가능한 산출물을 생성합니다.
 
-### Day 1 데이터 준비
+### 데이터 준비
 
 ```powershell
 python -m src.sensor_ml.data_pipeline.step1_merge_data
@@ -41,6 +41,17 @@ python -m src.sensor_ml.data_pipeline.step2_data_check
 `step1_merge_data.py`는 Profile의 `ingestion` source 정의로 원본 파일을 병합하여 canonical 입력(`data/processed/secom_merged.csv`)을 생성합니다. 따라서 원본 경로나 읽기 옵션, label/timestamp 열 순서를 코드에 고정하지 않아 같은 수집 형식의 다른 데이터셋 Profile에도 처리 흐름을 적용할 수 있습니다.
 
 `step2_data_check.py`는 결측률·상수 feature·timestamp·label 분포를 `logs/secom/data/dataset_log.csv`에 기록합니다. 이 결과는 전체 데이터의 EDA 후보 정보일 뿐이며, 이를 사용해 `secom_cleaned.csv`를 만들거나 모델 feature를 전역에서 제거하지 않습니다. 실제 결측 처리와 feature 선택은 Train/CV 학습 fold 안에서만 fit하여 데이터 누수를 방지합니다. 두 CSV 산출물은 원본과 Profile만 있으면 재생성 가능하므로 Git에서 추적하지 않습니다.
+
+### 데이터 분할 — 모델링의 선행 단계
+
+공식 진입점 `step3_split.py`는 공통 Profile 검증과 원본 ID·split 계약을 적용해 Random/Time 분할·EDA·클래스 요약·누수 검사를 수행합니다. 기본 출력은 `data/splits/integrated/`, 점검 로그는 `logs/secom/data/step3_integrated/`, 그림은 `reports/secom/figures/eda/step3/`입니다. 기존 split CSV는 덮어쓰지 않습니다.
+
+```powershell
+# 시간 holdout을 먼저 분리 (70/15/15는 목표 비율이며 동일 timestamp·그룹은 분리하지 않음)
+python -m src.sensor_ml.data_pipeline.step3_split
+```
+
+이미 준비한 분할이 있으면 출처·설정·분할 계약을 확인해 사용하고 같은 출력 경로로 재생성하지 않습니다. 새 분할이 필요하면 새 `--output-dir`·`--log-dir`을 지정하고 아래 모델링 명령의 입력 경로도 맞춥니다.
 
 ### 모델링 실험
 
@@ -89,12 +100,9 @@ python -m src.sensor_ml.evaluation.run_evaluation --change policy --train data/s
 
 `temporal_validation.py`는 기존 F1 최대 진단을 유지하면서 `policy_selection.csv`에 내부 OOF의 정책 충족 여부·선택값과 다음 구간 성능을 별도로 기록합니다. 미충족 구간에는 threshold와 정책 기반 평가값을 만들지 않습니다. 기존 보고서의 수치는 과거 실행 결과이며 새 정책 실험 결과로 간주하지 않습니다.
 
-팀원의 `step3_split.py`를 공식 진입점으로 사용한다. 기존 Random/Time 분할·EDA·클래스 요약·누수 검사 함수를 유지하면서 공통 Profile 검증과 원본 ID·split 계약을 통합했다. 별도 `step3_split_data.py`는 제거했다. 기본 출력은 `data/splits/integrated/`, 점검 로그는 `logs/secom/data/step3_integrated/`, 그림은 `reports/secom/figures/eda/step3/`이며 기존 split CSV는 덮어쓰지 않는다.
+아래 개별 명령은 앞의 [데이터 분할](#데이터-분할--모델링의-선행-단계)에서 준비한 동일 Time Train을 사용합니다. 분할 생성은 반복하지 않습니다.
 
 ```powershell
-# 시간 holdout을 먼저 분리 (70/15/15는 목표 비율이며 동일 timestamp·그룹은 분리하지 않음)
-python -m src.sensor_ml.data_pipeline.step3_split
-
 # Time Train/Validation baseline
 python -m src.sensor_ml.experiments.step4_baseline --train data/splits/integrated/time_train.csv --validation data/splits/integrated/time_valid.csv --split-strategy time --output logs/secom/data/integrated/baseline.csv
 
@@ -132,7 +140,7 @@ Step 3을 재실행할 때는 새로운 `--output-dir`과 `--log-dir`을 지정�
 
 새 split의 `__source_row_id`는 원본 CSV 내 행 위치, `__split_role`은 train/validation/test, `__split_protocol_id`는 원본·Profile·비율의 생성 계약 해시다. 이 컬럼들은 모델 입력에서 제외한다. Baseline·시간 검증은 중복 행과 계약 혼합을 검사하고, 후보 비교·OOF는 Validation/Test 역할의 입력을 거부한다. 기존 metadata 없는 CSV도 사용할 수 있지만 출처까지 보장하지 못하므로 탐색용으로만 취급한다.
 
-모든 모델링 Pipeline은 센서 품질 필터 이후 수치형 median 대치와 선언된 범주형 최빈값 대치/One-Hot Encoding을 공통으로 사용한다. SECOM의 결측률 50% 초과 기준에서는 전부 결측인 컬럼도 제거한다. Profile에서 품질 제거를 비활성화한 경우에는 전부 결측인 수치형 컬럼을 대치 단계에서 0으로 보존한다. Top-K와 특징 수는 변환 후 기준이며 범주형 입력에서는 센서 원본 컬럼 수와 One-Hot 특징 수가 다를 수 있다.
+기본 모델링 Pipeline은 센서 품질 필터 이후 수치형 median 대치와 선언된 범주형 최빈값 대치/One-Hot Encoding을 사용한다. 예외로 P2(`native_nan`) 비교는 수치형 대치를 생략하고 XGBoost의 자체 NaN 처리를 사용한다. SECOM의 결측률 50% 초과 기준에서는 전부 결측인 컬럼도 제거한다. median 대치 경로에서 Profile의 품질 제거를 비활성화하면 전부 결측인 수치형 컬럼을 대치 단계에서 0으로 보존한다. Top-K와 특징 수는 변환 후 기준이며 범주형 입력에서는 센서 원본 컬럼 수와 One-Hot 특징 수가 다를 수 있다.
 
 ## V2 저장 묶음 검증과 예측
 

@@ -1,10 +1,10 @@
 # WM-811K 전처리·학습 설계
 
-이 문서는 웨이퍼 도메인의 설계 기준이다. 전처리 코어와 학습 계획을 구분하며, 에이전트 공통 설계는 [DESIGN](../agents/DESIGN.md)을 따른다. 원본 재실행·모델 학습·정책 변경을 지시하는 문서가 아니다.
+이 문서는 웨이퍼 도메인의 설계 기준이다. 전처리·학습의 구현 범위와 후속 비교 계획을 구분하며, 에이전트 공통 설계는 [DESIGN](../agents/DESIGN.md)을 따른다. 원본 재실행·모델 학습·정책 변경을 지시하는 문서가 아니다.
 
 ## 현재 범위와 담당
 
-숫자 전용 canonical·검증/EDA·Lot/동일 맵 보호 분할·입력 변환·캐시·Dataset을 구현했고, 사용자 기록 기준 Train·Validation 첫 배치가 통과했다. Test 캐시·학습/평가·학습 담당자 인수 확인은 완료로 간주하지 않는다. 실제 결과는 [결과 보고서](../../reports/wm811k/report.md), 실행/전달은 [CACHE_DATASET](CACHE_DATASET.md)을 따른다. 이 설계의 모든 검증 항목이 모든 환경에서 재확인됐다는 뜻은 아니다.
+숫자 전용 canonical·검증/EDA·Lot/동일 맵 보호 분할·입력 변환·캐시·Dataset, 작은 CNN 학습·평가를 구현했다. 사용자 기록 기준 Train·Validation 첫 배치, GPU 학습·checkpoint 동결, Test 캐시 준비와 1회 평가를 확인했다. 이 실제 성능은 2026-10-24~25 코드의 실행 기록이며, 이후 checkpoint v2·분할 해시·수치 검증 보완 코드로 다시 평가한 결과는 아니다. ResNet18 비교·seed 변동·학습 담당자 인수 확인은 별도 미확인 사항이다. 과거 EDA·전처리는 [결과 보고서](../../reports/wm811k/report.md), 현재 실행 계약과 학습·평가 기록은 [CACHE_DATASET](CACHE_DATASET.md)을 따른다. 이 설계의 모든 검증 항목이 모든 환경에서 재확인됐다는 뜻은 아니다.
 
 전처리·에이전트는 양현승, WM 모델·학습·평가는 이종수 담당이다. 클래스 매핑·split·변환/평가 기준은 공동 계약이며, 변경 시 새 버전과 사용 이력을 보존한다. 기존 SECOM 실험·모델·설정은 변경하지 않는다.
 
@@ -217,7 +217,7 @@ Test 변환의 구조 검사에서는 shape·범주·불량 마스크 소실 같
 
 ## 8. Train 전용 증강과 불균형 처리 계획
 
-현재 결정적 변환은 augmentation=none만 허용한다. 아래 증강/가중 loss는 학습 담당자가 후속 비교할 계획이며 구현·적용 완료로 표시하지 않는다.
+현재 결정적 변환은 augmentation=none만 허용한다. 증강은 후속 계획이며 미구현이다. Train 빈도 기반 가중 Cross Entropy는 학습기에 구현돼 기본 설정으로 적용한다. 일반 Cross Entropy와의 비교 및 증강의 효과 검증은 후속 범위다.
 
 ### 8.1 증강
 
@@ -230,8 +230,8 @@ Scratch 등 클래스가 방향에 무관하다는 가정과 원본 notch·장�
 ### 8.2 클래스 불균형
 
 - 분할 후 accepted Train 라벨 빈도만 사용한다. 전체 데이터나 Validation/Test 빈도로 loss 가중치를 계산하지 않는다.
-- 기본 전달물은 클래스별 Train count다. 비교용 class weight는 `N_train/(9*n_c)`를 초기식으로 제안하되 최종 적용은 학습 담당자가 loss 설정에 기록한다. Train에 클래스가 없으면 계산을 중단한다.
-- baseline은 일반 Cross Entropy, 다음 실험은 weighted Cross Entropy다. 처음부터 가중 loss와 과도한 oversampling을 동시에 쓰지 않는다.
+- 기본 전달물은 클래스별 Train count다. 캐시의 후보 가중치는 `N_train/(9*n_c)`다. 현재 학습기는 역빈도 가중치에 공통 배율과 상한을 적용해 클래스별 가중치 평균 1을 맞춘다. 실제 적용 여부·상한은 학습 설정에 기록하며 Train에 클래스가 없으면 계산을 중단한다.
+- 현재 기본 설정은 class-weighted Cross Entropy다. 일반 Cross Entropy와의 비교는 아직 완료하지 않았다. 가중 loss와 과도한 oversampling을 동시에 강화하지 않는다.
 - `None`을 대량 삭제하거나 희소 클래스를 복제한 뒤 전체 데이터를 split하지 않는다. Validation/Test는 확정된 원래 분포를 유지한다.
 - SMOTE는 공간 맵의 기본 전처리로 사용하지 않는다. 센서용 전처리·정책 문턱을 재사용하지 않는다.
 
@@ -326,26 +326,26 @@ Scratch 등 클래스가 방향에 무관하다는 가정과 원본 notch·장�
 
 ## 학습·평가 계획
 
-아래는 학습 담당자의 계획이며 모델·학습·최종 평가 완료 기록이 아니다. 기존 기초 설계의 비교 조건을 보존한 것이며 새로운 실험 지시가 아니다.
+작은 CNN과 Train 최빈 클래스 기준선은 구현됐고 실제 학습·Test 평가 기록은 [CACHE_DATASET](CACHE_DATASET.md#실제-실행-기록--2026-10-24)에 있다. 아래는 그 구현 범위와 후속 비교 조건을 구분한 설계이며 새로운 실험 지시가 아니다. ResNet18·여러 seed·검토 기준 비교의 완료를 뜻하지 않는다.
 
-### 사용 예정 모델과 선정 이유
+### 모델별 구현 범위와 선정 이유
 
 | 모델 | 우선순위·목적 | 선정 이유와 초기 방안 |
 | --- | --- | --- |
-| 다수 클래스 예측 기준선 | 필수 평가 기준 | 불균형 데이터에서 Accuracy의 효과를 확인. Train의 최빈 클래스 고정 예측 |
-| 작은 CNN | 1차 필수 구현 | 고리·선·국소 불량 같은 공간 패턴을 단순 구조로 학습. Conv 블록 → Global Average Pooling → 9종 출력 |
-| ResNet18 | 2차 필수 비교 | 작은 CNN보다 깊은 특징 추출의 효과를 비교. 첫 convolution을 2채널에 맞추고 출력층을 9종으로 구성 |
+| 다수 클래스 예측 기준선 | 구현·평가 기록 있음 | 불균형 데이터에서 Accuracy의 효과를 확인. Train의 최빈 클래스 고정 예측 |
+| 작은 CNN | 구현·학습·평가 기록 있음 | 고리·선·국소 불량 같은 공간 패턴을 단순 구조로 학습. Conv 블록 → Global Average Pooling → 9종 출력 |
+| ResNet18 | 후속 비교·미구현 | 작은 CNN보다 깊은 특징 추출의 효과를 비교. 첫 convolution을 2채널에 맞추고 출력층을 9종으로 구성 |
 | MobileNetV3-Small | 후속 선택 | 모델 크기·처리 시간이 병목일 때 정확도와 비용의 균형을 비교 |
 
-초기 CNN·ResNet18은 무작위 초기화로 비교한다. 사전학습 가중치를 추가하면 2채널 입력 변환 방법과 학습 조건을 별도 실험으로 기록한다. Transformer·준지도학습·생성 모델은 baseline 이후 확장 후보로 남긴다.
+현재 작은 CNN은 무작위 초기화로 학습한다. 후속 ResNet18 비교도 무작위 초기화를 기본으로 계획한다. 사전학습 가중치를 추가하면 2채널 입력 변환 방법과 학습 조건을 별도 실험으로 기록한다. Transformer·준지도학습·생성 모델은 baseline 이후 확장 후보로 남긴다.
 
 CNN 입력은 제안 기준 `2 × 128 × 128`, 출력은 9종 logits다. 최종 모델은 Validation Macro-F1만 단독으로 보지 않고 희소 클래스 Recall, seed별 변동과 추론 비용을 함께 검토해 선정한다. Test 성능을 보고 모델을 선택하지 않는다.
 
 ### 학습과 평가
 
-- 동일한 데이터·split·입력 변환·학습 예산으로 CNN과 ResNet18을 비교한다.
-- 기본 Cross Entropy와 Train 빈도 기반 class-weighted Cross Entropy를 비교한다. 가중치·샘플링을 동시에 강화하는 실험은 초기 범위에서 제외한다.
-- AdamW를 초기 optimizer 후보로 두고 learning rate·batch size·epoch 상한·early stopping은 설정으로 관리한다. 실제 GPU 메모리·처리 시간을 측정한 뒤 값을 확정한다.
+- ResNet18을 추가할 때 동일한 데이터·split·입력 변환·학습 예산으로 CNN과 비교한다. 현재 Test 결과를 보고 후보를 조정하지 않는다.
+- 기본 Cross Entropy와 Train 빈도 기반 class-weighted Cross Entropy의 비교는 후속이다. 현재 학습 설정은 가중 loss를 사용하며, 가중치·샘플링을 동시에 강화하는 실험은 초기 범위에서 제외한다.
+- 현재 작은 CNN은 AdamW를 사용하고 learning rate·batch size·epoch 상한·early stopping을 설정으로 관리한다. 다른 모델의 설정·실제 GPU 메모리·처리 시간은 별도로 확인한다.
 - checkpoint 선택과 early stopping은 Validation Macro-F1을 사용한다. 클래스별 Recall도 함께 확인한다.
 - 지표는 Macro-F1, 클래스별 Precision·Recall·F1·지원 건수, 혼동행렬, Accuracy, 학습 시간, 추론 시간과 최대 메모리다.
 - 작은 CNN·ResNet18 baseline을 확보한 뒤 채택 후보는 여러 seed로 변동을 확인한다. 반복 실험은 최종 Test를 사용하지 않는다.
@@ -356,7 +356,7 @@ CNN 입력은 제안 기준 `2 × 128 × 128`, 출력은 9종 logits다. 최종 
 
 ## 남은 확인과 전달
 
-- Test 캐시 준비와 모델·전처리·평가 정책 동결, 최종 학습/평가, 모델 저장·추론 계약은 별도 작업이다.
+- Test 캐시 준비·작은 CNN 학습·동결·저장·1회 평가는 실행 기록이 있다. 현행 checkpoint v2의 실제 재학습·평가 재현, 별도 복원·추론 인계 확인, ResNet18·seed 변동·운영 검증은 이 기록으로 완료 처리하지 않는다.
 - Train·Validation 첫 배치 완료와 학습 담당자의 인수 확인을 구분한다. 모델 담당자는 채널 순서·dtype·라벨·manifest/캐시 대응·분할 비중첩을 확인한다.
 - 실제 성능·독립 평가·현장 적용은 구현/합성 검증으로 대체하지 않는다. 출처·라이선스·pickle 신뢰와 환경 요구는 새 입력을 사용할 때 확인한다.
 - 실행 중 상태나 보고서만 고쳐 통과시키지 않는다. 새 작업은 현재 계약과 승인 범위를 확인하고 준비한다.
