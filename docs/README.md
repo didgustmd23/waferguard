@@ -16,6 +16,7 @@ WM 전처리의 검증·분할·변환·캐시·Dataset, 작은 CNN 학습 및 �
 
 - [사용 안내·현재 상태](agents/GUIDE.md): 통합 작업·고급 도구 사용법, 검증 범위와 현재 제한
 - [단일 설계 기준](agents/DESIGN.md): 구성도·공통/유형별 책임·입력/모듈 계약·동의/복구·LLM 전달·SEC-01~16
+- [저장 facts 기반 화면 표 검증](agents/guides/UI_DISPLAY_ACCEPTANCE.md): 재사용 가능한 자동·실제 UI 검증 절차와 CSV 적용 확인 표의 기준 사례
 - `agents/guides/`: 기능별 CLI 실행·승인·결과 확인 절차
 - `agents/security/`: AppContainer·Job·파일 권한·네트워크 실측 절차
 
