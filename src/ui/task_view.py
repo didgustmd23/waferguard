@@ -82,11 +82,12 @@ def _start_revise(st, task_id, attempt):
     st.session_state["task_revise_" + task_id] = attempt
 
 
-def _rows(st, rows):
+def _rows(st, rows, columns=None):
     # 컬럼명·값은 입력 데이터에서 온 문자열이다. 마크다운이 아니라 표로만 표시한다.
     # 저장된 사실은 키가 정렬돼 있으므로 열 순서는 Markdown 보고서와 같은 table_columns로 정한다.
+    # columns는 표를 만드는 쪽이 정한 순서다(없으면 호환용 기본 순서).
     if rows:
-        columns = table_columns(rows)
+        columns = table_columns(rows, columns)
         st.dataframe(pd.DataFrame([{key: str(row.get(key, "")) for key in columns} for row in rows], columns=columns),
                      hide_index=True)
     else:
@@ -339,7 +340,8 @@ def _render_findings(st, adapter, problem):
     if findings:
         labels = getattr(adapter, "FINDING_LABELS", {})
         st.text(f"확인된 지적 {len(findings)}건")
-        _rows(st, [{"지적": labels.get(item["code"], item["code"]), "대상": item["subject"] or "전체"} for item in findings])
+        _rows(st, [{"지적": labels.get(item["code"], item["code"]), "대상": item["subject"] or "전체"} for item in findings],
+              ["지적", "대상"])
 
 
 def _render_problem(st, task, problem):
@@ -560,23 +562,12 @@ def _render_review(st, task):
     for text in draft.get("notes", []):
         st.text("- 모델 메모(확인된 사실 아님): " + text)
 
-    view = adapter.diagnosis_view(task)
-
-    for line in adapter.input_notices(task) + view["lines"]:
-        st.text(line)
-
-    with st.expander("진단 요약 표"):
-        _rows(st, view["rows"])
+    _render_diagnosis(st, task, adapter)
 
     if hasattr(adapter, "preview_images"):
         _render_previews(st, task, adapter)
 
-    if state["recommended"]:
-        st.markdown("#### 권장 변경 (기본 계획 대비)")
-        before = {item["path"]: item["before"] for item in state["changes"]}
-        _rows(st, [{"항목": item["path"], "기본값": before.get(item["path"]), "권장값": item["value"], "근거": "모델 의견: " + item["reason"],
-                    "확인": item.get("check") or "-"} for item in state["recommended"]])
-
+    _render_recommended(st, state)
     _render_guide(st, state.get("guide") or [], "옵션 설명 (현재 표시한 계획 기준)")
     key = "task_review_" + task["task_id"][:8] + str(task["attempt"]) + ("r" if task["phase"] == "awaiting_apply" else "")
 
@@ -622,6 +613,28 @@ def _render_previews(st, task, adapter):
             st.image(image["data"], caption=image["label"])
 
 
+def _render_diagnosis(st, task, adapter):
+    """진단 안내 줄과 진단 요약 표. 열 순서는 유형 어댑터가 정한 columns를 쓰고, 없으면 기본 순서다."""
+    view = adapter.diagnosis_view(task)
+
+    for line in adapter.input_notices(task) + view["lines"]:
+        st.text(line)
+
+    with st.expander("진단 요약 표"):
+        _rows(st, view["rows"], view.get("columns"))
+
+
+def _render_recommended(st, state):
+    """모델 권장 변경(기본 계획 대비). 근거는 모델 의견이며 확인 열은 계산으로 대조한 결과다."""
+    if not state["recommended"]:
+        return
+
+    st.markdown("#### 권장 변경 (기본 계획 대비)")
+    before = {item["path"]: item["before"] for item in state["changes"]}
+    _rows(st, [{"항목": item["path"], "기본값": before.get(item["path"]), "권장값": item["value"], "근거": "모델 의견: " + item["reason"],
+                "확인": item.get("check") or "-"} for item in state["recommended"]], ["항목", "기본값", "권장값", "근거", "확인"])
+
+
 def _render_guide(st, guide, title):
     """옵션 설명. 계산으로 확인한 사실·모델 의견·사전 경고를 나눠 보여 준다. 모델 문장은 일반 텍스트로만 표시한다."""
     if not guide:
@@ -638,7 +651,8 @@ def _render_guide(st, guide, title):
 
     with st.expander(title):
         _rows(st, [{"옵션": item["label"], "설정 이름": item["name"], "현재 값": item["value_text"], "출처": item["source"],
-                    "적용 대상": item["applies"]} for item in guide if item["basic"] or item["source"] != "기본 계획"])
+                    "적용 대상": item["applies"]} for item in guide if item["basic"] or item["source"] != "기본 계획"],
+              ["옵션", "설정 이름", "현재 값", "출처", "적용 대상"])
 
         for item in guide:
             st.text("■ " + item["label"])
@@ -681,11 +695,12 @@ def _render_final_plan(st, task, adapter, state, key, draft):
                 "모델 의견": origins[path].get("reason") or ""}
                for path, value in flatten(preview["plan"]) if origins[path]["source"] != "base"]
     st.text("기본 계획과 다른 항목 (출처별). 표에 없는 항목은 기본 계획 값입니다.")
-    _rows(st, changed)
+    _rows(st, changed, ["항목", "값", "출처", "모델 의견"])
 
     if preview["changes"]:
         st.text("이번에 고친 항목 (표시한 계획 → 최종 계획)")
-        _rows(st, [{"항목": item["path"], "표시한 값": item["before"], "최종 값": item["after"]} for item in preview["changes"]])
+        _rows(st, [{"항목": item["path"], "표시한 값": item["before"], "최종 값": item["after"]} for item in preview["changes"]],
+              ["항목", "표시한 값", "최종 값"])
 
     _render_guide(st, preview["guide"], "옵션 설명 (최종 계획 기준)")
 
@@ -791,7 +806,7 @@ def _render_apply(st, task):
 
         for table in facts["tables"]:
             st.markdown("#### " + table["title"])
-            _rows(st, table["rows"])
+            _rows(st, table["rows"], table.get("columns"))
 
         with st.expander("원문 보고서 (일반 텍스트)"):
             st.text(facts["text"] or "원문 보고서를 표시할 수 없습니다.")
@@ -906,7 +921,7 @@ def _render_result(st, task):
                 for text in table["notes"]:
                     st.text("- " + text)
 
-                _rows(st, table["rows"])
+                _rows(st, table["rows"], table.get("columns"))
 
     # 분할 표는 이를 주는 유형만 채운다. 이전 형식·다른 유형 보고서에는 없다.
     if facts.get("split_table"):

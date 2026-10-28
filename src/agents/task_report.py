@@ -147,24 +147,35 @@ COLUMN_ORDER = (
     "컬럼 범위", "단위", "역할", "자료형", "결측(건)", "결측 비율", "관측 고유값", "상수·전체 결측", "공백 문자열", "+무한대", "-무한대",
     "유한 관측 수", "하한", "상한", "후보 수", "후보 비율", "관측 수", "평균", "표준편차", "최솟값", "25%", "중앙값", "75%", "최댓값",
     "범주 수", "빈 표기(건)", "최빈 범주 점유율", "희소 범주 수", "희소 범주 행 비율", "Pearson", "Spearman", "쌍별 관측 수",
+    # 결정 D 화면의 예상 처리 영향·출력 폭 표(저장된 후보 사실을 다시 읽어 그린다).
+    "변환 전 고유값", "clipping 변경 값", "구간 수", "입력 특징", "출력 열", "변환 후 상수", "정보 손실",
     "요청 비율", "확정 비율", "행 수", "그룹 수", "클래스", "건수", "비율", "변환", "값", "전", "후", "후 (실측)", "예상 (후보)",
     "처리 전", "처리 후", "결정 출처", "모델 의견", "실행 기록 대조", "실제 변경(근거)", "내용", "처리", "제외 사유", "대상·분모",
     "근거", "비고", "크기(byte)",
 )
 
 
-def table_columns(rows):
-    """표의 열 이름. 행마다 키가 달라도 모든 키를 모아 COLUMN_ORDER 순으로 둔다. 화면 표와 Markdown 표가 같이 쓴다."""
+def table_columns(rows, columns=None):
+    """표의 열 이름. 화면 표와 Markdown 표가 같이 쓴다.
+
+    columns(표를 만드는 쪽이 정한 순서)가 있으면 그 순서를 먼저 쓰고, 목록에 없는 데이터 열은 사라지지 않게 뒤에 둔다.
+    없으면(이전 facts 등) 행마다 키가 달라도 모든 키를 모아 호환용 COLUMN_ORDER 순으로 둔다.
+    """
     seen = list(dict.fromkeys(key for row in rows for key in row))
     rank = {name: index for index, name in enumerate(COLUMN_ORDER)}
+
+    if columns:
+        return list(dict.fromkeys(columns)) + sorted((key for key in seen if key not in columns),
+                                                     key=lambda key: (rank.get(key, len(rank)), seen.index(key)))
+
     return sorted(seen, key=lambda key: (rank.get(key, len(rank)), seen.index(key)))
 
 
-def _table(rows):
+def _table(rows, columns=None):
     if not rows:
         return ["(없음)"]
 
-    keys = table_columns(rows)
+    keys = table_columns(rows, columns)
     # 일부 행에 없는 열은 빈 칸으로 둔다(값을 만들지 않는다).
     return ["| " + " | ".join(keys) + " |", "| " + " | ".join("---" for _ in keys) + " |",
             *["| " + " | ".join(_plain(row.get(key, "")) for key in keys) + " |" for row in rows]]
@@ -212,7 +223,7 @@ def render_markdown(facts):
             lines += [heading, *([_plain(note), ""] if note else [])]
 
             for table in facts[key]:
-                lines += ["### " + _plain(table["title"]), *["- " + _plain(text) for text in table["notes"]], "", *_table(table["rows"]), ""]
+                lines += ["### " + _plain(table["title"]), *["- " + _plain(text) for text in table["notes"]], "", *_table(table["rows"], table.get("columns")), ""]
 
     # 분할 표·그래프 설명은 이를 주는 유형 어댑터만 채운다. 없는 이전 형식·다른 유형 사실은 기존 줄 그대로 둔다.
     split = facts.get("split_table")

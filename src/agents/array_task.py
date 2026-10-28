@@ -160,6 +160,10 @@ def input_notices(record):
     return [LABEL_LIMIT]
 
 
+# 진단 요약 표의 열 순서. 이름순 첫 배열이 1차원이어도 표본 배열 열이 같은 자리에 오도록 화면에 함께 넘긴다.
+DIAGNOSIS_COLUMNS = ["배열", "형상", "자료형", "구분", "비유한 값", "값 종류", "평균", "최솟값(로컬)", "최댓값(로컬)", "상수 표본", "동일 표본"]
+
+
 def diagnosis_view(record):
     """결정 화면의 진단 요약. 배열 이름은 표 값으로만 쓴다."""
     summary = _summary(record)
@@ -182,7 +186,7 @@ def diagnosis_view(record):
         rows.append(row)
 
     return {"lines": [f"배열 {len(summary['headers'])}개 · 표본 배열 후보 {len(summary['samples'])}개. 최솟값·최댓값은 로컬 표시용이며 모델에 보내지 않습니다."],
-            "rows": rows}
+            "rows": rows, "columns": DIAGNOSIS_COLUMNS}
 
 
 def preview_images(record):
@@ -517,6 +521,15 @@ def review_signature(record):
     return service("array_prepare").signature(record["steps"][REVIEW_STEP]["run_name"])
 
 
+# 결정 D 채널 표의 열 순서. 저장 facts는 키가 정렬되므로 표 정보에 함께 저장해 공통 렌더러가 이 순서로 그린다.
+CHANNEL_COLUMNS = ["채널", "대치값(Train 중앙값)", "clip 경계", "center", "scale", "clipping 변경 값", "대치한 값", "변환 후 상수"]
+
+
+def _channel_table(state, impact, train):
+    return {"title": "채널별 Train 기준과 예상 영향 (Train 후보 계산)", "rows": _channels(state, impact, train),
+            "columns": CHANNEL_COLUMNS}
+
+
 def _channels(state, impact, train):
     rows = []
 
@@ -528,6 +541,14 @@ def _channels(state, impact, train):
                      "대치한 값": item["imputed"], "변환 후 상수": "예" if item["constant_after"] else "아니오"})
 
     return rows
+
+
+SPLIT_COLUMNS = ["구간", "표본", "클래스", "그룹"]
+
+
+def _split_table(assignment):
+    """결정 D의 구간별 표본 표. 저장 facts는 키가 정렬되므로 열 순서를 함께 저장한다."""
+    return {"title": "구간별 표본", "rows": _split_rows(assignment, True), "columns": SPLIT_COLUMNS}
 
 
 def _split_rows(assignment, use_index):
@@ -589,8 +610,8 @@ def review(record):
                  "설정 이름": section + "." + key, "값": array_options.value_text(section + "." + key, value)}
                 for section in ("mapping", "split", "preparation") for key, value in plan[section].items()]
     facts = {"metrics": metrics,
-             "tables": [{"title": "구간별 표본", "rows": _split_rows(assignment, True)},
-                        {"title": "채널별 Train 기준과 예상 영향 (Train 후보 계산)", "rows": _channels(state, candidate["impact"], train)},
+             "tables": [_split_table(assignment),
+                        _channel_table(state, candidate["impact"], train),
                         {"title": "실제 실행 설정 (후보 계산에 쓴 값)", "rows": settings}],
              "warnings": _warnings(record, verified),
              "notes": [array_options.FLOAT32_NOTE,
