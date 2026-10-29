@@ -32,7 +32,7 @@ def code_id():
              "src/agents/workflow_service_registry.py", "configs/agents/modules/csv_workflows.json",
              # 작업 조정기는 이 작업들의 승인을 위임 발급하므로 같은 코드 지문에 묶는다.
              # 어댑터·계획 검증·위임 발급 코드는 동의 C·D 발급 전 판정을 맡는다.
-             "src/agents/task_orchestrator.py", "src/agents/task_consent.py", "src/agents/task_store.py",
+             "src/agents/task_orchestrator.py", "src/agents/task_consent.py", "src/agents/task_store.py", "src/agents/protected_store.py",
              "src/agents/llm_task_assist.py", "src/agents/task_adapters.py", "src/agents/tabular_task.py",
              "src/agents/task_plan.py", "src/agents/task_recommend.py", "src/agents/delegated_approval.py",
              "src/agents/strict_json.py")

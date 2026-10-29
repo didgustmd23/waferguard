@@ -71,6 +71,7 @@ class TabularWorkflowFixture(unittest.TestCase):
             module = "csv_workflow_service" if name == "CsvWorkflowService" else "tabular_workflow_service"
             self.start_patch("src.agents." + module + "." + name + ".runtime", return_value={"supported": True, "notice": "synthetic OS only"})
         self.start_patch("src.agents.tabular_input_service.run_input_worker", side_effect=input_fixture.transport)
+        self.start_patch("src.agents.tabular_input_flow.current_runtime_id", return_value=input_fixture.RUNTIME_ID)
         from src.agents import snapshot_split_worker, partition_export_worker, module_pipeline_worker
         from src.agents import preparation_candidate_worker, preparation_apply_worker
         for target, worker in (("src.agents.snapshot_split.run_split_worker", snapshot_split_worker.execute_request),
@@ -105,11 +106,12 @@ class TabularWorkflowFixture(unittest.TestCase):
         """
         self.start_patch("src.agents.tabular_workflow_service.TASK_ROOT", new=self.root / "tasks")
         runs = runs or self.root / "tasks" / "task1" / "input_runs"
-        runs.mkdir(parents=True, exist_ok=True)
+        # 실행 기록 루트는 입력 서비스가 보호 권한으로 직접 만든다. 상위 폴더만 준비한다.
+        runs.parent.mkdir(parents=True, exist_ok=True)
         inspect = tabular_input_service.TabularInputService("inspect", root=runs)
         build = tabular_input_service.TabularInputService("materialize", root=runs)
         for item, run, parent in ((inspect, name + "-inspect", None), (build, name, name + "-inspect")):
-            item.create(run, snapshot_directory=str(self.root / "snapshot"), snapshot=asdict(self.snapshot),
+            item.create(run, snapshot_directory=str(self.root / "snapshot"), snapshot=asdict(self.snapshot), runtime_id=input_fixture.RUNTIME_ID,
                         spec=CsvReadSpec().to_dict(), limits=asdict(self.limits), inspection_run=parent,
                         max_output_bytes=8 * 1024 * 1024)
             self.assertEqual(input_fixture.drive(item, run)["status"], "completed")

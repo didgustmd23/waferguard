@@ -8,9 +8,12 @@ POLICY_VERSION = "tabular_input_v2"
 MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 
 
-def build_packet(action, snapshot, spec, limits, code_id, *, inspection_id=None, inspection_sha256=None,
+def build_packet(action, snapshot, spec, limits, code_id, *, runtime_id, inspection_id=None, inspection_sha256=None,
                  max_output_bytes=MAX_OUTPUT_BYTES):
-    """부모와 worker가 함께 검증할 고정 IPC 설정을 만든다."""
+    """부모와 worker가 함께 검증할 고정 IPC 설정을 만든다.
+
+    runtime_id는 승인 전에 고정한 공유 런타임 구성 ID다. config_id·승인 범위·요청 식별에 함께 결합된다.
+    """
     import re
     from dataclasses import asdict
     from src.agents.input_snapshot import Snapshot
@@ -21,7 +24,7 @@ def build_packet(action, snapshot, spec, limits, code_id, *, inspection_id=None,
         raise ValueError("입력 도구의 고정 action·snapshot 계약이 필요합니다.")
     expected, resource = Snapshot(**snapshot), WorkerLimits(**limits)
     parsed = CsvReadSpec.from_dict(spec)
-    hashes = (code_id,) if action == "inspect" else (code_id, inspection_id, inspection_sha256)
+    hashes = (code_id, runtime_id) if action == "inspect" else (code_id, runtime_id, inspection_id, inspection_sha256)
     if any(type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in hashes):
         raise ValueError("입력 도구의 코드·선행 결과 지문이 필요합니다.")
     if action == "inspect" and (inspection_id is not None or inspection_sha256 is not None):
@@ -30,14 +33,18 @@ def build_packet(action, snapshot, spec, limits, code_id, *, inspection_id=None,
         raise ValueError("입력 도구 출력 상한이 올바르지 않습니다.")
     packet = {"version": POLICY_VERSION, "loader_version": "1.0.0", "action": action,
               "snapshot": asdict(expected), "read_spec": parsed.to_dict(), "limits": asdict(resource), "code_id": code_id,
+              "runtime_id": runtime_id,
               "inspection_id": inspection_id, "inspection_sha256": inspection_sha256, "max_output_bytes": max_output_bytes}
     import json
     _decode(json.dumps(packet, ensure_ascii=False, allow_nan=False))
     return packet
 
 
-def execute_request(request, root):
-    """경로·전체 설정 지문·선행 검사 파일을 대조한 뒤 고정 작업만 실행한다."""
+def execute_request(request, root, runtime_id):
+    """경로·전체 설정 지문·선행 검사 파일·실행 런타임 ID를 대조한 뒤 고정 작업만 실행한다.
+
+    runtime_id는 main이 실제 실행 파일 위치·완료 기록에서 확인한 값이다. 승인한 packet의 ID와 다르면 실행하지 않는다.
+    """
     from dataclasses import asdict
     import hashlib
     import json
@@ -79,10 +86,10 @@ def execute_request(request, root):
             packet, _ = read_json(settings, 65536)
             action = packet.get("action")
             expected_packet = build_packet(action, packet["snapshot"], packet["read_spec"], packet["limits"], packet["code_id"],
-                                           inspection_id=packet["inspection_id"], inspection_sha256=packet["inspection_sha256"],
+                                           runtime_id=packet["runtime_id"], inspection_id=packet["inspection_id"], inspection_sha256=packet["inspection_sha256"],
                                            max_output_bytes=packet["max_output_bytes"])
-            if dump(expected_packet) != dump(packet):
-                raise ValueError("검토된 입력 설정과 다릅니다.")
+            if dump(expected_packet) != dump(packet) or packet["runtime_id"] != runtime_id:
+                raise ValueError("검토된 입력 설정 또는 실행 런타임과 다릅니다.")
             files = (str(source), str(source.parent / "snapshot.json"), str(settings))
             if action == "materialize":
                 files += (str(root / "input/inspection.json"),)
@@ -127,11 +134,34 @@ def execute_request(request, root):
         return WorkerResult(request.task_id, request.request_id, "blocked_input", "WORKER_INPUT_BLOCKED")
 
 
+def shared_runtime(executable, runtime_id):
+    """실행 중인 Python이 부모가 고른 공유 런타임 버전인지 위치·폴더 이름·완료 기록의 ID로 대조한다.
+
+    보안 경계는 부모의 선택·해시 검증이다. 이 확인은 인자와 실제 실행 파일이 어긋난 실행을 멈추는 일관성 검사다.
+    """
+    import json
+    import re
+    runtime = Path(executable).absolute().parent
+    if (type(runtime_id) is not str or re.fullmatch(r"[0-9a-f]{64}", runtime_id) is None
+            or runtime.name != "runtime" or runtime.parent.name != runtime_id):
+        return None
+    try:
+        with (runtime.parent / "manifest.json").open("rb") as stream:
+            record = json.loads(stream.read(64 * 1024 * 1024 + 1))
+    except (OSError, ValueError):
+        return None
+    return runtime if type(record) is dict and record.get("runtime_id") == runtime_id else None
+
+
 def main():
-    """격리 런타임 경로만 초기화하고 부모가 고정한 요청 ID를 대조한다."""
+    """공유 런타임 경로만 초기화하고 부모가 고정한 요청·런타임 ID를 대조한다."""
     import os
+    if len(sys.argv) != 4:
+        return 2
     root = Path(sys.argv[1]).absolute()
-    runtime = root / "runtime"
+    runtime = shared_runtime(sys.executable, sys.argv[3])
+    if runtime is None:
+        return 2
     sys.path[:0] = [str(root / "tools"), str(runtime / "Lib/site-packages")]
     handles = [os.add_dll_directory(str(path)) for path in (runtime, runtime / "DLLs", runtime / "Library/bin") if path.is_dir()]
     from src.agents.worker_contract import WorkerRequest
@@ -140,7 +170,7 @@ def main():
             request = WorkerRequest.from_json(stream.read(65537).decode("utf-8"))
         if request.request_id != sys.argv[2]:
             return 2
-        result = execute_request(request, root)
+        result = execute_request(request, root, sys.argv[3])
         (root / "output/result/worker_result.json").write_text(result.to_json(), encoding="utf-8")
         return 0 if result.status == "succeeded" else 2
     except Exception:

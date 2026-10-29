@@ -42,9 +42,15 @@ class TabularSourceContractTest(unittest.TestCase):
         self.inspect_id, self.code_id = "a" * 64, "b" * 64
         spec_json = json.dumps(self.spec)
         self.inspection_sha256 = "d" * 64
+        self.runtime_id = "f" * 64
         self.config_id = materialization_config_id(self.snapshot, spec_json, self.inspect_id, self.limits, self.code_id,
-                                                   inspection_sha256=self.inspection_sha256, max_output_bytes=65536)
-        run = self.root / "run"
+                                                   inspection_sha256=self.inspection_sha256, max_output_bytes=65536,
+                                                   execution_runtime_id=self.runtime_id)
+        # 생성 실행은 보호된 입력 저장소(<input_runs>/materialize/<run>) 아래에 있어야 출처 확인을 통과한다.
+        from src.agents.protected_store import create_store, trusted_principals
+        create_store(self.root / "input_runs", trusted_principals())
+        run = self.root / "input_runs" / "materialize" / "run"
+        run.parent.mkdir()
         states = LocalStateStore(run)
         state = states.create("synthetic_actor", policy_version="tabular_input_v2")
         state.status, state.current_stage = "completed", "ingest"
@@ -66,7 +72,8 @@ class TabularSourceContractTest(unittest.TestCase):
         complete_artifacts(output, ArtifactContext(scope.source_id, scope.config_id, scope.plan_id, scope.policy_version, scope.tool_id))
         evidence = read_committed_artifact(run, scope)
         self.source = TabularSourceContract(str(self.root / "snapshot"), self.snapshot, str(output / "table"), self.bundle,
-                                           spec_json, self.inspect_id, evidence, self.limits, self.code_id, self.inspection_sha256, 65536)
+                                           spec_json, self.inspect_id, evidence, self.limits, self.code_id, self.inspection_sha256, 65536,
+                                           self.runtime_id)
 
     def test_source_roundtrip_and_packet_does_not_expose_local_paths(self):
         self.assertTrue(self.source.check_input())

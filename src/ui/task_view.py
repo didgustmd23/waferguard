@@ -34,6 +34,10 @@ MODEL_LIMITATION_NOTICE = (
 RECORD_ERRORS = {
     "RECORD_NOT_FOUND": "작업 기록을 찾지 못했습니다. 기록 폴더가 옮겨졌거나 지워졌을 수 있습니다. 새 작업으로 시작하세요.",
     "RECORD_TOO_LARGE": "작업 기록이 크기 상한(512 KiB)을 넘어 열지 않았습니다. 기록은 그대로 두었습니다. 컬럼이 매우 많은 입력이면 관리자에게 알려 주세요.",
+    "RECORD_PROTECT_FAILED": "작업 폴더를 보호 권한으로 만들지 못했습니다. 디스크 공간과 logs/agents/tasks 폴더 권한·상위 경로 링크를 "
+                             "확인한 뒤 다시 시작하세요. 작업은 만들지 않았습니다.",
+    "RECORD_UNPROTECTED": "작업 기록이 보호 경계 밖에 있어(이전 버전에서 만든 작업이거나 다른 사용자·그룹의 쓰기 권한이 있음) 승인·진행·복구에 "
+                          "쓰지 않았습니다. 권한을 자동으로 고치지 않습니다. 저장된 결과는 그대로 볼 수 있습니다. 새 작업으로 시작하세요.",
     "RECORD_OWNER_MISMATCH": "다른 Windows 사용자가 만든 작업이라 열지 않았습니다. 해당 사용자로 실행한 UI에서 여세요.",
     "RECORD_INVALID": "작업 기록 형식이 현재 버전과 맞지 않아 열지 않았습니다. 기록은 그대로 두었습니다.",
     "RECORD_UNREADABLE": "작업 기록 파일을 읽지 못했습니다(형식 오류 또는 링크). 기록은 그대로 두었습니다.",
@@ -188,6 +192,9 @@ def _render_request(st):
 
     try:
         task = orchestrator.start_task(goal, source, limits, model, input_generation="current")
+    except task_store.TaskRecordError as error:
+        st.error(RECORD_ERRORS.get(error.code, RECORD_ERRORS["RECORD_UNREADABLE"]))
+        return
     except Exception:
         st.error("작업을 시작하지 못했습니다. 지원하는 입력 파일 경로와 목표 문장(비어 있지 않게)을 확인하세요.")
         return
@@ -197,6 +204,9 @@ def _render_request(st):
     with show_operation_progress(st, "입력을 복사하고 격리 진단과 로컬 모델 권장안을 준비하고 있습니다."):
         try:
             orchestrator.diagnose(task["task_id"])
+        except task_store.TaskRecordError as error:
+            st.error(RECORD_ERRORS.get(error.code, RECORD_ERRORS["RECORD_UNREADABLE"]))
+            return
         except Exception:
             st.error("진단을 시작하지 못했습니다. 작업 상태를 확인하세요. 자동 재시도하지 않습니다.")
             return
@@ -248,6 +258,9 @@ def _render_decision(st, task):
         if st.button("검증 후 완료 기록 복구", key="task_recover_completion", type="primary"):
             try:
                 orchestrator.recover_completion(task["task_id"])
+            except task_store.TaskRecordError as error:
+                st.error(RECORD_ERRORS.get(error.code, RECORD_ERRORS["RECORD_UNREADABLE"]))
+                return
             except orchestrator.RecoveryError as error:
                 label = task_adapters.adapter(task["kind"]).STEP_LABELS.get(error.step, "") if error.step else ""
                 st.error("검증을 통과하지 못해 복구하지 않았습니다. 기록은 그대로입니다. "
@@ -321,6 +334,9 @@ def _render_input(st, task):
                 raise ValueError("확인한 대기 상태가 없습니다.")
 
             orchestrator.resume_input(task["task_id"], selection, expected_revision=seen[0], expected_inspection_id=seen[1])
+        except task_store.TaskRecordError as error:
+            st.error(RECORD_ERRORS.get(error.code, RECORD_ERRORS["RECORD_UNREADABLE"]))
+            return
         except ValueError:
             st.error("제출을 받지 않았습니다. 새 동의·실행은 만들지 않았고 작업은 그대로입니다.")
             st.text("원인: 화면이 오래됐거나(다른 탭에서 이미 진행), 고른 해석이 지금과 같거나, 이 검사 사유로 고를 수 없는 해석입니다. "
@@ -418,6 +434,9 @@ def _render_action(st, task, adapter, action):
     with show_operation_progress(st, "작업용 복사본을 격리 실행으로 정비하고 진단과 로컬 모델 권장안을 준비하고 있습니다."):
         try:
             orchestrator.resolve_problem(task["task_id"], action)
+        except task_store.TaskRecordError as error:
+            st.error(RECORD_ERRORS.get(error.code, RECORD_ERRORS["RECORD_UNREADABLE"]))
+            return
         except Exception:
             st.error("해결 동작을 시작하지 못했습니다. 작업 상태를 확인하세요. 자동 재시도하지 않습니다.")
             return
@@ -727,6 +746,9 @@ def _render_final_plan(st, task, adapter, state, key, draft):
     with show_operation_progress(st, "확인한 계획으로 처리 단계를 격리 실행하고 있습니다."):
         try:
             orchestrator.confirm_plan(task["task_id"], draft["plan"], draft["answers"], expected_digest=seen or "-")
+        except task_store.TaskRecordError as error:
+            st.error(RECORD_ERRORS.get(error.code, RECORD_ERRORS["RECORD_UNREADABLE"]))
+            return
         except PlanError as error:
             st.error(error.message + " 작업은 만들지 않았습니다.")
             return
@@ -842,6 +864,9 @@ def _render_apply(st, task):
                 raise ValueError("확인한 적용 대상이 없습니다.")
 
             orchestrator.approve_apply(task["task_id"], expected_signature=seen[0], expected_attempt=seen[1])
+        except task_store.TaskRecordError as error:
+            st.error(RECORD_ERRORS.get(error.code, RECORD_ERRORS["RECORD_UNREADABLE"]))
+            return
         except Exception:
             # 오래된 화면이거나, 후보 계산 뒤 처리 코드가 바뀌어 후보를 현재 코드로 다시 열 수 없는 경우가 대표적이다.
             st.error("적용을 시작하지 못했습니다. 동의(결정 D)는 발급하지 않았고 작업은 그대로입니다. 자동 재시도하지 않습니다.")

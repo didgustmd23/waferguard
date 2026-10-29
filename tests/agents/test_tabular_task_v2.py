@@ -36,6 +36,8 @@ def add_v2_patches(test, store, handoff_runs):
 
     test.start_patch("src.agents.tabular_workflow_service.TASK_ROOT", new=Path(store))
     test.start_patch("src.agents.tabular_input_service.run_input_worker", side_effect=input_fixture.transport)
+    # 공유 런타임 구성 ID 계산(원본 환경 전체 해시)도 모의한다. 실제 격리 검사는 이 모의를 쓰지 않는다.
+    test.start_patch("src.agents.tabular_input_flow.current_runtime_id", return_value=input_fixture.RUNTIME_ID)
     for module in ("tabular_input_service", "tabular_workflow_service"):
         test.start_patch("src.agents." + module + "._current_actor", return_value="synthetic_actor")
     test.start_patch("src.agents.tabular_workflow_service.TabularWorkflowService.runtime",

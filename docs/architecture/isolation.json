@@ -100,7 +100,7 @@
       "id": "worker",
       "type": "backend",
       "label": "고정 계산 worker",
-      "sublabel": "capability 0 · 상속 핸들 없음",
+      "sublabel": "네트워크 capability 없음 · 상속 핸들 없음",
       "pos": [
         450,
         260

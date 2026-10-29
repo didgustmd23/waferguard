@@ -355,7 +355,8 @@ def rebuild_report(task_id, *, root=None):
     from . import task_store
     from .task_orchestrator import _check_names
 
-    with task_store.task_lock(task_id, root=root) as directory:
+    # 승인을 발급하지 않는 재조립이라 보호 이전 작업도 기존처럼 허용한다(작업 폴더 보유는 유지).
+    with task_store.task_lock(task_id, root=root, protected=False) as directory:
         record = task_store.load_task(task_id, root=root)
 
         if record["phase"] != "completed":

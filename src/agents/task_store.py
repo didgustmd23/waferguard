@@ -16,6 +16,7 @@ from .artifacts import _is_link, _root
 from .cli import _current_actor
 from .executor import _run_lock
 from .llm_proposal_store import _store_root
+from .protected_store import _create_protected, _hold, _permission_ok, _security, check_object, check_tree, trusted_principals
 from . import strict_json
 
 
@@ -30,6 +31,8 @@ PART_SECTIONS = ("diagnostic", "draft", "candidate", "report", "attempts", "inpu
 PART_INLINE_BYTES = 32 * 1024
 MAX_PART_BYTES = 16 * 1024 * 1024
 PART_NAME = r"(diagnostic|draft|candidate|report|attempts|input_selection)-[0-9a-f]{64}\.json"
+# 승인 판단에 쓰는 하위 기록(분리 저장·저장 실행안·입력 복사본). 작업 잠금 때 의미상 권한을 검사한다.
+RECORD_FOLDERS = ("parts", "plans", "snapshot", "derived_snapshot")
 PHASES = ("created", "diagnosing", "awaiting_input", "awaiting_review", "processing", "awaiting_apply", "applying", "completed",
           "needs_attention")
 
@@ -61,8 +64,12 @@ def create_task(goal, source, kind, *, root=None):
     root = STORE_ROOT if root is None else Path(root)
     task_id = uuid4().hex
     directory = _store_root(root, create=True) / task_id
-    directory.mkdir(exist_ok=False)
-    _root(directory)
+    # 생성 순간부터 신뢰 주체(현재 사용자·SYSTEM·Administrators)만 쓸 수 있는 보호 DACL. 하위 기록은 이 ACE만 상속한다.
+    try:
+        _create_protected(directory, trusted_principals()[0])
+        _root(directory)
+    except (OSError, ValueError) as error:
+        raise TaskRecordError("RECORD_PROTECT_FAILED", "작업 폴더를 보호 권한으로 만들지 못했습니다.") from error
     record = {
         "schema_version": SCHEMA_VERSION, "kind": kind, "task_id": task_id, "actor_id": _current_actor(),
         "created_at": _now(), "updated_at": _now(), "revision": 0, "phase": "created", "problem": None,
@@ -233,16 +240,66 @@ def load_task(task_id, *, root=None):
     return _load_parts(directory, record)
 
 
+def _protected(directory, handle):
+    """보유한 작업 폴더가 보호 경계 안인지 본다. 하나라도 다르면 False이며 아무것도 고치지 않는다.
+
+    작업 폴더 자체(보유 핸들): 소유자·상속 차단·신뢰 주체 ACE. 직속 파일(task.json·잠금 등)과 승인 판단 하위 기록
+    (parts·plans·snapshot·derived_snapshot): 소유자·신뢰 주체 외 허용 ACE·레이블·링크·하드 링크.
+    workflow·profiles·report·input_runs는 보호 DACL 상속에 맡기고 여기서 의미상 검사하지 않는다(input_runs는 입력 서비스가 검사).
+    """
+    trusted = trusted_principals()
+
+    try:
+        _root(directory)
+
+        if not _permission_ok(_security(handle=handle), trusted, None, root=True):
+            return False
+
+        for item in directory.iterdir():
+            if item.is_dir() and not _is_link(item):
+                if item.name in RECORD_FOLDERS and not check_tree(item, trusted):
+                    return False
+            elif not check_object(item, trusted):
+                return False
+
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 @contextmanager
-def task_lock(task_id, *, root=None):
-    """같은 작업의 동시 진행을 막는다. 화면 재표시·중복 클릭은 잠금에서 거부된다."""
+def task_lock(task_id, *, root=None, protected=True):
+    """같은 작업의 동시 진행을 막고, 잠금 동안 작업 폴더를 보유한다. 화면 재표시·중복 클릭은 잠금에서 거부된다.
+
+    보유 중에는 작업 폴더와 상위 경로의 이름 변경·삭제가 막힌다. protected이면 작업 기록이 보호 경계 안일 때만 진행한다
+    (위임 발급·진행·복구). 보호되지 않은 이전 작업은 RECORD_UNPROTECTED로 멈추며 권한을 고치지 않는다.
+    protected=False는 승인을 발급하지 않는 보고서 재조립에만 쓴다.
+    """
     directory = _directory(task_id, STORE_ROOT if root is None else Path(root))
 
     with _run_lock(directory) as acquired:
         if not acquired:
             raise ValueError("이 작업은 다른 요청이 진행 중입니다.")
 
-        yield directory
+        try:
+            handle, release = _hold(directory)
+        except OSError as error:
+            raise TaskRecordError("RECORD_UNREADABLE", "작업 폴더를 안전하게 열 수 없습니다.") from error
+
+        try:
+            if protected and not _protected(directory, handle):
+                raise TaskRecordError("RECORD_UNPROTECTED", "작업 기록이 보호 경계 밖에 있어 승인·진행에 쓰지 않습니다.")
+
+            if not protected:
+                # 보고서 재조립도 보유 뒤 경로가 그대로인지 확인한다(링크로 다른 작업 폴더를 열지 않음).
+                try:
+                    _root(directory)
+                except ValueError as error:
+                    raise TaskRecordError("RECORD_UNREADABLE", "작업 폴더를 안전하게 열 수 없습니다.") from error
+
+            yield directory
+        finally:
+            release()
 
 
 def save_task(record, *, expected_revision, root=None):

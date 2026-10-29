@@ -52,14 +52,16 @@ def _spec(payload):
     return CsvReadSpec.from_json(payload).to_dict()
 
 
-def materialization_config_id(snapshot, read_spec_json, inspection_id, limits, execution_code_id, *, inspection_sha256, max_output_bytes):
-    """생성 승인이 고정해야 할 입력·해석·검사 증거·코드·자원 서명을 산출한다."""
+def materialization_config_id(snapshot, read_spec_json, inspection_id, limits, execution_code_id, *, inspection_sha256, max_output_bytes,
+                              execution_runtime_id):
+    """생성 승인이 고정해야 할 입력·해석·검사 증거·코드·실행 런타임·자원 서명을 산출한다."""
     _require(type(snapshot) is Snapshot and type(limits) is WorkerLimits)
     _hash(inspection_id)
     _hash(execution_code_id)
+    _hash(execution_runtime_id)
     from .tabular_input_worker import build_packet
     return _digest(build_packet("materialize", asdict(snapshot), _spec(read_spec_json), asdict(limits), execution_code_id,
-                                inspection_id=inspection_id, inspection_sha256=inspection_sha256, max_output_bytes=max_output_bytes))
+                                runtime_id=execution_runtime_id, inspection_id=inspection_id, inspection_sha256=inspection_sha256, max_output_bytes=max_output_bytes))
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,8 @@ class TabularSourceContract:
     execution_code_id: str
     inspection_sha256: str
     max_output_bytes: int
+    # 생성 승인에 결합한 공유 런타임 구성 ID. 이 필드가 없는 이전 계약은 복원하지 않는다.
+    execution_runtime_id: str
     loader_id: str = "delimited_v1"
     loader_version: str = "1.0.0"
     policy_version: str = POLICY_VERSION
@@ -96,7 +100,7 @@ class TabularSourceContract:
         """묶음 생성 전 승인 인자와 대조할 설정 식별값이다."""
         return materialization_config_id(self.snapshot, self.read_spec_json, self.inspection_id,
                                          self.limits, self.execution_code_id, inspection_sha256=self.inspection_sha256,
-                                         max_output_bytes=self.max_output_bytes)
+                                         max_output_bytes=self.max_output_bytes, execution_runtime_id=self.execution_runtime_id)
 
     @property
     def source_id(self):
@@ -112,7 +116,24 @@ class TabularSourceContract:
                 "materialization_config_id": self.materialization_config_id}
 
     def check_input(self):
-        """생성 승인 소비·커밋과 snapshot·묶음·해석·출처 연결을 매번 다시 확인한다."""
+        """생성 실행의 입력 저장소 보호와 생성 승인 소비·커밋, snapshot·묶음·해석·출처 연결을 매번 다시 확인한다.
+
+        입력 저장소 루트(<input_runs>)를 보유한 채 action 폴더·실행 기록 트리의 소유자·권한을 검사한 뒤 기존 대조를 한다.
+        해시·DB 대조만으로 권한 보호를 대신하지 않는다. 사용 구간 전체의 상위 경로 고정은 호출하는 작업 잠금(task_lock)이 담당한다.
+        """
+        from .protected_store import StoreUnavailable, check_object, check_tree, store_lease, trusted_principals
+        run = Path(self.materialization.run_directory)
+        trusted = trusted_principals()
+        try:
+            with store_lease(run.parent.parent, trusted):
+                _require(run.parent.name == "materialize")
+                if not (check_object(run.parent, trusted) and check_tree(run, trusted)):
+                    raise StoreUnavailable("INPUT_STORE_PERMISSION_INVALID")
+                return self._check_input()
+        except StoreUnavailable:
+            raise StoreUnavailable("INPUT_STORE_PERMISSION_INVALID") from None
+
+    def _check_input(self):
         self.materialization.check()
         scope = self.materialization.scope
         _require((scope.stage, scope.tool_id, scope.source_id, scope.config_id, scope.policy_version)

@@ -25,12 +25,14 @@ def record_delegated(tool, manager, summary_factory, preview, *, authorize):
         if preview_approval(tool, manager, summary_factory) != preview:
             raise ValueError("동의 판정 이후 입력·설정·코드·단계가 변경되었습니다.")
 
-        authorize(preview.to_dict())
+        evidence = authorize(preview.to_dict())
         state = tool.states.load()
         scope = manager.scope_for(state.current_stage)
+        digest = hashlib.sha256(json.dumps(asdict(scope), ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        # 판정기가 돌려준 동의 사용 근거를 발급 범위와 함께 이벤트로 먼저 남긴다. 기록이 실패하면 승인을 발급하지 않는다.
         append_event(tool.states.directory / "events.jsonl", "approval_requested", "DELEGATED_APPROVAL_RECORDED",
-                     stage=state.current_stage, revision=state.revision)
+                     stage=state.current_stage, revision=state.revision,
+                     evidence=None if evidence is None else dict(evidence, scope_sha256=digest))
         record = manager.approvals.record_confirmed_approval(scope)
 
-    digest = hashlib.sha256(json.dumps(asdict(scope), ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
     return {"approval_id": record.approval_id, "expires_at": record.expires_at.isoformat(), "scope_sha256": digest}

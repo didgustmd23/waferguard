@@ -37,7 +37,7 @@ CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     "src/agents/pipeline_approval_cli.py", "src/agents/pipeline_binding_registry.py",
     "src/agents/pipeline_approval.py", "src/agents/pipeline_csv_execution.py",
     # 입력 진단 승인을 위임 발급하는 작업 조정기·동의 판정 코드와 조정기가 쓰는 초안·확인 검사
-    "src/agents/task_orchestrator.py", "src/agents/task_consent.py", "src/agents/task_store.py",
+    "src/agents/task_orchestrator.py", "src/agents/task_consent.py", "src/agents/task_store.py", "src/agents/protected_store.py",
     "src/agents/llm_task_assist.py", "src/agents/task_adapters.py", "src/agents/tabular_task.py",
     "src/agents/task_plan.py", "src/agents/task_recommend.py", "src/agents/delegated_approval.py",
     "src/agents/strict_json.py",

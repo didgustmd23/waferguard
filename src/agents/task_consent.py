@@ -96,6 +96,10 @@ def authorizer(task, decision, module_id, stage, *, expected, bound=None, summar
         if any(summary.get(key) != value for key, value in bound.items()):
             raise ValueError("승인 범위의 입력이 동의 후 확보한 값과 다릅니다.")
 
-        check(task["consents"].get(decision), decision, task["task_id"], now=now)
+        consent = task["consents"].get(decision)
+        check(consent, decision, task["task_id"], now=now)
+        # 위임 기록에 남길 사용 근거(추적용). 서명이 아니므로 동의의 진본 인증으로 쓰지 않는다.
+        return {"decision": decision, "consent_id": consent["consent_id"], "consent_sha256": consent["content_sha256"],
+                "task_id": task["task_id"], "attempt": task.get("attempt", 0)}
 
     return authorize

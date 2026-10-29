@@ -31,7 +31,8 @@ TRANSPORTS = {
 }
 # 실제 실행에서는 fixture의 모의 운송·런타임 안내를 쓰지 않는다.
 REAL = set(TRANSPORTS.values()) | {"src.agents.csv_workflow_service.CsvWorkflowService.runtime",
-                                   "src.agents.tabular_workflow_service.TabularWorkflowService.runtime"}
+                                   "src.agents.tabular_workflow_service.TabularWorkflowService.runtime",
+                                   "src.agents.tabular_input_flow.current_runtime_id"}
 MINIMUM_RUNS = {"input": 2, "diagnostic": 1, "split": 4, "export": 1, "candidate": 1, "apply": 1}
 LIMITS = {"wall_seconds": 120, "memory_mib": 2048, "processes": 2}
 
@@ -82,9 +83,9 @@ class TabularV2AppContainerTest(TabularTaskV2Fixture):
         for stage, target in TRANSPORTS.items():
             real = _resolve(target)
 
-            def record(request, root, cancel, real=real, stage=stage):
+            def record(request, root, cancel, real=real, stage=stage, **kwargs):
                 try:
-                    outcome = real(request, root, cancel)
+                    outcome = real(request, root, cancel, **kwargs)
                 except Exception as error:
                     self.errors.append((stage, f"{type(error).__name__}: {error}"[:500]))
                     raise

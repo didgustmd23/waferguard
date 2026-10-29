@@ -1,6 +1,8 @@
 """표형 입력 검사·생성을 별도 1회 승인으로 실행하는 기존 실행기 연결."""
 
+from contextlib import contextmanager
 from dataclasses import asdict
+import functools
 import json
 from pathlib import Path
 import re
@@ -16,6 +18,7 @@ from .delegated_approval import record_delegated
 from .executor import ExecutionPlan, ExecutionStep, RegisteredTool, RulesExecutor
 from .input_snapshot import Snapshot, create_snapshot, verify_snapshot
 from .isolated_eda import CancelSignal, _read_file
+from .protected_store import StoreUnavailable, check_object, check_tree, create_store, store_lease, trusted_principals
 from .snapshot_eda import _digest
 from .split_evidence import read_committed_artifact
 from .state import LocalStateStore
@@ -24,7 +27,19 @@ from .tabular_input_transport import code_manifest, run_input_worker
 from .tabular_input_worker import build_packet, POLICY_VERSION, MAX_OUTPUT_BYTES
 from .worker_contract import WorkerLimits, WorkerRequest, WorkerResult, _decode
 from .worker_paths import WorkerPathPolicy
+from .worker_runtime import MESSAGES as RUNTIME_MESSAGES
 from .workflow_approval import approval_progress, preview_approval
+
+
+# 입력 실행 저장소(실행 기록·승인 DB·작업 폴더) 보호 실패. 입력 데이터 오류와 구분한다.
+STORE_MESSAGES = {
+    "INPUT_STORE_PERMISSION_INVALID": "입력 실행 기록 저장소(작업 폴더의 input_runs)의 소유자·권한이 허용 범위와 다르거나 경로가 "
+                                      "바뀌었습니다(다른 사용자·그룹의 쓰기·삭제·권한 변경, 상속 권한, 링크 등). 입력 데이터 문제가 "
+                                      "아닙니다. 권한을 자동으로 고치지 않습니다. 이전 버전에서 만든 작업 폴더도 이 경우에 해당합니다. "
+                                      "관리자가 해당 폴더를 확인한 뒤 새 작업으로 다시 시작하세요.",
+    "INPUT_STORE_PREPARE_FAILED": "입력 실행 기록 저장소를 보호 권한으로 만들지 못했습니다. 디스크 공간과 작업 폴더 권한을 확인한 뒤 "
+                                  "새 작업으로 다시 시작하세요.",
+}
 
 
 def code_id():
@@ -43,7 +58,7 @@ class InputTool:
         self.limits = WorkerLimits(**self.arguments["limits"])
         self.snapshot = Snapshot(**self.arguments["snapshot"])
         packet = build_packet(service.action, self.arguments["snapshot"], self.arguments["read_spec"],
-                              self.arguments["limits"], self.arguments["code_id"],
+                              self.arguments["limits"], self.arguments["code_id"], runtime_id=self.arguments["runtime_id"],
                               inspection_id=self.arguments["inspection_id"], inspection_sha256=self.arguments["inspection_sha256"],
                               max_output_bytes=self.arguments["max_output_bytes"])
         if _digest(packet) != _digest(self.arguments):
@@ -62,7 +77,10 @@ class InputTool:
         parent = TabularInputService("inspect", root=self.service.root)
         folder, result = parent.verified(self.config["inspection_run"])
         report = result["inspection"]
+        # 선행 검사도 같은 승인 런타임으로 실행된 결과여야 한다.
+        inspected_with = parent._open(self.config["inspection_run"])[1].arguments["runtime_id"]
         if (report["status"] != "ready" or report["inspection_id"] != self.arguments["inspection_id"]
+                or inspected_with != self.arguments["runtime_id"]
                 or result["inspection_sha256"] != self.arguments["inspection_sha256"]
                 or _digest(report["spec"]) != _digest(self.arguments["read_spec"])
                 or _digest(report["snapshot"]) != _digest(self.arguments["snapshot"])
@@ -101,7 +119,8 @@ class InputTool:
         root.parent.mkdir(exist_ok=True)
         _root(root.parent)
         root.mkdir()
-        for name in ("runtime", "input", "tools", "output", "scratch"):
+        # 런타임은 작업 폴더에 복사하지 않는다. transport가 공유 런타임을 골라 검증한다.
+        for name in ("input", "tools", "output", "scratch"):
             (root / name).mkdir()
         source = Path(self.config["snapshot_directory"])
         staged = create_snapshot(source / "input.bin", root / "input/snapshot", max_input_bytes=self.snapshot.max_input_bytes)
@@ -118,7 +137,7 @@ class InputTool:
         (root / "input/request.json").write_text(request.to_json(), encoding="utf-8")
         Path(request.output_directory).mkdir()
         Path(request.scratch_directory).mkdir()
-        request.check_policy(WorkerPathPolicy(tuple(root / name for name in ("runtime", "input", "tools")),
+        request.check_policy(WorkerPathPolicy(tuple(root / name for name in ("input", "tools")),
                                             root / "output", root / "scratch", protected_roots=(self.states.directory, source)), self.limits)
         return root
 
@@ -139,8 +158,12 @@ class InputTool:
         if self.cancel.is_set():
             return ToolResult("blocked_input", errors=("WORKER_CANCELLED",))
         request = self._request(output.name)
-        outcome = run_input_worker(request, self._stage(request), self.cancel)
+        # 실행 런타임은 승인한 packet의 ID로만 고른다. 원본 환경이 바뀌었어도 다른 ID를 쓰지 않는다.
+        outcome = run_input_worker(request, self._stage(request), self.cancel, runtime_id=self.arguments["runtime_id"])
         self._check_arguments(arguments)
+        if outcome.get("runtime_error") is not None:
+            # 원인 코드는 transport.json에 남고 runtime_failure로 읽는다. 실행기에는 고정 실패 분류만 넘긴다.
+            return ToolResult("failed_runtime", errors=("WORKER_FAILED",))
         if not self._evidence(request, outcome):
             return ToolResult("failed_runtime", errors=("WORKER_FAILED",))
         launch = outcome.get("launch", {})
@@ -170,9 +193,15 @@ class InputTool:
         request = self._request(output.name)
         root = self._work_root(output.name)
         saved = WorkerRequest.from_json(_read_file(root / "input/request.json", 65536).decode("utf-8"))
+        # 실행 기록은 신뢰 주체만 쓸 수 있어야 한다(worker·다른 사용자 ACE가 있으면 결과를 등록하지 않음).
+        if not check_object(root / "transport.json", trusted_principals()):
+            return False
         outcome = _decode(_read_file(root / "transport.json", 65536).decode("utf-8"))
         reply = WorkerResult.from_json(_read_file(Path(request.output_directory) / "worker_result.json", 65536).decode("utf-8"))
+        # 실행 기록의 런타임은 승인한 packet의 ID와 같아야 한다(형식만 맞는 다른 ID 거부).
+        runtime = outcome.get("runtime")
         if (self.cancel.is_set() or saved != request or not self._evidence(request, outcome)
+                or type(runtime) is not dict or runtime.get("id") != self.arguments["runtime_id"]
                 or not launch_succeeded(outcome.get("launch", {})) or not reply.matches(request)
                 or reply.status != "succeeded" or reply.artifact_refs != ("operation",)):
             return False
@@ -191,6 +220,15 @@ def _validate_preflight(output, arguments):
     return not arguments and _decode(_read_file(output / "preflight.json", 4096).decode()) == {"version": POLICY_VERSION}
 
 
+def _protected(method):
+    """공개 연산을 입력 실행 저장소 보유·검사 안에서 실행한다. 보유는 연산이 끝나면(예외 포함) 놓는다."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._store(create=method.__name__ == "create"):
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class TabularInputService:
     """검사·생성을 같은 공개 서비스 연산으로 연결하되 승인은 각각 소비한다."""
 
@@ -200,17 +238,45 @@ class TabularInputService:
         self.action = action
         self.root = Path(root).absolute() if root is not None else Path(__file__).resolve().parents[2] / "logs/agents/tabular_input"
 
+    @contextmanager
+    def _store(self, *, create=False):
+        """저장소 루트를 처음이면 보호 SD로 만들고, 보유한 핸들로 소유자·보호·ACE를 검사한다. 기존 권한을 고치지 않는다.
+
+        보유 중에는 루트와 상위 경로(작업 폴더 등)의 이름 변경이 막힌다. 실패는 입력 데이터 오류와 다른 고정 코드다.
+        """
+        try:
+            trusted = trusted_principals()
+            if create:
+                create_store(self.root, trusted)
+        except (OSError, ValueError):
+            raise StoreUnavailable("INPUT_STORE_PREPARE_FAILED") from None
+        try:
+            lease = store_lease(self.root, trusted)
+            lease.__enter__()
+        except StoreUnavailable:
+            raise StoreUnavailable("INPUT_STORE_PERMISSION_INVALID") from None
+        try:
+            yield
+        finally:
+            lease.__exit__(None, None, None)
+
     def _directory(self, name, *, create=False):
-        if type(name) is not str or re.fullmatch(r"[a-z][a-z0-9_-]{0,47}", name) is None:
+        # workers는 같은 폴더의 작업 폴더 이름이라 실행 이름으로 쓰지 않는다.
+        if type(name) is not str or re.fullmatch(r"[a-z][a-z0-9_-]{0,47}", name) is None or name == "workers":
             raise ValueError("안전한 새 실행 이름이 필요합니다.")
         base = self.root / self.action
         if create:
             base.mkdir(parents=True, exist_ok=True)
         return _root(base) / name
 
-    def create(self, name, *, snapshot_directory, snapshot, spec, limits, inspection_run=None, max_output_bytes=MAX_OUTPUT_BYTES):
-        """검증된 입력으로 새 실행 기록만 만든다. 승인·worker는 시작하지 않는다."""
-        packet = build_packet(self.action, snapshot, spec, limits, code_id(),
+    @_protected
+    def create(self, name, *, snapshot_directory, snapshot, spec, limits, runtime_id, inspection_run=None,
+               max_output_bytes=MAX_OUTPUT_BYTES):
+        """검증된 입력으로 새 실행 기록만 만든다. 승인·worker는 시작하지 않는다.
+
+        runtime_id는 호출자가 승인 전에 고정한 공유 런타임 구성 ID다(worker_runtime.current_runtime_id).
+        """
+        packet = build_packet(self.action, snapshot, spec, limits, code_id(), runtime_id=runtime_id,
                               inspection_id=None if self.action == "inspect" else "0" * 64,
                               inspection_sha256=None if self.action == "inspect" else "0" * 64, max_output_bytes=max_output_bytes)
         if self.action == "materialize":
@@ -230,6 +296,10 @@ class TabularInputService:
 
     def _open(self, name):
         directory = _root(self._directory(name))
+        # 실행 기록·승인 DB·완료 결과는 신뢰 주체만 쓸 수 있어야 한다(worker·다른 사용자 ACE 거부).
+        trusted = trusted_principals()
+        if not (check_object(directory.parent, trusted) and check_tree(directory, trusted)):
+            raise StoreUnavailable("INPUT_STORE_PERMISSION_INVALID")
         config = _decode(_read_file(directory / "selection.json", 65536).decode("utf-8"))
         if type(config) is not dict or set(config) != {"snapshot_directory", "packet", "inspection_run"}:
             raise ValueError("입력 실행 기록의 필드가 올바르지 않습니다.")
@@ -249,9 +319,11 @@ class TabularInputService:
         return lambda tool: {"stage": tool.states.load().current_stage, "limits": packet["limits"],
                              "run_name": tool.states.directory.name, "action": self.action,
                              "snapshot_sha256": packet["snapshot"]["sha256"], "input_code_id": packet["code_id"],
-                             "read_spec": packet["read_spec"], "inspection_id": packet["inspection_id"],
+                             "read_spec": packet["read_spec"], "runtime_id": packet["runtime_id"],
+                             "inspection_id": packet["inspection_id"],
                              "inspection_sha256": packet["inspection_sha256"], "max_output_bytes": packet["max_output_bytes"]}
 
+    @_protected
     def status(self, name):
         config, tool, manager = self._open(name)
         state = tool.states.load()
@@ -262,14 +334,17 @@ class TabularInputService:
                 actions = [{"id": ("execute" if progress["valid_approval_ids"] else "approve") if state.status == "awaiting_approval" else "next"}]
         return {"status": state.status, "stage": state.current_stage, "revision": state.revision, "actions": actions}
 
+    @_protected
     def preview_approval(self, name):
         config, tool, manager = self._open(name)
         return preview_approval(tool, manager, self._summary(config))
 
+    @_protected
     def record_delegated_approval(self, name, preview, *, authorize):
         config, tool, manager = self._open(name)
         return record_delegated(tool, manager, self._summary(config), preview, authorize=authorize)
 
+    @_protected
     def next(self, name, *, expected_stage, expected_revision, approval_id=None):
         _, tool, manager = self._open(name)
         state = tool.states.load()
@@ -277,6 +352,7 @@ class TabularInputService:
             raise ValueError("선택한 단계·revision이 바뀌었습니다.")
         return manager.run_next(approval_id=approval_id)
 
+    @_protected
     def verified(self, name):
         """실제 승인 소비·커밋과 현재 결과 형식을 재검증한다."""
         _, tool, manager = self._open(name)
@@ -287,6 +363,7 @@ class TabularInputService:
         request = tool._request(output.name)
         return output, tool._read(output, request, committed=True)
 
+    @_protected
     def source_contract(self, name):
         """생성 결과를 후속 v2 단계가 소비할 해시·승인 증거 계약으로 묶는다."""
         from src.preprocessing.tabular_bundle import BundleRef
@@ -301,10 +378,29 @@ class TabularInputService:
                                        read_spec_json=json.dumps(packet["read_spec"]), inspection_id=packet["inspection_id"],
                                        inspection_sha256=packet["inspection_sha256"], max_output_bytes=packet["max_output_bytes"],
                                        materialization=read_committed_artifact(tool.states.directory, manager.scope_for("ingest")),
-                                       limits=tool.limits, execution_code_id=packet["code_id"])
+                                       limits=tool.limits, execution_code_id=packet["code_id"],
+                                       execution_runtime_id=packet["runtime_id"])
         source.check_input()
         return source
 
+    @_protected
+    def runtime_failure(self, name):
+        """현재 단계 실행이 공유 런타임·작업 폴더 보호 검사에서 멈췄으면 고정 코드를, 아니면 None을 돌려준다."""
+        _, tool, manager = self._open(name)
+        task = manager.approvals.get_task(manager.scope_for(tool.states.load().current_stage))
+        if task is None:
+            return None
+        record = tool._work_root(manager._output(task).name) / "transport.json"
+        if record.exists() and not check_object(record, trusted_principals()):
+            return "INPUT_STORE_PERMISSION_INVALID"
+        try:
+            outcome = _decode(_read_file(record, 65536).decode("utf-8"))
+        except (OSError, ValueError, UnicodeError):
+            return None
+        code = outcome.get("runtime_error") if type(outcome) is dict else None
+        return code if code in RUNTIME_MESSAGES or code in STORE_MESSAGES else None
+
+    @_protected
     def results(self, name):
         folder, _ = self.verified(name)
         return {"status": "completed", "items": [{"kind": "artifact_list", "label": self.action, "path": str(folder)}]}
