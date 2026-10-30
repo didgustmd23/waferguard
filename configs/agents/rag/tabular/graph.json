@@ -1100,7 +1100,7 @@
    "type": "alternative_to",
    "scope": "product",
    "condition": "범주 상한 초과 위험이 있는 컬럼",
-   "caution": "시각 문자열이면 제외",
+   "caution": "시각 문자열이면 제외(표형 v2 time 분할이면 timestamp 가능)",
    "knowledge": [
     "K27"
    ]

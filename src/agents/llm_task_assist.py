@@ -38,6 +38,21 @@ TIME_UNSUPPORTED_MESSAGE = ("통합 작업에서는 시간 형식을 지정할 �
                             "random으로 자동 변경하지 않았습니다. 분할 방식을 직접 선택하세요.")
 TIME_SETTINGS_MESSAGE = ("time을 고르면 timestamp 역할 컬럼과 시간 설정(형식·시간대·복원 주기·행 순서 확인)을 직접 지정해야 합니다. "
                          "모델은 시간 설정을 정하지 않습니다.")
+# 시각처럼 보이는 컬럼 안내. 순서: time 분할에서 권장 / 표형 v2의 다른 분할 / 표형 v2에서 다른 컬럼이 timestamp / 표형 v1.
+CATEGORY_TIME_TEXTS = (
+    "이름이 시각·날짜처럼 보입니다. 시간 정보라면 timestamp로 지정하고 시간 설정을 직접 지정하세요. ",
+    "이름이 시각·날짜처럼 보입니다. timestamp는 분할 방식 time 선택과 시간 설정이 함께 있어야 쓸 수 있습니다. time 분할을 쓰지 않으면 제외를 고르세요. ",
+    "이름이 시각·날짜처럼 보이지만 다른 컬럼이 이미 timestamp 역할입니다. 제외를 고르세요. ",
+    "이름이 시각·날짜처럼 보입니다. 통합 작업은 시간 형식을 지정할 수 없어 timestamp로 쓸 수 없으니 제외를 고르세요. ",
+)
+CANDIDATE_TIME_TEXTS = (
+    "이름이 시각·날짜처럼 보이는 범주형 특징입니다. 시간 정보라면 timestamp로 지정해 특징에서 빼고 보존하세요. time 분할의 시간 설정도 직접 지정해야 합니다.",
+    "이름이 시각·날짜처럼 보이는 범주형 특징입니다. timestamp는 분할 방식 time 선택과 시간 설정이 함께 있어야 쓸 수 있습니다. "
+    "time 분할을 쓰지 않으면서 시간 정보를 특징으로 쓰지 않으려면 제외를 고르세요.",
+    "이름이 시각·날짜처럼 보이는 범주형 특징입니다. 다른 컬럼이 이미 timestamp 역할입니다. 시간 정보를 특징으로 쓰지 않으려면 제외를 고르세요.",
+    "이름이 시각·날짜처럼 보이는 범주형 특징입니다. 통합 작업은 시간 형식을 지정할 수 없어 timestamp로 쓸 수 없습니다. "
+    "시간 정보를 특징으로 쓰지 않으려면 제외를 고르세요.",
+)
 CODE_LABELS = {
     "PLAN_FIELDS_INVALID": "역할·분할·전처리 항목 구성이 계약과 다릅니다",
     "ROLES_INVALID": "역할이 역할 계약(1개만 허용되는 역할 중복, 특징 0개 등)에 맞지 않습니다",
@@ -628,8 +643,11 @@ def plan_questions(goal, summary, columns, plan, *, time_split=False):
                                options=[option for option in role_options if option["value"] in ("식별자", "수치형", EXCLUDED)],
                                recommended="식별자", subjects=[name]))
 
-    # timestamp 역할은 시간 형식을 지정할 수 있을 때만 쓸 수 있다. 형식 없이 지정하면 분할 전 품질 검사가 검토 필요로 멈춘다.
-    time_role = TIME_SPLIT_AVAILABLE and _label("timestamp") not in roles.values()
+    # timestamp 역할은 시간 형식을 지정할 수 있을 때만 쓸 수 있고 한 컬럼만 가능하다. 형식 없이 지정하면 분할 전 품질 검사가
+    # 검토 필요로 멈춘다. 선택지는 지원 유형이면 열어 두되, 권장은 time 분할일 때만 한다(time_role).
+    time_free = time_split and _label("timestamp") not in roles.values()
+    time_role = time_free and split.get("strategy") == "time"
+    time_case = 0 if time_role else 1 if time_free else 2 if time_split else 3
     rows = summary["row_count"]
     asked = set()
 
@@ -654,14 +672,13 @@ def plan_questions(goal, summary, columns, plan, *, time_split=False):
         time_like = time_like_name(name)
         # 식별자는 중복 검사 대상이다. 값이 행마다 모두 다를 때만 선택지로 둔다.
         distinct = row["observed_unique"] == rows - (row["missing_count"] or 0)
-        allowed = [EXCLUDED] + (["식별자"] if distinct else []) + ([_label("timestamp")] if time_like and time_role else [])
+        allowed = [EXCLUDED] + (["식별자"] if distinct else []) + ([_label("timestamp")] if time_like and time_free else [])
         text = f"범주형 특징의 고유값이 {item['unique']}개로 원핫 범주 상한 {item['limit']}개를 넘습니다. "
         text += ("Train만으로도 상한을 넘으므로 범주형으로는 전처리 후보 계산이 실패합니다. " if item["certain"] else
                  "Train에 포함되는 범주 수에 따라 전처리 후보 계산이 실패할 수 있습니다. ")
 
         if time_like:
-            text += ("이름이 시각·날짜처럼 보입니다. 시간 정보라면 timestamp로 지정하세요. " if time_role else
-                     "이름이 시각·날짜처럼 보입니다. 통합 작업은 시간 형식을 지정할 수 없어 timestamp로 쓸 수 없으니 제외를 고르세요. ")
+            text += CATEGORY_TIME_TEXTS[time_case]
 
         text += "행마다 다른 ID라면 식별자로 지정하세요." if distinct else "특징으로 쓰지 않으려면 제외를 고르세요."
         qid = "category_limit:" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
@@ -677,12 +694,9 @@ def plan_questions(goal, summary, columns, plan, *, time_split=False):
 
         if name not in asked and row["dtype_group"] != "numeric" and roles.get(name) == "범주형" and time_like_name(name):
             qid = "time_candidate:" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
-            text = ("이름이 시각·날짜처럼 보이는 범주형 특징입니다. 시간 정보라면 timestamp로 지정해 특징에서 빼고 보존하세요."
-                    if time_role else "이름이 시각·날짜처럼 보이는 범주형 특징입니다. 통합 작업은 시간 형식을 지정할 수 없어 timestamp로 "
-                                      "쓸 수 없습니다. 시간 정보를 특징으로 쓰지 않으려면 제외를 고르세요.")
-            result.append(question(qid, "advisory", text, path="roles." + name,
+            result.append(question(qid, "advisory", CANDIDATE_TIME_TEXTS[time_case], path="roles." + name,
                                    options=[option for option in role_options
-                                            if option["value"] in ("범주형", EXCLUDED) or (time_role and option["value"] == _label("timestamp"))],
+                                            if option["value"] in ("범주형", EXCLUDED) or (time_free and option["value"] == _label("timestamp"))],
                                    recommended=_label("timestamp") if time_role else EXCLUDED, subjects=[name]))
 
     targets = [name for name, role in roles.items() if role == _label("target")]
