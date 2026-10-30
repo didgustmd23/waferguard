@@ -408,6 +408,36 @@ class TaskScreenTest(unittest.TestCase):
         self.assertTrue(any("크기 상한(512 KiB)" in item.value for item in app.error))
         self.assertFalse(any("새 작업으로 시작하세요" in item.value for item in app.error))
 
+    def test_goal_guide_is_shown_without_filling_the_goal_and_typed_goal_is_sent_unchanged(self):
+        from streamlit.testing.v1 import AppTest
+
+        from src.ui import task_view
+
+        app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=180).run()
+        goal = app.text_area(key="task_goal")
+        # 안내·예시는 표시만 한다. 입력란은 비어 있고 특정 데이터셋 컬럼명을 기본값처럼 채우지 않는다.
+        self.assertEqual(goal.value, "")
+        self.assertNotIn("Survived", goal.placeholder)
+        self.assertIn(task_view.GOAL_NOTICE, [item.value for item in app.caption])
+        self.assertTrue(any(item.label == "목표 작성 안내 (선택 사항)" for item in app.expander))
+        texts = [item.value for item in app.text]
+        self.assertIn(task_view.GOAL_EXAMPLE, texts)
+        self.assertTrue(all("- " + item in texts for item in task_view.GOAL_ITEMS))
+
+        typed = "  생존 여부 예측. 대상 컬럼은 label, id는 식별자로만 둡니다.\n그룹은 모릅니다.  "
+        app.text_input(key="_widget_task_source").set_value(str(self.source))
+        goal.set_value(typed)
+        app.checkbox(key="task_consent_a").check()
+        real = flow.orchestrator.start_task
+
+        with patch("src.agents.task_orchestrator.start_task", side_effect=real) as start:
+            next(item for item in app.button if item.label == "작업 시작").click().run()
+
+        self.assertFalse(app.exception, [item.value for item in app.exception])
+        self.assertEqual(start.call_args.args[0], typed)
+        # 화면은 적은 문장을 바꾸지 않고 전달하며, 기록에도 그대로 저장된다(기존 저장 형식).
+        self.assertEqual(flow.task_store.load_task(next(self.store.iterdir()).name, root=self.store)["goal"], typed)
+
     def test_non_admin_server_cannot_start_task(self):
         from streamlit.testing.v1 import AppTest
 

@@ -21,6 +21,8 @@ langchain-core==1.6.12
 langchain-ollama==1.1.0
 langgraph==1.2.16
 langsmith==0.14.11
+# RAG ON 근거 예산의 Qwen3.5 입력 토큰 로컬 계산(검증 버전 고정). 런타임은 Tokenizer.from_str만 쓰며 Hugging Face Hub 다운로드를 하지 않는다.
+tokenizers==0.23.3
 
 # 공통 UI·결과 확인 노트북
 streamlit==1.66.0

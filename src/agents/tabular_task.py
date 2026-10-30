@@ -26,7 +26,7 @@ from .llm_workflow_contract import validate_workflow_proposal
 from .module_pipeline_transport import code_manifest
 from .preparation_module_plan import validate_preparation_modules
 from .profile_store import save_profile
-from . import tabular_options
+from . import rag_tabular, tabular_options
 from .snapshot_eda import _digest
 from .task_plan import PlanError, TaskProblem
 from .workflow_service_registry import CSV_IDS, workflow_service
@@ -50,6 +50,8 @@ STEP_LABELS = {"split": "분할 검토·확정", "export": "개발 구간 내보
                "apply": "전처리 적용", "handoff": "로컬 전달 묶음"}
 ALLOWED = tuple((module_id, "1.0.0") for module_id in CSV_IDS)
 TRANSFER_SCOPE = "goal_text_column_names_and_aggregates_without_rows_or_individual_values"
+# 실험적 검색 근거(Graph RAG, 기본 OFF)의 표형 프로필. 프로필이 없는 유형은 ON을 고를 수 없다.
+RAG_PROFILE = rag_tabular
 MAX_REPORT_TEXT = 64 * 1024
 HEADER_LIMIT = 1024 * 1024
 ACTIONS = {"header_dedupe": {
@@ -339,9 +341,9 @@ def validate_plan(record, plan):
     return profile, preparation
 
 
-def questions(record, plan):
+def questions(record, plan, *, time_split=False):
     diagnostic = record["diagnostic"]
-    return rules.plan_questions(record["goal"], diagnostic["summary"], diagnostic["columns"], plan)
+    return rules.plan_questions(record["goal"], diagnostic["summary"], diagnostic["columns"], plan, time_split=time_split)
 
 
 def on_rejected(record, draft):

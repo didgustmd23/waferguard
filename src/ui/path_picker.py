@@ -76,8 +76,11 @@ def fill_from_dialog(st, key, kind):
     st.session_state[key + "_notice"] = notice
 
 
-def path_input(st, label, *, key, kind, value="", help, disabled=False):
-    """기존 폼 안에서 사용한다. 찾아보기 역시 폼 제출 버튼이지만 확인 동작은 아니다."""
+def path_input(st, label, *, key, kind, value="", help, disabled=False, browse_disabled=False):
+    """기존 폼 안에서 사용한다. 찾아보기 역시 폼 제출 버튼이지만 확인 동작은 아니다.
+
+    browse_disabled는 찾아보기 버튼만 잠근다(처리 중 잠금). 경로 입력 값은 같은 실행의 제출 값을 유지한다.
+    """
     widget_key = "_widget_" + key
 
     if widget_key not in st.session_state:
@@ -90,7 +93,7 @@ def path_input(st, label, *, key, kind, value="", help, disabled=False):
     with columns[1]:
         st.form_submit_button(
             "폴더 찾기" if kind == "directory" else "파일 찾기", key=key + "_browse",
-            disabled=disabled, on_click=fill_from_dialog, args=(st, key, kind),
+            disabled=disabled or browse_disabled, on_click=fill_from_dialog, args=(st, key, kind),
             help="이 PC에 선택 창을 엽니다. 취소하면 기존 입력을 유지합니다. 로컬 단일 사용자 모드용입니다.",
         )
 

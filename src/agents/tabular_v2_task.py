@@ -39,6 +39,7 @@ MISSING = shared.MISSING
 STEPS = tuple((step_id, module_id, decision) for (step_id, _, decision), module_id in zip(shared.STEPS, TABULAR_IDS))
 RUN_ALIAS = shared.RUN_ALIAS
 REVIEW_STEP = shared.REVIEW_STEP
+RAG_PROFILE = shared.RAG_PROFILE
 STEP_LABELS = shared.STEP_LABELS
 ALLOWED = tuple((module_id, TABULAR_VERSION) for module_id in TABULAR_IDS)
 # 입력 해석은 대기 화면의 선택(resume_input)으로 다시 정한다. 차단 화면의 해결 동작은 없다.

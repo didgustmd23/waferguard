@@ -52,20 +52,26 @@ def main():
     if "ui_draft" not in st.session_state:
         st.session_state["ui_draft"] = ""
 
+    # 통합 작업 실행을 예약했거나 처리 중이면 화면 이동도 잠근다. 끝난 실행의 결과는 여기서 먼저 반영한다.
+    from src.ui import task_submit
+
+    task_submit.reconcile(st)
+    locked = task_submit.locked(st)
+
     with st.sidebar:
-        advanced = st.checkbox("고급 도구 표시", key="ui_show_advanced_tools",
+        advanced = st.checkbox("고급 도구 표시", key="ui_show_advanced_tools", disabled=locked,
                                help="기존 LLM 제안과 등록 모듈의 단계별 실행 화면을 표시합니다. 표시 변경만으로 작업·승인·모델 호출은 발생하지 않습니다.")
         if advanced:
             if "ui_workflow_mode" not in st.session_state:
                 st.session_state["ui_workflow_mode"] = "통합 작업"
-            st.selectbox("작업 도구", ("통합 작업", "LLM 제안", "등록 모듈"), key="ui_workflow_mode",
+            st.selectbox("작업 도구", ("통합 작업", "LLM 제안", "등록 모듈"), key="ui_workflow_mode", disabled=locked,
                          help="통합 작업을 기본으로 사용하세요. LLM 제안과 등록 모듈은 기존 단계별 실행을 위한 고급 도구입니다.")
         else:
             # 이전 세션의 고급 화면 선택이 남아 있어도 기본 화면에서는 실행 경로를 노출하지 않는다.
             # 각 화면의 초안·작업 연결·승인은 삭제하지 않는다.
             st.session_state["ui_workflow_mode"] = "통합 작업"
         if st.session_state.get("ui_workflow_mode") == "통합 작업":
-            st.radio("화면", ("작업", "설정"), key="ui_task_screen", horizontal=True)
+            st.radio("화면", ("작업", "설정"), key="ui_task_screen", horizontal=True, disabled=locked)
         if st.session_state.get("ui_workflow_mode", "LLM 제안") == "LLM 제안":
             st.selectbox("제안 범위", ("품질·EDA", "CSV 분할·전처리"), key="ui_proposal_scope",
                          help="CSV 실행안도 같은 5단계를 사용합니다. 작업 준비와 각 실행 승인은 별도입니다.")

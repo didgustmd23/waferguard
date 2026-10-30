@@ -10,7 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 
-from . import task_adapters, task_consent, task_recommend, task_store
+from . import task_adapters, task_consent, task_rag, task_recommend, task_store
 from .input_snapshot import Snapshot, create_snapshot, verify_snapshot
 from .llm_config import LocalModelConfig
 from .llm_proposal import validate_request_text
@@ -117,18 +117,20 @@ def _allowed(record, decision):
 # 작업 시작과 결정 A (입력 진단)
 # ==========================================
 
-def start_task(goal, source_path, limits, model, *, root=None, input_generation="legacy"):
+def start_task(goal, source_path, limits, model, *, root=None, input_generation="legacy", rag_mode="off"):
     """작업 기록만 만든다. 파일 복사·worker·모델 호출은 결정 A 이후에 한다.
 
     input_generation은 새 작업의 유형 후보 집합(legacy/current)이다. 유형은 선택한 파일의 형식으로 고정 등록부에서만 고른다.
+    rag_mode는 실험적 검색 근거 선택(off 기본·on)이다. 지원하지 않는 유형의 on은 작업을 만들기 전에 거부한다(RagUnsupported).
     """
     validate_request_text(goal)
     WorkerLimits(**limits)
     LocalModelConfig(**model)
     source = _path(Path(source_path).absolute(), directory=False)
     kind = task_adapters.select(source, generation=input_generation)
+    rag = task_rag.setting(task_adapters.adapter(kind), rag_mode)
     record = task_store.create_task(goal, {"path": str(source), "size_bytes": source.stat().st_size}, kind, root=root)
-    record.update(limits=dict(limits), model=dict(model))
+    record.update(limits=dict(limits), model=dict(model), rag=rag)
     return task_store.save_task(record, expected_revision=record["revision"], root=root)
 
 
@@ -137,7 +139,8 @@ def consent_a_scope(record, action=None):
     adapter = _adapter(record)
     content = adapter.consent_a_content(record) if action is None else adapter.consent_a_content(record, action)
     return {"source_path": record["source"]["path"], "source_size_bytes": record["source"]["size_bytes"],
-            "limits": record["limits"], "model": record["model"]["model"], "model_host": record["model"]["host"], **content}
+            "limits": record["limits"], "model": record["model"]["model"], "model_host": record["model"]["host"],
+            "rag": task_rag.renewed(record, adapter), **content}
 
 
 def diagnose(task_id, *, root=None, requester=None):
@@ -235,7 +238,7 @@ def resume_input(task_id, selection, *, expected_revision, expected_inspection_i
         task_consent.check(record["consents"].get("A"), "A", task_id)
         content = {"source_path": record["source"]["path"], "source_size_bytes": record["source"]["size_bytes"],
                    "limits": record["limits"], "model": record["model"]["model"], "model_host": record["model"]["host"],
-                   **adapter.input_consent_content(record, selection)}
+                   "rag": task_rag.renewed(record, adapter), **adapter.input_consent_content(record, selection)}
         record["consents"]["A"] = task_consent.grant("A", task_id, content)
         record.update(phase="diagnosing", problem=None)
         record = _save(record, root)
@@ -252,14 +255,41 @@ def resume_input(task_id, selection, *, expected_revision, expected_inspection_i
 
 
 def _recommend(record, adapter, requester, root):
-    """검증된 진단 결과로 로컬 모델 권장안을 한 번 받고 계획 확인에서 멈춘다."""
+    """검증된 진단 결과로 로컬 모델 권장안을 한 번 받고 계획 확인에서 멈춘다.
+
+    검색 근거 ON이면 진단 배치를 확정한 요청에 근거를 붙여 보낸다(task_rag). OFF·이전 기록은 기존 요청 그대로다.
+    실제 사용 결과는 초안의 rag에 남긴다.
+    """
     options = {} if requester is None else {"requester": requester}
+    augment, sent = task_rag.augmenter(record, adapter), {}
+
+    if augment is not None:
+        def augment_and_keep(payload, config):
+            # 권장 요청이 예상하지 못한 오류로 끝나도 실제로 만든 근거 기록을 잃지 않게 보관한다.
+            # 권장 요청과 같은 예산 검사로 버릴 근거는 여기서 먼저 버려, 보관한 기록이 실제 요청과 어긋나지 않게 한다.
+            augmented, rag = augment(payload, config)
+
+            if augmented is not payload and not augment.final_fits(augmented, config):
+                augmented, rag = payload, {"discarded": True}
+
+            sent["rag"] = rag
+            return augmented, rag
+
+        augment_and_keep.final_fits = augment.final_fits
+        options["augment"] = augment_and_keep
+
+    # ON 동의 A의 검색 근거 범위(실행 코드 지문 포함)가 지금과 다르면 임베딩·생성 요청을 모두 보내지 않고 기본 계획으로 간다.
+    blocked = None if augment is None else task_rag.blocked(record, adapter)
 
     try:
-        record["draft"] = task_recommend.request(
-            record["goal"], adapter.recommendation_input(record), adapter.base_plan(record), adapter.plan_fields(record),
-            lambda plan: adapter.validate_plan(record, plan), LocalModelConfig(**record["model"]),
-            on_rejected=lambda draft: adapter.on_rejected(record, draft), **options)
+        if blocked is not None:
+            record["draft"] = {"summary": [], "notes": [], "changes": [], "questions": [], "dropped_questions": 0,
+                               "plan": adapter.base_plan(record), "source": "default", "code": blocked["code"], "rag": blocked}
+        else:
+            record["draft"] = task_recommend.request(
+                record["goal"], adapter.recommendation_input(record), adapter.base_plan(record), adapter.plan_fields(record),
+                lambda plan: adapter.validate_plan(record, plan), LocalModelConfig(**record["model"]),
+                on_rejected=lambda draft: adapter.on_rejected(record, draft), **options)
     except Exception:
         # 권장안 준비 중 예상하지 못한 오류는 다시 요청하지 않고 기본 계획으로 이어 간다.
         try:
@@ -267,6 +297,8 @@ def _recommend(record, adapter, requester, root):
                                "plan": adapter.base_plan(record), "source": "default", "code": "MODEL_REQUEST_FAILED"}
         except Exception:
             return _stop(record, TaskProblem("DIAGNOSTIC_FAILED", "진단 결과로 기본 계획을 만들지 못했습니다. 새 작업으로 시작하세요."), root)
+
+    record["draft"]["rag"] = task_rag.finalize(record, record["draft"].pop("rag", blocked or sent.get("rag")))
 
     record["phase"] = "awaiting_review"
     return _save(record, root)

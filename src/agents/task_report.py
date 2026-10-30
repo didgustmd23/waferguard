@@ -5,7 +5,7 @@ LLM을 쓰지 않는다. 사실에 없는 수치는 추측하지 않고 '미집�
 
 import json
 
-from . import task_adapters, task_recommend
+from . import task_adapters, task_rag, task_recommend
 from .task_plan import PlanError, get_path
 
 
@@ -14,7 +14,7 @@ MISSING = "미집계"
 
 def code_label(record, code):
     """권장안 거부·모델 오류 코드의 고정 설명. 등록되지 않은 코드는 설명하지 않는다."""
-    labels = {**task_recommend.CODE_LABELS, **task_adapters.adapter(record["kind"]).CODE_LABELS}
+    labels = {**task_recommend.CODE_LABELS, **task_rag.REQUEST_CODE_LABELS, **task_adapters.adapter(record["kind"]).CODE_LABELS}
     return labels.get(code)
 
 
@@ -89,10 +89,19 @@ def build_facts(record):
                      consents={key: value["consent_id"] for key, value in record["consents"].items()},
                      draft={"source": draft["source"], "code": draft.get("code"),
                             "coverage": {key: coverage[key] for key in ("total", "detailed", "named", "summarized") if key in coverage}})
+    # 검색 근거(실험적 Graph RAG) 사용 기록은 이를 남긴 작업에만 절을 둔다. 저장된 기록만 쓰고 검색을 다시 하지 않는다.
+    rag = task_rag.view(draft)
+    extra = {} if rag is None else {"rag": rag}
+
+    if rag is not None:
+        usage = draft["rag"] if type(draft.get("rag")) is dict else {}
+        technical["draft"]["rag"] = {key: usage.get(key) for key in ("mode", "status", "code", "pack", "index", "embedding",
+                                                                    "included_items", "included_relations")}
+
     # 유형 어댑터가 새 절(핵심 결과·경고·활용)을 주지 않아도 공통 보고서 틀은 같은 절을 비워 둔다.
     return dict(facts, goal=record["goal"], cautions=cautions, technical=technical,
                 highlights=facts.get("highlights", []), warnings=facts.get("warnings", []), usage=facts.get("usage", []),
-                recommendation={"source": draft["source"], "code": draft.get("code")})
+                recommendation={"source": draft["source"], "code": draft.get("code")}, **extra)
 
 
 def answer_notes(record):
@@ -254,6 +263,15 @@ def render_markdown(facts):
     for kind in WARNING_KINDS:
         items = [item["내용"] for item in warnings if item["구분"] == kind]
         lines += ["### " + kind, *(["- " + _plain(text) for text in items] or ["- (없음)"])]
+
+    rag = facts.get("rag")
+
+    if rag:
+        lines += ["", "## 검색 근거 (실험적 Graph RAG)", *["- " + _plain(text) for text in rag["lines"]]]
+
+        if rag["items"] or rag["relations"]:
+            lines += ["", "### 생성 요청에 포함한 지식", *_table(rag["items"], task_rag.ITEM_COLUMNS), "",
+                      "### 생성 요청에 포함한 관계", *_table(rag["relations"], task_rag.RELATION_COLUMNS)]
 
     lines += ["", "## 참고 사항", *["- " + _plain(text) for text in facts["cautions"]], "",
               "## 적용 구간과 결과 파일 활용", *["- " + _plain(text) for text in facts.get("usage", [])], "",

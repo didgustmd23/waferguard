@@ -151,8 +151,11 @@ def run_pipeline_worker(request, root, cancel_event):
         raise
     finally:
         try:
-            report_progress("cleanup")
-            outcome["profile_cleanup"] = container.close() if container is not None else True
+            try:
+                report_progress("cleanup")
+            finally:
+                # 진행 표시 구독자가 어떤 예외(화면 재실행 신호 포함)로 끊겨도 프로필 정리는 건너뛰지 않는다.
+                outcome["profile_cleanup"] = container.close() if container is not None else True
         except Exception as error:
             # 정리 예외로 원래 실패 진단을 덮어쓰지 않는다. 정리 확인이 없으면
             # 상위 실행기는 결과를 성공으로 커밋할 수 없다.

@@ -1,0 +1,185 @@
+{
+ "schema_version": "rag_sources_v1",
+ "sources": [
+  {
+   "id": "S_CODE_ASSIST",
+   "kind": "product_code",
+   "title": "표형 계획 규칙(지시문·판단 대상·계획 검증·결정적 질문)",
+   "path": "src/agents/llm_task_assist.py",
+   "version": null,
+   "sha256": "58346a729989b2d2e3fa484025b5b8e403d2b0128362cf315706943e3f6ade87",
+   "enforce": true
+  },
+  {
+   "id": "S_CODE_RECOMMEND",
+   "kind": "product_code",
+   "title": "권장안 요청 예산·병합·거부",
+   "path": "src/agents/task_recommend.py",
+   "version": null,
+   "sha256": "3d7e38c851f5f3d15970fd7dfae8840f2befdb07f5e196a9dd3f24d7aa0a9dca",
+   "enforce": true
+  },
+  {
+   "id": "S_CODE_OPTIONS",
+   "kind": "product_code",
+   "title": "전처리 옵션 고정 설명(GUIDE)",
+   "path": "src/agents/tabular_options.py",
+   "version": null,
+   "sha256": "04adc4c1b06281f652b3015e6642afc33a13be908c8a378fc24808987c46af39",
+   "enforce": true
+  },
+  {
+   "id": "S_CODE_V2TASK",
+   "kind": "product_code",
+   "title": "표형 v2 어댑터(수치형 역할 자료형 조건)",
+   "path": "src/agents/tabular_v2_task.py",
+   "version": null,
+   "sha256": "672f902dcbe279625369dc17d12501c333e780615e612008098e56dc209cf6e2",
+   "enforce": true
+  },
+  {
+   "id": "S_CODE_TRANSFORM",
+   "kind": "product_code",
+   "title": "PreparationRules·Train 기준 전처리",
+   "path": "src/preprocessing/transform.py",
+   "version": null,
+   "sha256": "2d492c68ecedad7aa63b018740910205864b29e143dc78a4d578e836547e807d",
+   "enforce": true
+  },
+  {
+   "id": "S_CODE_SPLIT",
+   "kind": "product_code",
+   "title": "SplitRules·분할 계산",
+   "path": "src/preprocessing/split.py",
+   "version": null,
+   "sha256": "9a70b0306aa2b7796ece802fa71dbc7d1d6cd5909ee361aa4d40cbf63e6d1df2",
+   "enforce": true
+  },
+  {
+   "id": "S_CODE_PROFILE_STORE",
+   "kind": "product_code",
+   "title": "역할 이름·통합 작업 분할 필드",
+   "path": "src/agents/profile_store.py",
+   "version": null,
+   "sha256": "b70ca1293015b0dcbf06784e625bc0a673f10b634c2bd19b150829f49afaa213",
+   "enforce": true
+  },
+  {
+   "id": "S_CODE_CONTRACTS",
+   "kind": "product_code",
+   "title": "역할 계약(feature_columns)",
+   "path": "src/preprocessing/contracts.py",
+   "version": null,
+   "sha256": "76c4d893b560761e3b8979c4deb55be7dde5bcb0a319da7d20887f385bc97dfb",
+   "enforce": true
+  },
+  {
+   "id": "S_CODE_INPUT_PROFILE",
+   "kind": "product_code",
+   "title": "입력 진단 집계(IQR 이상치 후보 수)",
+   "path": "src/preprocessing/input_profile.py",
+   "version": null,
+   "sha256": "6efc0e12ba1a32860c2a689486a7b1f0861fa19f47ae91e6b29b74be7e4c25ae",
+   "enforce": true
+  },
+  {
+   "id": "S_DOC_DESIGN",
+   "kind": "product_doc",
+   "title": "설계: 계획과 질문·표형 검사와 옵션·분할·내보내기·Train 기준·정보 전달",
+   "path": "docs/agents/DESIGN.md",
+   "version": null,
+   "sha256": "1c6af99a3c589444211309eac9874f4721fa99102e92fc2f977cb3cfc980750b",
+   "enforce": false
+  },
+  {
+   "id": "S_DOC_GUIDE",
+   "kind": "product_doc",
+   "title": "사용 안내: 현재 구현 상태·옵션과 품질 지적",
+   "path": "docs/agents/GUIDE.md",
+   "version": null,
+   "sha256": "3c2c37ef7739b3996a0aeca2cd5499639d1a5503fb3bffde18a758ade9588892",
+   "enforce": false
+  },
+  {
+   "id": "S_SK",
+   "kind": "official_doc",
+   "title": "scikit-learn 설치본 공식 docstring",
+   "path": null,
+   "version": "scikit-learn 1.9.1",
+   "sha256": null,
+   "enforce": false
+  },
+  {
+   "id": "S_CHK",
+   "kind": "computation",
+   "title": "합성 배열 독립 계산(제품 코드 미사용)",
+   "path": "scripts/rag_checks/independent_checks.py",
+   "version": null,
+   "sha256": "86487b8439cef066eb751d9583d269698d9b5e0f3a639a76aa8098513e928b57",
+   "enforce": true
+  },
+  {
+   "id": "S_SK_GUIDE_PITFALLS",
+   "kind": "official_doc",
+   "title": "Common pitfalls and recommended practices 12.2 Data leakage (https://scikit-learn.org/1.9/common_pitfalls.html#data-leakage)",
+   "path": null,
+   "version": "scikit-learn 1.9.1 documentation",
+   "sha256": null,
+   "enforce": false
+  },
+  {
+   "id": "S_SK_GUIDE_CV",
+   "kind": "official_doc",
+   "title": "3.1.2.4 Cross-validation iterators for grouped data (https://scikit-learn.org/1.9/modules/cross_validation.html#cross-validation-iterators-for-grouped-data)",
+   "path": null,
+   "version": "scikit-learn 1.9.1 documentation",
+   "sha256": null,
+   "enforce": false
+  },
+  {
+   "id": "S_SK_GUIDE_IMPUTE",
+   "kind": "official_doc",
+   "title": "8.4 Imputation of missing values(첫 문단·8.4.7 Estimators that handle NaN values) (https://scikit-learn.org/1.9/modules/impute.html#imputation-of-missing-values)",
+   "path": null,
+   "version": "scikit-learn 1.9.1 documentation",
+   "sha256": null,
+   "enforce": false
+  },
+  {
+   "id": "S_CHK_GROUP",
+   "kind": "computation",
+   "title": "그룹 수가 적을 때 2단계 GroupShuffleSplit 합성 계산(제품 코드 미사용)",
+   "path": "scripts/rag_checks/group_few_check.py",
+   "version": null,
+   "sha256": "c9f1547014c70d6793054baeb9cb3ac5196e3918d30d08bf0bdc8b7d9e5651b0",
+   "enforce": true
+  },
+  {
+   "id": "S_CHK_BINNING",
+   "kind": "computation",
+   "title": "구간 경계 병합의 부동소수점 경계 합성 계산(제품 코드 미사용)",
+   "path": "scripts/rag_checks/binning_float_check.py",
+   "version": null,
+   "sha256": "26985438fcc93b9cdfd3df107e7afd50b0492d683635b0c9cd820b7f3f10387e",
+   "enforce": true
+  },
+  {
+   "id": "S_CODE_PREP_WORKER",
+   "kind": "product_code",
+   "title": "전처리 worker 행 메타데이터(row_metadata)",
+   "path": "src/agents/tabular_preparation_worker.py",
+   "version": null,
+   "sha256": "4952dfa3c86f5374ec5dc6ce197f3e67470e84fff0dd8348b3b4df56d05753fd",
+   "enforce": true
+  },
+  {
+   "id": "S_CHK_STRATIFY",
+   "kind": "computation",
+   "title": "비율별 계층 분할 실패·클래스 누락 합성 계산(제품 코드 미사용)",
+   "path": "scripts/rag_checks/stratify_ratio_check.py",
+   "version": null,
+   "sha256": "0d146639b7bc2250c1be3738cea6a082dafcfd422dc1855a0b4c3d72ad57ab53",
+   "enforce": true
+  }
+ ]
+}
