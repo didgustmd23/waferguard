@@ -1109,7 +1109,7 @@
    "effects": [],
    "info_loss": [],
    "cautions": [
-    "제품 통합 작업은 time 분할을 지원하지 않는다(K24)"
+    "표형 v1 통합 작업은 time 분할을 지원하지 않고, 표형 v2는 사용자가 시간 설정을 직접 지정해야 한다(K24)"
    ],
    "options": [
     "split.strategy"
@@ -1127,7 +1127,7 @@
     "method": "docstring",
     "status": "author_verified",
     "human": "pending",
-    "ai": "consistent"
+    "ai": "not_reviewed"
    },
    "task_kinds": [
     "tabular_csv",
@@ -1137,10 +1137,10 @@
   },
   {
    "id": "K24",
-   "title": "통합 작업은 time 분할·시간 형식 미지원",
+   "title": "time 분할은 표형 v2에서 사용자 시간 설정으로만 사용",
    "kind": "product_constraint",
-   "support": "unsupported",
-   "body": "통합 작업 분할 필드에 시간 형식이 없어 strategy=time을 쓸 수 없다. 모델이 time을 권하면 권장 전체가 거부되고 분할 방식을 비워 사용자가 고른다(random으로 자동 대체하지 않음). timestamp 역할은 필수 질문으로 제외를 권한다. 이름이 시각·날짜처럼 보이는 범주 컬럼은 안내 질문 대상이며(값은 보지 않음), 범주 상한 초과가 확정되면 같은 컬럼이 필수 질문이 된다.",
+   "support": "constraint",
+   "body": "표형 v1 통합 작업은 분할 필드에 시간 형식이 없어 strategy=time을 쓸 수 없다. 표형 v2는 time을 고를 수 있지만 시간 컬럼·형식·시간대·복원 주기·행 순서 확인은 사용자가 직접 지정하며 모델 요청·허용값에서 빠진다. 모델이 time을 권하면 권장 전체가 거부된다. 표형 v1, 또는 표형 v2에서 timestamp 역할까지 권한 경우에는 분할 방식을 비워 사용자가 고른다(random으로 자동 대체하지 않음). 표형 v2에서 timestamp 역할 없이 권하면 기본 계획의 분할 방식이 유지된다. timestamp 역할은 time 분할에 쓰지 않으면 필수 질문으로 제외를 권한다. 이름이 시각·날짜처럼 보이는 범주 컬럼은 안내 질문 대상이며(값은 보지 않음), 범주 상한 초과가 확정되면 같은 컬럼이 필수 질문이 된다.",
    "applies_when": [
     "시각·날짜 컬럼이 있거나 시간 순서 평가를 원하는 목표"
    ],
@@ -1150,7 +1150,8 @@
     "random 분할로 진행하면 시간 누수 가능성이 남는다"
    ],
    "cautions": [
-    "time 분할을 실행 가능한 선택처럼 권하지 않는다",
+    "표형 v1에서는 time 분할을 실행 가능한 선택처럼 권하지 않는다",
+    "표형 v2에서도 모델은 시간 설정을 정할 수 없으므로 time을 changes에 넣지 말고 사용자에게 안내한다",
     "random 진행 시 누수 가능성을 알리고 사용자가 정하게 한다"
    ],
    "options": [
@@ -1163,22 +1164,30 @@
    "sources": [
     {
      "id": "S_CODE_ASSIST",
-     "section": "TIME_SPLIT_AVAILABLE·check_split_roles·plan_questions·on_rejected"
+     "section": "TIME_SPLIT_AVAILABLE·check_split_roles(time_split)·plan_questions(time_split)·on_rejected"
     },
     {
      "id": "S_CODE_PROFILE_STORE",
      "section": "SPLIT_FIELDS"
     },
     {
+     "id": "S_CODE_V2TASK",
+     "section": "plan_fields(user_only 시간 설정)·validate_plan(time_split)·_time_settings·on_rejected"
+    },
+    {
      "id": "S_DOC_GUIDE",
-     "section": "현재 구현 상태(통합 time 분할 미지원)"
+     "section": "현재 구현 상태(미지원 확장: 표형 v2 이외의 통합 time 분할)"
+    },
+    {
+     "id": "S_DOC_DESIGN",
+     "section": "표형 v2의 time 분할(사용자 지정 time 구획, 모델 제외)"
     }
    ],
    "review": {
     "method": "code",
     "status": "author_verified",
     "human": "pending",
-    "ai": "fixed_after_review"
+    "ai": "not_reviewed"
    },
    "task_kinds": [
     "tabular_csv",
@@ -1545,7 +1554,7 @@
    "title": "역할별 의미와 특징 포함 여부",
    "kind": "product_constraint",
    "support": "constraint",
-   "body": "모델 입력 특징은 수치형·범주형 역할 컬럼뿐이다. target은 예측 대상, group은 같은 묶음(예: 같은 대상의 반복 측정 단위)을 한 구간에 모으는 분할 기준, 식별자는 행 구분용, timestamp는 측정 시각(통합 작업에서는 시간 형식을 지정할 수 없어 필수 질문으로 제외를 권함, K24)이며, 이들과 제외 역할은 전처리 옵션과 학습 특징에 쓰이지 않는다. target·group·timestamp는 각각 최대 1개이고 수치형·범주형 특징은 하나 이상 있어야 한다. group 역할은 값을 구간으로 나누는 기능(binning)과 무관하다. target·group·timestamp·식별자는 전달 결과에서 특징 파일이 아닌 행 메타데이터로 보존된다.",
+   "body": "모델 입력 특징은 수치형·범주형 역할 컬럼뿐이다. target은 예측 대상, group은 같은 묶음(예: 같은 대상의 반복 측정 단위)을 한 구간에 모으는 분할 기준, 식별자는 행 구분용, timestamp는 측정 시각(time 분할에 쓰지 않으면 필수 질문으로 제외를 권함, K24)이며, 이들과 제외 역할은 전처리 옵션과 학습 특징에 쓰이지 않는다. target·group·timestamp는 각각 최대 1개이고 수치형·범주형 특징은 하나 이상 있어야 한다. group 역할은 값을 구간으로 나누는 기능(binning)과 무관하다. target·group·timestamp·식별자는 전달 결과에서 특징 파일이 아닌 행 메타데이터로 보존된다.",
    "applies_when": [
     "컬럼 역할을 정하거나 바꾸는 권장",
     "특정 컬럼을 묶음·구간·기준으로 쓰려는 목표"
@@ -1602,7 +1611,7 @@
     "method": "code",
     "status": "author_verified",
     "human": "pending",
-    "ai": "fixed_after_review"
+    "ai": "not_reviewed"
    },
    "task_kinds": [
     "tabular_csv",
