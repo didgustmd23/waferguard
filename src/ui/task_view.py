@@ -10,7 +10,7 @@ import pandas as pd
 from src.agents import task_adapters, task_store
 from src.agents import task_orchestrator as orchestrator
 from src.agents.task_plan import PlanError, flatten
-from src.agents.task_report import code_label
+from src.agents.task_report import chart_rows, code_label, recommendation_notice, table_columns
 from .path_picker import path_input
 from .progress_view import show_operation_progress
 from .runtime_notice import render_permissions, require_execution_permissions
@@ -82,12 +82,51 @@ def _start_revise(st, task_id, attempt):
     st.session_state["task_revise_" + task_id] = attempt
 
 
-def _rows(st, rows):
+def _rows(st, rows, columns=None):
     # 컬럼명·값은 입력 데이터에서 온 문자열이다. 마크다운이 아니라 표로만 표시한다.
+    # 저장된 사실은 키가 정렬돼 있으므로 열 순서는 Markdown 보고서와 같은 table_columns로 정한다.
+    # columns는 표를 만드는 쪽이 정한 순서다(없으면 호환용 기본 순서).
     if rows:
-        st.dataframe(pd.DataFrame([{key: str(value) for key, value in row.items()} for row in rows]), hide_index=True)
+        columns = table_columns(rows, columns)
+        st.dataframe(pd.DataFrame([{key: str(row.get(key, "")) for key in columns} for row in rows], columns=columns),
+                     hide_index=True)
     else:
         st.text("(없음)")
+
+
+def _chart(st, chart):
+    """보고서 그래프 한 개. 값이 없으면 사유만 보인다. 이름·문구는 Markdown으로 해석하지 않고 축·범례 글자로만 쓴다."""
+    import altair as alt
+
+    st.text("■ " + chart["title"])
+
+    for text in chart["notes"]:
+        st.text("- " + text)
+
+    if not chart["rows"]:
+        return
+
+    category, values = chart["category"], chart["values"]
+    # 막대 순서는 사실의 행 순서 그대로다(구간 순서·건수 순위). 축 이름 길이는 사실에서 이미 제한했다.
+    order = [row[category] for row in chart["rows"]]
+    data = pd.DataFrame([{category: row[category], "계열": key, "값": row[key]} for row in chart["rows"] for key in values])
+    # 가로 막대(클래스처럼 이름이 긴 축)는 이름 축을 y에, 값을 x에 둔다. 계열이 여럿이면 같은 이름 안에 나란히 둔다.
+    across, along, offset = (alt.Y, alt.X, alt.YOffset) if chart["horizontal"] else (alt.X, alt.Y, alt.XOffset)
+    # 한글 라벨은 그릴 때 계산보다 넓어질 수 있어, 가로 막대의 이름 축 제목은 라벨 옆이 아니라 축 위에 가로로 둔다.
+    title = {"titleAngle": 0, "titleAlign": "right", "titleBaseline": "bottom", "titleX": 0, "titleY": -6} if chart["horizontal"] else {}
+    encoding = [across(category + ":N", sort=order, title=category, axis=alt.Axis(labelLimit=240, **title)),
+                along("값:Q", title=chart["unit"]),
+                alt.Color("계열:N", sort=list(values), title=None, legend=alt.Legend(orient="bottom"))]
+
+    if len(values) > 1:
+        encoding.append(offset("계열:N", sort=list(values)))
+
+    # 높이는 막대 영역만 정한다(fit-x). 기본 fit은 축·범례까지 이 높이에 넣어 가로 막대가 0px로 눌린다.
+    height = max(80, 28 * len(order) * len(values)) if chart["horizontal"] else 240
+    figure = alt.Chart(data).mark_bar().encode(*encoding, tooltip=[category + ":N", "계열:N", "값:Q"])
+    st.altair_chart(figure.properties(height=height, autosize=alt.AutoSizeParams(type="fit-x", contains="padding")),
+                    width="stretch")
+    _rows(st, chart_rows(chart))
 
 
 def render_task(st):
@@ -301,7 +340,8 @@ def _render_findings(st, adapter, problem):
     if findings:
         labels = getattr(adapter, "FINDING_LABELS", {})
         st.text(f"확인된 지적 {len(findings)}건")
-        _rows(st, [{"지적": labels.get(item["code"], item["code"]), "대상": item["subject"] or "전체"} for item in findings])
+        _rows(st, [{"지적": labels.get(item["code"], item["code"]), "대상": item["subject"] or "전체"} for item in findings],
+              ["지적", "대상"])
 
 
 def _render_problem(st, task, problem):
@@ -489,9 +529,19 @@ def _render_review(st, task):
                     "새 시도를 진행합니다(같은 계획 자동 재실행 없음).")
             _render_hint(st, adapter, problem)
     # 작업 기록 값은 마크다운으로 해석하지 않는다. 사유는 고정 코드의 설명만 보여 준다.
-    st.text("권장안: " + ("로컬 LLM 권장안 (형식·허용값 검사 통과. 내용의 타당성은 확인되지 않았습니다)" if draft["source"] == "model"
-                       else "기본 계획 (로컬 LLM 권장안을 사용할 수 없었습니다: "
-                       + (code_label(task, draft.get("code")) or "사유 코드 확인 불가") + ")"))
+    notice = recommendation_notice(task)
+
+    if draft["source"] == "model":
+        st.text("권장안: 로컬 LLM 권장안 (형식·허용값 검사 통과. 내용의 타당성은 확인되지 않았습니다)")
+    elif "rejection" in draft or len(notice) > 1:
+        # 계획 검증으로 권장안 전체를 거부한 기록: 전처리 실패나 권장안 성공이 아니며 확인된 하위 원인만 고정 문구로 보인다.
+        st.text("권장안: 기본 계획 — " + notice[0])
+
+        for line in notice[1:]:
+            st.text(line)
+    else:
+        st.text("권장안: 기본 계획 (로컬 LLM 권장안을 사용할 수 없었습니다: "
+                + (code_label(task, draft.get("code")) or "사유 코드 확인 불가") + ")")
     st.text(MODEL_LIMITATION_NOTICE)
 
     coverage = draft.get("coverage")
@@ -512,23 +562,12 @@ def _render_review(st, task):
     for text in draft.get("notes", []):
         st.text("- 모델 메모(확인된 사실 아님): " + text)
 
-    view = adapter.diagnosis_view(task)
-
-    for line in adapter.input_notices(task) + view["lines"]:
-        st.text(line)
-
-    with st.expander("진단 요약 표"):
-        _rows(st, view["rows"])
+    _render_diagnosis(st, task, adapter)
 
     if hasattr(adapter, "preview_images"):
         _render_previews(st, task, adapter)
 
-    if state["recommended"]:
-        st.markdown("#### 권장 변경 (기본 계획 대비)")
-        before = {item["path"]: item["before"] for item in state["changes"]}
-        _rows(st, [{"항목": item["path"], "기본값": before.get(item["path"]), "권장값": item["value"], "근거": "모델 의견: " + item["reason"],
-                    "확인": item.get("check") or "-"} for item in state["recommended"]])
-
+    _render_recommended(st, state)
     _render_guide(st, state.get("guide") or [], "옵션 설명 (현재 표시한 계획 기준)")
     key = "task_review_" + task["task_id"][:8] + str(task["attempt"]) + ("r" if task["phase"] == "awaiting_apply" else "")
 
@@ -574,6 +613,28 @@ def _render_previews(st, task, adapter):
             st.image(image["data"], caption=image["label"])
 
 
+def _render_diagnosis(st, task, adapter):
+    """진단 안내 줄과 진단 요약 표. 열 순서는 유형 어댑터가 정한 columns를 쓰고, 없으면 기본 순서다."""
+    view = adapter.diagnosis_view(task)
+
+    for line in adapter.input_notices(task) + view["lines"]:
+        st.text(line)
+
+    with st.expander("진단 요약 표"):
+        _rows(st, view["rows"], view.get("columns"))
+
+
+def _render_recommended(st, state):
+    """모델 권장 변경(기본 계획 대비). 근거는 모델 의견이며 확인 열은 계산으로 대조한 결과다."""
+    if not state["recommended"]:
+        return
+
+    st.markdown("#### 권장 변경 (기본 계획 대비)")
+    before = {item["path"]: item["before"] for item in state["changes"]}
+    _rows(st, [{"항목": item["path"], "기본값": before.get(item["path"]), "권장값": item["value"], "근거": "모델 의견: " + item["reason"],
+                "확인": item.get("check") or "-"} for item in state["recommended"]], ["항목", "기본값", "권장값", "근거", "확인"])
+
+
 def _render_guide(st, guide, title):
     """옵션 설명. 계산으로 확인한 사실·모델 의견·사전 경고를 나눠 보여 준다. 모델 문장은 일반 텍스트로만 표시한다."""
     if not guide:
@@ -590,7 +651,8 @@ def _render_guide(st, guide, title):
 
     with st.expander(title):
         _rows(st, [{"옵션": item["label"], "설정 이름": item["name"], "현재 값": item["value_text"], "출처": item["source"],
-                    "적용 대상": item["applies"]} for item in guide if item["basic"] or item["source"] != "기본 계획"])
+                    "적용 대상": item["applies"]} for item in guide if item["basic"] or item["source"] != "기본 계획"],
+              ["옵션", "설정 이름", "현재 값", "출처", "적용 대상"])
 
         for item in guide:
             st.text("■ " + item["label"])
@@ -633,11 +695,12 @@ def _render_final_plan(st, task, adapter, state, key, draft):
                 "모델 의견": origins[path].get("reason") or ""}
                for path, value in flatten(preview["plan"]) if origins[path]["source"] != "base"]
     st.text("기본 계획과 다른 항목 (출처별). 표에 없는 항목은 기본 계획 값입니다.")
-    _rows(st, changed)
+    _rows(st, changed, ["항목", "값", "출처", "모델 의견"])
 
     if preview["changes"]:
         st.text("이번에 고친 항목 (표시한 계획 → 최종 계획)")
-        _rows(st, [{"항목": item["path"], "표시한 값": item["before"], "최종 값": item["after"]} for item in preview["changes"]])
+        _rows(st, [{"항목": item["path"], "표시한 값": item["before"], "최종 값": item["after"]} for item in preview["changes"]],
+              ["항목", "표시한 값", "최종 값"])
 
     _render_guide(st, preview["guide"], "옵션 설명 (최종 계획 기준)")
 
@@ -743,7 +806,7 @@ def _render_apply(st, task):
 
         for table in facts["tables"]:
             st.markdown("#### " + table["title"])
-            _rows(st, table["rows"])
+            _rows(st, table["rows"], table.get("columns"))
 
         with st.expander("원문 보고서 (일반 텍스트)"):
             st.text(facts["text"] or "원문 보고서를 표시할 수 없습니다.")
@@ -843,6 +906,30 @@ def _render_result(st, task):
     with st.expander("주요 문제 (진단·품질 검사)", expanded=legacy):
         _rows(st, facts["problems"])
 
+    # 처리 전 EDA·계획과 결정 절은 이를 주는 유형만 채운다. 저장된 문구는 Markdown으로 해석하지 않는다.
+    for key, heading, note in (("eda_tables", "#### 처리 전 데이터와 기본 EDA", facts.get("eda_note")),
+                               ("decision_tables", "#### 계획과 결정", None)):
+        if facts.get(key):
+            st.markdown(heading)
+
+            if note:
+                st.text(note)
+
+            for table in facts[key]:
+                st.text("■ " + table["title"])
+
+                for text in table["notes"]:
+                    st.text("- " + text)
+
+                _rows(st, table["rows"], table.get("columns"))
+
+    # 분할 표는 이를 주는 유형만 채운다. 이전 형식·다른 유형 보고서에는 없다.
+    if facts.get("split_table"):
+        st.markdown("#### 분할 결과")
+        # 저장된 사실 문자열은 Markdown으로 해석하지 않는다.
+        st.text(facts["split_table"]["title"])
+        _rows(st, facts["split_table"]["rows"])
+
     st.markdown("#### 컬럼별 처리와 제외 사유")
     _rows(st, facts["processing"])
     st.markdown("#### 실제 전후 비교")
@@ -854,6 +941,13 @@ def _render_result(st, task):
     st.caption("검증된 결과 파일에 없는 수치는 계산하지 않고 '미집계' 또는 '미산출(사유)'로 표시합니다.")
     st.markdown("#### 그래프")
 
+    # 보고서 그래프는 이를 주는 유형만 채운다. 저장 보고서의 값 표와 같은 사실로 그린다.
+    for chart in facts.get("charts") or []:
+        _chart(st, chart)
+
+    if facts.get("charts"):
+        st.text("■ 분할 EDA 그래프 (검증된 PNG)")
+
     # 저장된 경로를 다시 열지 않고, 표시할 때마다 기록 검사·결과 검증을 거친 그래프만 보여 준다.
     try:
         images = verified_images(task)
@@ -861,8 +955,14 @@ def _render_result(st, task):
         images = []
         st.text("그래프를 결과 검증으로 다시 확인하지 못해 표시하지 않습니다.")
 
+    notes = facts.get("image_notes") or {}
+
     for image in images:
         st.image(image["data"], caption=image["label"])
+
+        # 설명은 보고서 사실에 저장된 문구이므로 Markdown으로 해석하지 않는 글자로 보인다. 설명이 없으면 이름만 보인다.
+        if image["label"] in notes:
+            st.text(notes[image["label"]])
 
     if not images:
         st.text("(검증된 그래프 없음)")

@@ -130,12 +130,43 @@ class TabularV2ScreenTest(unittest.TestCase):
         self.assertEqual(stored["phase"], "completed", stored.get("problem"))
         self.assertTrue(any(item.value == "최종 결과" for item in app.subheader))
         self.assertTrue(any(item.value.startswith("처리: 완료 · 로컬 LLM 권장안: 사용 못 함") for item in app.text))
-        self.assertTrue(any(item.value.startswith("입력 해석: ") for item in app.text))
+        # 결과 화면은 사용자용 입력 해석 설명만 보이고 원래 설정 키는 기술 상세에 둔다.
+        self.assertTrue(any(item.value.startswith("- 입력 해석: ") for item in app.text))
+        self.assertFalse(any("header_repair=" in item.value for item in app.text))
+        # 분할 결과 표 제목은 Markdown 해석 없는 글자로 보인다.
+        self.assertTrue(any(item.value == "분할 결과 (요청 설정과 확정 결과)" for item in app.text))
         self.assertTrue(any("load_handoff_partition" in item.value for item in app.text))
         self.assertEqual(self.calls.count("apply_preparation"), 1)
         self.assertEqual(self.source.read_bytes(), before)
         self.assertEqual(self.model_calls.call_count, 1)
 
+
+    def test_rejected_split_recommendation_explains_whole_rejection_and_confirmed_cause(self):
+        """모델 권장안이 분할 비율 합으로 거부되면 전체 거부·기본 계획 사용과 확인된 하위 원인을 보인다(성공·실패로 표시하지 않음)."""
+        self.model_calls.side_effect = lambda payload, config: flow.model_reply(
+            changes=[{"path": "split.train_ratio", "value": 0.6, "reason": "r"}])
+        app = self.start(self.source)
+        task = self.task()
+        self.assertEqual((task["draft"]["source"], task["draft"]["rejection"]["reason"]), ("default", "SPLIT_RATIO_SUM"))
+        texts = [item.value for item in app.text]
+        self.assertTrue(any(text.startswith("권장안: 기본 계획 — 로컬 LLM 권장안 전체를 거부해 기본 계획에서 시작했습니다")
+                            for text in texts), texts)
+        self.assertIn("세부 원인: Train·Validation·Test 비율의 합이 1이 아닙니다", texts)
+        self.assertTrue(any(text.startswith("거부한 분할 값(병합 결과):") and "train_ratio=0.6" in text for text in texts), texts)
+
+        # 저장 기록의 진단을 변조하면(정의되지 않은 값 키) 화면은 계속 그리되 값을 해석·표시하지 않는다. 모델을 다시 부르지 않는다.
+        calls = self.model_calls.call_count
+        broken = dict(task["draft"]["rejection"], values=dict(task["draft"]["rejection"]["values"], timestamp_format="아무 문자열"))
+        flow.task_store.save_task(dict(task, draft=dict(task["draft"], rejection=broken)),
+                                  expected_revision=task["revision"], root=self.store)
+        app.run()
+        self.assertFalse(app.exception, [item.value for item in app.exception])
+        texts = [item.value for item in app.text]
+        self.assertTrue(any(text.startswith("권장안: 기본 계획 — 로컬 LLM 권장안 전체를 거부해 기본 계획에서 시작했습니다")
+                            for text in texts), texts)
+        self.assertIn(flow.UNREADABLE_REJECTION, texts)
+        self.assertFalse(any(text.startswith("거부한 분할 값") or "timestamp_format" in text for text in texts), texts)
+        self.assertEqual(self.model_calls.call_count, calls)
 
     def test_required_question_from_submitted_plan_shows_text_and_fix_without_changing_inputs(self):
         """제출한 계획에서만 생긴 필수 질문(역할·분할 방식 불일치)은 문장·관련 항목·해결 방법으로 보이고 입력값은 그대로다."""

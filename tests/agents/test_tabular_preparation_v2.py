@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import pandas as pd
 
@@ -102,6 +102,58 @@ class TabularPreparationV2Test(unittest.TestCase):
             expected = self.frame.iloc[positions][["label", "g", "id", "large_id"]]
             pd.testing.assert_frame_equal(restored, expected)
         self.assertFalse(any("test" in p.name for p in output.iterdir()))
+
+    def test_repeated_checks_in_one_public_call_share_only_matching_results(self):
+        from src.preprocessing import tabular_bundle as bundle
+        from src.agents.tabular_preparation import checked_feature_types
+        train = self.train()
+        consumed = []
+        original = bundle._rows
+
+        def counted(root, schema, *, verified_stream=None):
+            if verified_stream is not None:
+                consumed.append(root)
+            return original(root, schema, verified_stream=verified_stream)
+
+        def with_roles(**changes):
+            return replace(train, roles_json=json.dumps(asdict(replace(train.roles, **changes))))
+
+        categorical = with_roles(identifiers=("large_id",), categorical=("id",))
+        # 같은 범주 컬럼이라도 역할이 다르면 검사 조건이 달라 공유하지 않는다.
+        other_roles = with_roles(identifiers=(), categorical=("id",), numeric=("x", "large_id"))
+        with patch.object(bundle, "_rows", counted):
+            with bundle.verification_scope():
+                for _ in range(3):
+                    self.assertTrue(train.check())
+                self.assertEqual(len(consumed), 1)
+                self.assertEqual(checked_feature_types(categorical), checked_feature_types(categorical))
+                self.assertEqual(len(consumed), 2)
+                checked_feature_types(other_roles)
+                self.assertEqual(len(consumed), 3)
+                # 다른 출처·기대 지문은 재사용하지 않고 거부한다.
+                for forged in (replace(train, parent_source_id="tabular_source:" + "0" * 64),
+                               replace(train, bundle=replace(train.bundle, completion_sha256="0" * 64))):
+                    with self.subTest(forged=forged.parent_source_id[-8:]), self.assertRaises(ValueError):
+                        forged.check()
+                # 공유 결과가 기록된 상태에서도 행 위치가 다른 계약은 거부한다. 공유값은 계약이 아니라 바이트에서 읽은 위치 해시다.
+                from src.agents.tabular_source_contract import TabularPartitionInputContract, _digest
+                shared = bundle.scoped_result(train.bundle_directory, expected=train.bundle, condition=("row_positions",),
+                                              compute=lambda: self.fail("기록된 결과를 써야 합니다"))
+                self.assertEqual(shared, _digest(list(train.row_positions)))
+                with patch.object(TabularPartitionInputContract, "row_positions", new_callable=PropertyMock,
+                                  return_value=(0, 1, 5)), self.assertRaises(ValueError):
+                    train.check()
+                self.assertEqual(len(consumed), 3)
+            # 공개 호출이 끝나면 다음 검사는 다시 행을 소비한다.
+            train.check()
+            self.assertEqual(len(consumed), 4)
+            # 같은 범위 안에서도 구간 바이트가 바뀌면 재사용하지 않고 거부한다.
+            with bundle.verification_scope():
+                train.check()
+                path = train.bundle_directory / "data.jsonl"
+                path.write_bytes(path.read_bytes()[:-2] + b" \n")
+                with self.assertRaises(ValueError):
+                    train.check()
 
     def test_v1_downgrade_and_nontrain_input_are_rejected(self):
         train = self.train()

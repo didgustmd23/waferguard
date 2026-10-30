@@ -24,6 +24,7 @@ MAX_JSON_BYTES = 1024 * 1024
 DATA_FILES = ("schema.json", "data.jsonl", "provenance.json")
 FILES = frozenset((*DATA_FILES, "manifest.json", "SUCCESS.json"))
 _WORKER_ROOT = ContextVar("tabular_worker_root", default=None)
+_VERIFIED = ContextVar("tabular_verified_bundles", default=None)
 # 부모가 worker에 권한을 준 폴더. 작업 root·조상과 중간 폴더 output·scratch에는 worker 권한이 없다.
 GRANTED_FOLDERS = (("input",), ("output", "result"), ("scratch", "task"))
 
@@ -37,6 +38,23 @@ def worker_filesystem(root):
         yield
     finally:
         _WORKER_ROOT.reset(token)
+
+
+@contextmanager
+def verification_scope():
+    """공개 검증 호출 한 번 동안만 같은 묶음의 전체 행 검증 결과를 재사용한다. 중첩하면 바깥 범위를 쓴다.
+
+    재사용 조건은 같은 경로·외부 기대 지문·바이트 상한이고, 재사용할 때도 경로를 검사하고 모든 파일의
+    해시·크기를 다시 계산해 전체 검증 때의 기록과 같아야 한다. 호출 사이·전역·디스크에는 남기지 않는다.
+    """
+    if _VERIFIED.get() is not None:
+        yield
+        return
+    token = _VERIFIED.set({})
+    try:
+        yield
+    finally:
+        _VERIFIED.reset(token)
 
 
 def _require(condition):
@@ -324,6 +342,12 @@ def inspect_bundle(directory, *, expected, max_bytes):
     _require(expected is None or type(expected) is BundleRef)
     root = _safe(directory, directory=True)
     records, total = _files(root, max_bytes)
+    # 생산 중 검사(기대 지문 없음)와 worker 안에서는 재사용하지 않는다.
+    verified = _VERIFIED.get() if expected is not None and _WORKER_ROOT.get() is None else None
+    key = (str(root), expected, max_bytes)
+    if verified is not None and key in verified:
+        _require(verified[key] == (records, total))
+        return expected
     manifest, marker = _read(root, "manifest.json"), _read(root, "SUCCESS.json")
     _require(manifest == {"version": "tabular_bundle_manifest_v2", "files": {name: records[name] for name in DATA_FILES}})
     _require(marker == {"version": "tabular_bundle_complete_v2", "manifest_sha256": records["manifest.json"]["sha256"]})
@@ -336,7 +360,30 @@ def inspect_bundle(directory, *, expected, max_bytes):
     for _ in _rows(root, schema):
         pass
     _require(_files(root, max_bytes) == (records, total))
+    if verified is not None:
+        verified[key] = (records, total)
     return reference
+
+
+def scoped_result(directory, *, expected, condition, compute):
+    """공개 검증 호출 한 번 안에서 같은 묶음 바이트로 얻은 작은 검사 결과(행 위치 요약·통과 여부)를 재사용한다.
+
+    키는 경로·외부 기대 지문·검사 조건이다. 재사용할 때도 inspect_bundle로 경로와 모든 파일 해시가 전체 검증 때와
+    같은지 다시 확인한다. compute는 기대 지문에 묶인 바이트(iter_bundle_rows)만 소비하고 행·표가 아닌 해시·값 같은
+    작은 결과를 돌려줘야 한다. 범위 밖·worker 안에서는 매번 계산하고, 실패한 계산은 기록하지 않는다.
+    """
+    _require(type(expected) is BundleRef and type(condition) is tuple)
+    verified = _VERIFIED.get() if _WORKER_ROOT.get() is None else None
+    if verified is None:
+        return compute()
+    key = ("result", str(_safe(directory, directory=True)), expected, condition)
+    if key in verified:
+        inspect_bundle(directory, expected=expected, max_bytes=expected.size_bytes)
+        return verified[key]
+    result = compute()
+    inspect_bundle(directory, expected=expected, max_bytes=expected.size_bytes)
+    verified[key] = result
+    return result
 
 
 def read_bundle_schema(directory, *, expected):

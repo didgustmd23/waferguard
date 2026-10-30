@@ -51,6 +51,51 @@ def request_draft(record, requester):
                                   requester=requester, on_rejected=lambda draft: adapter.on_rejected(record, draft))
 
 
+UNREADABLE_REJECTION = "세부 원인: 확인되지 않음(하위 진단을 읽지 못했습니다)"
+
+
+def tampered_rejections(rejection):
+    """정상 비율 합 거부 진단(train_ratio만 모델 변경)을 손상·변조한 사례. 모두 표시 전 허용 명세에서 거부되어야 한다."""
+    values = rejection["values"]
+
+    def edit(**changes):
+        return dict(rejection, **changes)
+
+    def value(**changes):
+        return edit(values=dict(values, **changes))
+
+    def without(key, **changes):
+        return edit(values={name: item for name, item in values.items() if name != key}, **changes)
+
+    return {
+        # 수정 전 형태 검사가 정상 진단으로 해석하던 재현 사례 3건
+        "unknown_value_key": value(timestamp_format="아무 문자열"),
+        "ratio_text": value(train_ratio="0.6"),
+        "unknown_section": edit(section="preparation"),
+        # 값의 타입·범위·유한성
+        "ratio_nan": value(train_ratio=float("nan")), "ratio_inf": value(train_ratio=float("inf")),
+        "ratio_negative": value(train_ratio=-0.1), "ratio_above_one": value(train_ratio=1.5),
+        "ratio_bool": value(train_ratio=True), "ratio_huge_int": value(train_ratio=10 ** 400),
+        "strategy_unknown": value(strategy="x"), "strategy_list": value(strategy=["group"]),
+        # 분할 방식 없음은 계획 검증이 진단 없이 먼저 거부하므로(SPLIT_STRATEGY_MISSING) 진단 값으로 생길 수 없다.
+        "strategy_none": value(strategy=None),
+        "stratify_int": value(stratify=1), "stratify_text": value(stratify="true"),
+        # 하위 원인·키·목록 항목
+        "reason_unknown": edit(reason="SPLIT_FOO"), "reason_other_code": edit(reason="SPLIT_STRATIFY_STRATEGY"),
+        "reason_type": edit(reason=1), "reason_values_mismatch": value(train_ratio=0.7),
+        "extra_key": edit(note="x"), "missing_key": {key: item for key, item in rejection.items() if key != "omitted"},
+        "values_type": edit(values=list(values)), "value_key_missing": without("stratify"),
+        "omitted_unknown": edit(omitted=["seed"]), "omitted_type": edit(omitted="test_ratio"),
+        "omitted_duplicate": without("stratify", omitted=["stratify", "stratify"]),
+        "omitted_overlap": edit(omitted=["stratify"]),
+        # from_model·omitted 관계
+        "from_model_unknown": edit(from_model=["seed"]), "from_model_type": edit(from_model=[1]),
+        "from_model_duplicate": edit(from_model=["train_ratio", "train_ratio"]),
+        "from_model_unsorted": edit(from_model=["train_ratio", "strategy"]),
+        "from_model_omitted": without("strategy", omitted=["strategy"], from_model=["strategy", "train_ratio"]),
+    }
+
+
 def wide_frame(rows=200, sensors=590):
     """SECOM형 합성 넓은 표: 수치 센서 590개(일부 상수·결측), 시간 문자열, Pass/Fail(-1/1). 실제 데이터가 아니다."""
     import pandas as pd
@@ -132,14 +177,16 @@ class TaskOrchestratorTest(unittest.TestCase):
 
         # 검증된 결과 파일에서 재계산 없이 조립한다. 실측(적용 결과)과 예상(후보)을 나눈다(2026-10-22, 설계 7.22).
         self.assertEqual({item["label"]: item["value"] for item in facts["metrics"]}["입력 행"], 120)
-        comparison = {row["항목"]: row for row in facts["comparison"]}
-        applied = {name: int(text.split()[0][:-1]) for name, text in
-                   (part.split(" ", 1) for part in comparison["입력 행"]["후 (실측)"].split(" · "))}
-        self.assertEqual(set(applied), {"train", "validation"})
-        # 변환 후 결측 칸은 적용 검증기가 출력 파일로 대조한 실측치다(이전에는 미집계).
-        self.assertEqual(comparison["결측 칸"]["후 (실측)"], "train 0 · validation 0")
-        self.assertEqual(comparison["test 구간"]["후 (실측)"], "변환 적용 안 함")
-        self.assertTrue(comparison["train 구간"]["후 (실측)"].endswith("행 변환"))
+        # 비교 행은 대상 구간·컬럼 범위별로 나뉜다. 분할 행 수는 후보 예상치가 아니라 분할 확정 결과다.
+        partitions = {row["대상 구간"]: row for row in facts["comparison"] if row["항목"] == "구간 행 수"}
+        self.assertEqual(set(partitions), {"train", "validation", "test"})
+        self.assertTrue(partitions["train"]["처리 후"].endswith("행 변환"))
+        self.assertEqual(partitions["test"]["처리 후"], "변환하지 않음")
+        # 출력 결측은 적용 검증기가 출력 파일로 대조한 구간별 값이며 전체 입력 진단 결측과 같은 행에 두지 않는다.
+        output = {row["대상 구간"]: row["처리 후"] for row in facts["comparison"] if row["항목"] == "출력 결측"}
+        self.assertEqual(output, {"train": 0, "validation": 0})
+        self.assertEqual(next(row for row in facts["comparison"] if row["항목"] == "결측 칸 (진단)")["대상 구간"], "전체 입력(분할 전)")
+        self.assertEqual([row["구간"] for row in facts["split_table"]["rows"]], ["train", "validation", "test"])
         self.assertEqual({row["컬럼"]: row["역할"] for row in facts["processing"]}["label"], "target")
         self.assertTrue(facts["images"])
         # 2026-10-22부터 Test 미적용은 경고 절의 '미처리'로 분류한다.
@@ -471,6 +518,147 @@ class TaskOrchestratorTest(unittest.TestCase):
 
         # 거부 사유는 코드만 남는다. 오류 원문(계약 메시지)은 저장하지 않는다.
         self.assertNotIn("합은 1", json.dumps(draft, ensure_ascii=False))
+
+    def test_split_rejection_keeps_whole_rejection_and_records_only_limited_reason_and_values(self):
+        """분할 계약 거부의 하위 원인·제한된 분할 값만 남기고 권장안 전체를 거부한다. 원문·문장·자유 문자열은 남기지 않는다."""
+        task = orchestrator.diagnose(self.new_task()["task_id"], root=self.store, requester=self.requester)
+        base = task_adapters.adapter("tabular_csv").base_plan(task)
+        grouped = dict(ROLES, id="group")
+
+        def change(path, value):
+            return {"path": "split." + path, "value": value, "reason": "비밀 이유 문장"}
+
+        cases = {
+            # group 방식과 계층 분할 조합은 일반 SPLIT_INVALID가 아닌 역할·분할 방식 불일치로 분류한다.
+            "group_stratify": (grouped, [change("strategy", "group"), change("stratify", True)],
+                               "SPLIT_ROLE_MISMATCH", "SPLIT_STRATIFY_STRATEGY", ["strategy", "stratify"]),
+            "ratio_sum": (ROLES, [change("train_ratio", 0.6)], "SPLIT_INVALID", "SPLIT_RATIO_SUM", ["train_ratio"]),
+            "ratio_range": (ROLES, [change("test_ratio", 0.0), change("train_ratio", 0.85)], "SPLIT_INVALID",
+                            "SPLIT_RATIO_RANGE", ["test_ratio", "train_ratio"]),
+            # 여러 조건이 함께 틀리면 분할 계약과 같은 순서의 첫 조건(비율 합)으로 분류한다.
+            "sum_before_stratify": (grouped, [change("strategy", "group"), change("stratify", True), change("train_ratio", 0.6)],
+                                    "SPLIT_INVALID", "SPLIT_RATIO_SUM", ["strategy", "stratify", "train_ratio"]),
+        }
+
+        for name, (roles, changes, code, reason, from_model) in cases.items():
+            with self.subTest(case=name):
+                draft = request_draft(task, lambda payload, config, roles=roles, changes=changes: model_reply(roles, changes=changes))
+                self.assertEqual((draft["source"], draft["code"], draft["changes"], draft["plan"]), ("default", code, [], base))
+                rejection = draft["rejection"]
+                self.assertEqual(set(rejection), {"section", "reason", "values", "from_model", "omitted"})
+                self.assertEqual(rejection["section"], "split")
+                self.assertEqual((rejection["reason"], rejection["from_model"], rejection["omitted"]), (reason, from_model, []))
+                self.assertEqual(set(rejection["values"]), {"train_ratio", "validation_ratio", "test_ratio", "strategy", "stratify"})
+                text = json.dumps(draft, ensure_ascii=False)
+                for secret in ("비밀 이유 문장", "120행", "합은 1", "label을 target"):
+                    self.assertNotIn(secret, text)
+
+        ratio = request_draft(task, lambda payload, config: model_reply(changes=[change("train_ratio", 0.6)]))["rejection"]
+        self.assertEqual(ratio["values"], dict(train_ratio=0.6, validation_ratio=0.15, test_ratio=0.15, strategy="random", stratify=False))
+
+        # 현재 비율 합 허용 오차(isclose, abs 1e-12)는 그대로다. 부동소수 합 0.9999999999999999는 정상, 0.99는 거부한다.
+        near = [change("train_ratio", 0.7), change("validation_ratio", 0.2), change("test_ratio", 0.1)]
+        self.assertEqual(request_draft(task, lambda payload, config: model_reply(changes=near))["source"], "model")
+        thirds = [change(key, 0.33) for key in ("train_ratio", "validation_ratio", "test_ratio")]
+        self.assertEqual(request_draft(task, lambda payload, config: model_reply(changes=thirds))["rejection"]["reason"],
+                         "SPLIT_RATIO_SUM")
+
+        # 다른 거부·모델 실패에는 분할 진단을 만들지 않는다. 진단이 없는 이전 기록도 그대로 읽힌다.
+        other = request_draft(task, lambda payload, config: model_reply(dict(ROLES, id="target")))
+        self.assertEqual((other["code"], "rejection" in other), ("ROLES_INVALID", False))
+
+    def test_split_violation_matches_split_contract_order(self):
+        """하위 원인 분류는 분할 계약(SplitRules)의 판정과 같다: 통과 여부가 같고, 분류된 조건은 실제로 거부되는 조건이다."""
+        from itertools import product
+        from src.agents.llm_task_assist import split_violation
+
+        ratios = (0.0, 0.15, 0.5, 0.7, 1.0, float("nan"), True)
+        for train, validation, test, strategy, stratify in product(ratios, (0.15, 0.3), (0.15, 0.2), ("random", "group", "x"),
+                                                                    (False, True, 1)):
+            split = dict(SPLIT, train_ratio=train, validation_ratio=validation, test_ratio=test, strategy=strategy, stratify=stratify)
+            reason = split_violation(split)
+            try:
+                SplitRules(**split)
+                accepted = True
+            except (ValueError, TypeError):
+                accepted = False
+            with self.subTest(split=split):
+                self.assertEqual(reason is None, accepted)
+                self.assertIn(reason, (None, "SPLIT_RATIO_RANGE", "SPLIT_RATIO_SUM", "SPLIT_STRATIFY_STRATEGY", "SPLIT_REASON_UNCONFIRMED"))
+
+        # 해시할 수 없는 분할 방식 값도 계획 검증은 고정 코드의 PlanError로 거부한다(TypeError로 새지 않음).
+        from src.agents.llm_task_assist import validate_plan
+        task = orchestrator.diagnose(self.new_task()["task_id"], root=self.store, requester=self.requester)
+        for strategy in (["group"], {"a": 1}):
+            self.assertEqual(split_violation(dict(SPLIT, strategy=strategy)), "SPLIT_REASON_UNCONFIRMED")
+            with self.subTest(strategy=strategy), self.assertRaises(PlanError) as caught:
+                validate_plan(task["diagnostic"]["columns"], plan(split=dict(SPLIT, strategy=strategy)))
+            self.assertEqual((caught.exception.code, caught.exception.detail["reason"], "strategy" in caught.exception.detail["omitted"]),
+                             ("SPLIT_INVALID", "SPLIT_REASON_UNCONFIRMED", True))
+
+    def test_stored_rejection_is_checked_against_adapter_spec_before_display(self):
+        """저장된 하위 진단은 표시 직전에 어댑터 허용 명세로 검사한다. 하나라도 어긋나면 값을 해석·표시하지 않고 안내는 계속된다."""
+        from src.agents.task_report import recommendation_notice
+
+        task = orchestrator.diagnose(self.new_task()["task_id"], root=self.store, requester=self.requester)
+        draft = request_draft(task, lambda payload, config: model_reply(
+            changes=[{"path": "split.train_ratio", "value": 0.6, "reason": "r"}]))
+        adapter = task_adapters.adapter("tabular_csv")
+        lines = recommendation_notice(dict(task, draft=draft))
+        self.assertTrue(adapter.rejection_valid(draft["code"], draft["rejection"]))
+        self.assertIn("세부 원인: Train·Validation·Test 비율의 합이 1이 아닙니다", lines)
+        self.assertTrue(any(line.startswith("거부한 분할 값(병합 결과): train_ratio=0.6") for line in lines), lines)
+
+        for name, broken in tampered_rejections(draft["rejection"]).items():
+            with self.subTest(case=name):
+                self.assertFalse(adapter.rejection_valid(draft["code"], broken))
+                lines = recommendation_notice(dict(task, draft=dict(draft, rejection=broken)))
+                self.assertTrue(lines[0].startswith("로컬 LLM 권장안 전체를 거부해 기본 계획에서 시작했습니다"), lines)
+                self.assertEqual(lines[1:], [UNREADABLE_REJECTION])
+
+        # 진단과 거부 코드의 관계도 명세에 포함된다(계층 분할 조합 진단은 SPLIT_ROLE_MISMATCH에서만 나온다).
+        self.assertFalse(adapter.rejection_valid("SPLIT_ROLE_MISMATCH", draft["rejection"]))
+        self.assertFalse(adapter.rejection_valid(["SPLIT_INVALID"], draft["rejection"]))
+        # 하위 진단 명세가 없는 유형(배열)은 같은 공통 표시 경로에서 진단을 해석하지 않는다. 진단 없는 기록 안내는 그대로다.
+        array = {"kind": "array_npz", "draft": dict(draft)}
+        self.assertEqual(recommendation_notice(array)[1:], [UNREADABLE_REJECTION])
+        array["draft"].pop("rejection")
+        self.assertEqual(len(recommendation_notice(array)), 1)
+        self.assertTrue(recommendation_notice(array)[0].startswith("로컬 LLM 권장안을 쓰지 못해 기본 계획에서 시작했습니다"))
+
+    def test_generated_rejections_satisfy_the_display_spec(self):
+        """계획 검증이 만드는 모든 분할 진단은 표시 명세를 통과한다(비율 0·1·비유한·문자열 등 omitted 사례 포함)."""
+        from itertools import product
+        from src.agents import task_recommend
+        from src.agents.llm_task_assist import rejection_valid, validate_plan
+
+        task = orchestrator.diagnose(self.new_task()["task_id"], root=self.store, requester=self.requester)
+        columns = task["diagnostic"]["columns"]
+        ratios = (0.0, 0.15, 0.6, 0.7, 1.0, float("nan"), "0.6", True)
+        seen = set()
+
+        for roles, train, test, strategy, stratify in product((ROLES, dict(ROLES, id="group"), dict(ROLES, label="수치형")),
+                                                              ratios, (0.15, 1.0),
+                                                              ("random", "group", "x"), (False, True, 1)):
+            split = dict(SPLIT, train_ratio=train, test_ratio=test, strategy=strategy, stratify=stratify)
+            try:
+                validate_plan(columns, plan(roles, split))
+                continue
+            except PlanError as error:
+                if error.detail is None:
+                    continue
+                code, detail = error.code, error.detail
+            accepted = [{"path": "split." + key} for key in ("train_ratio", "strategy", "stratify")]
+            rejection = task_recommend._rejection(detail, accepted)
+            seen.add((code, rejection["reason"], bool(rejection["omitted"])))
+            with self.subTest(split=split, roles=roles):
+                self.assertTrue(rejection_valid(code, rejection), rejection)
+
+        # 분할 계약 하위 원인 넷, 역할×분할 교차 하위 원인 셋과 omitted가 있는 진단이 모두 검사 대상에 들어갔는지 확인한다.
+        self.assertEqual({reason for _, reason, _ in seen},
+                         {"SPLIT_RATIO_RANGE", "SPLIT_RATIO_SUM", "SPLIT_REASON_UNCONFIRMED", "SPLIT_STRATIFY_STRATEGY",
+                          "SPLIT_ROLE_REQUIRED_MISSING", "SPLIT_GROUP_STRATEGY", "SPLIT_STRATIFY_TARGET_MISSING"})
+        self.assertIn(True, {omitted for _, _, omitted in seen})
 
     def test_model_questions_are_advisory_and_out_of_schema_ones_are_dropped(self):
         task = orchestrator.diagnose(self.new_task()["task_id"], root=self.store, requester=self.requester)

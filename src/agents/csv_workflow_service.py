@@ -13,6 +13,7 @@ from .executor import RulesExecutor
 from .delegated_approval import record_delegated
 from .workflow_approval import WorkflowApprovalPreview, approval_progress, preview_approval, record_approval
 from .worker_paths import _path
+from src.preprocessing.tabular_bundle import verification_scope
 
 
 DIAGNOSTIC_CODES = {"PASSED", "ACCESS_DENIED", "INPUT_INVALID", "IO_FAILED", "RUNTIME_FAILED"}
@@ -96,6 +97,12 @@ class CsvWorkflowService:
         return {**create(preview, confirmed=confirmed), "runtime": self.runtime()}
 
     def _open(self, name):
+        # 실행 열기 한 번 안의 후보·적용 증거 재확인이 같은 표형 묶음을 반복 검증하지 않게 한다. 범위는 반환·예외와 함께
+        # 끝나므로 이후의 승인 기록·실행·결과 검증에는 이어지지 않는다.
+        with verification_scope():
+            return self._opened(name)
+
+    def _opened(self, name):
         # CSV·표형 작업은 같은 역할 이름(접두사 뒤)으로 기존 CLI 실행 폴더를 연다.
         role = self.module_id.split("_", 1)[1]
         if role == "split_review":

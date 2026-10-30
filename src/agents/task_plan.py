@@ -18,11 +18,14 @@ QUESTION_ID = r"[a-z][a-z0-9_.:-]{0,79}"
 
 
 class PlanError(ValueError):
-    """계획 검증 실패. 메시지는 고정 문구이고 입력 자료 값은 subjects로만 분리한다."""
+    """계획 검증 실패. 메시지는 고정 문구이고 입력 자료 값은 subjects로만 분리한다.
 
-    def __init__(self, code, message, *, subjects=()):
+    detail은 어댑터가 정한 제한된 진단(고정 하위 코드와 허용 목록의 계약 값)이다. 입력 자료·자유 문자열을 담지 않는다.
+    """
+
+    def __init__(self, code, message, *, subjects=(), detail=None):
         super().__init__(code)
-        self.code, self.message, self.subjects = code, message, tuple(subjects)
+        self.code, self.message, self.subjects, self.detail = code, message, tuple(subjects), detail
 
 
 class TaskProblem(Exception):

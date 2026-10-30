@@ -99,6 +99,8 @@ V1의 AP 0.040461·ROC-AUC 0.488008보다 개선됐지만, 90% 시나리오는 2
 
 각 저장 묶음의 검증 입력 33행에서 별도 프로세스 복원 결과는 `passed`였다. 최대 확률 차이 0.0, 확률·판정·라벨이 저장 전 기대값과 일치했다. 저장 과정에서는 기존 Pipeline과 20개 입력 추론 경로도 비교했다. 이는 구현 정합성 검증이지 탐지 성능 평가가 아니다.
 
+**로컬 복원 검증 완료, 다른 PC·OS 재현은 검증 범위 제외.** 2026-10-26에 저장 환경과 버전이 정확히 같은 로컬 conda 환경 `ml310`에서 커밋 `9961eb6`의 소스로 두 묶음을 다시 복원했다. 두 실행 모두 종료 코드 0·`passed`이며 결과값은 위와 같았다. 복원 객체의 센서 이름·순서, 양성 label `1`, median 20개, 분류기 주요 파라미터, XGBoost booster 원본 바이트가 두 묶음에서 같았고 문턱만 달랐다. 실행 전후 묶음 파일의 크기·SHA256은 변하지 않았다. 객체 비교는 센서·median·주요 파라미터·booster 바이트·문턱으로 한정했으며 모든 내부 상태를 비교한 것은 아니다. Test·`predict_cli`·데모는 이 확인에서 다시 실행하지 않았고 처음부터의 재학습 재현도 범위에서 제외했다.
+
 Train 유래 공통 데모 `data/processed/v2_sensor20_demo.csv`의 33행에서 90%는 33행, 80%는 30행을 선별했다. 출력은 각각 `logs/secom/demos/v2/v2_recall90_demo_predictions.csv`, `logs/secom/demos/v2/v2_recall80_demo_predictions.csv`에 저장했다. 데모에는 정답 평가를 적용하지 않으며 추가 선별 3건의 정상·불량 여부를 판단하지 않는다.
 
 실행 명령은 [V2 저장·복원 절차](USAGE.md#v2-시나리오-저장복원)를 따른다. 저장 상태·검증 결과는 이 카드의 계약과 근거를 기준으로 한다.
@@ -106,8 +108,8 @@ Train 유래 공통 데모 `data/processed/v2_sensor20_demo.csv`의 33행에서 
 ## 7. 보안·재현성과 사용 제한
 
 - joblib은 임의 코드 실행 위험이 있다. 직접 생성한 신뢰한 로컬 파일만 `--trusted-local-bundle`로 읽는다.
-- 저장 환경: Python 3.10.22, NumPy 1.26.4, pandas 2.2.3, scikit-learn 1.5.2, XGBoost 2.1.3, LightGBM 4.5.0, joblib 1.6.0. 복원기는 버전 불일치를 거부하므로 manifest 환경을 기준으로 준비한다.
-- 묶음에는 로컬 검증용 센서 값과 로컬 경로가 포함된다. 공개 업로드 전에 데이터·경로 공개 여부를 검토한다. Git 저장소 복제만으로 모델 객체가 제공되는 것은 아니다.
+- 고정 환경: Python 3.10.22, NumPy 1.26.4, pandas 2.2.3, scikit-learn 1.5.2, XGBoost 2.1.3, LightGBM 4.5.0, joblib 1.6.0. 복원기는 7개 버전 중 하나라도 다르면 거부한다. 프로젝트 공통 `requirements.txt`는 Python 3.12·범위 지정 환경이므로 이 묶음의 복원 환경이 아니다. 검증된 환경은 로컬 `ml310` 하나다.
+- 묶음에는 로컬 검증용 실제 센서 값과 로컬 경로가 포함된다. 공개 저장소·외부 서비스에 업로드하지 않는다. Git 저장소 복제만으로 모델 객체가 제공되지 않는다.
 - 높은 선별 비율은 후속 확인 부담이다. 검사 비용 절감·현장 배포·자동 생산 제어·출하 승인에 사용하지 않는다. `positive_score`의 실제 불량 확률 보정도 입증하지 않았다.
 - SECOM과 WM-811K는 대응되는 동일 웨이퍼 데이터가 없다. 별도의 맵 패턴 진단을 가상 연결할 수 있지만 통합 Recall·정상 복구·불량 유출 감소 성능을 주장하지 않는다. WM `None` 패턴으로 센서 경고를 자동 해제하지 않는다.
 - 현장 적용에는 센서 매핑·측정 시점·단위 확인, 새 독립 데이터 검증, 비용·처리 용량 합의, drift 감시와 재학습 기준이 필요하다.
@@ -120,5 +122,28 @@ Train 유래 공통 데모 `data/processed/v2_sensor20_demo.csv`의 33행에서 
 - 저장·복원 정합성: 각 묶음 `verification.json`과 사용자 별도 프로세스 실행 출력.
 - 기존 V1 Test 비교: `logs/secom/v2/v2_recall90_existing_test/`, `logs/secom/v2/v2_recall80_existing_test/`. 완료 상태·재학습 없음·문턱·집계값 확인.
 - 종합 결론: [ML 요약](SECOM_ML_SUMMARY.md), [보고서 35.4절](report.md#354-후속-고정-센서-후보와-저장추론-데모).
+
+### 8.1 인계 기준
+
+소스 기준은 커밋 `9961eb6c267ec9d8dd4aa152ccca354ed4b05aa9`(`origin/main` 포함) 전체다. 개별 파일만 골라 전달하지 않는다. 복원 클래스 경로 `src.sensor_inference`·`src.modeling_models`는 이동하지 않는다. 모델 묶음은 Git 밖에서 비공개로 전달하고, 받는 쪽은 신뢰 옵션을 쓰기 전에 아래 SHA256으로 변경 여부를 확인한다. SHA256은 변경 확인용이며 안전한 역직렬화를 보증하지 않는다.
+
+| 파일 | 크기 (bytes) | SHA256 |
+| --- | ---: | --- |
+| `v2_fixed20_recall90/candidate.joblib` | 278,908 | `3870ea77ad5e2fc2710d225bf1c4a62980a867bd54b0633c2731d3f09f132d3e` |
+| `v2_fixed20_recall90/manifest.json` | 10,285 | `f356327c5e9aed4b7f1ae4b6ba2e66d059fbe598343916e9e5ac7d661f9bfabe` |
+| `v2_fixed20_recall90/verification.json` | 254 | `036989c2a16b3420096ba81372ffb6da41ebfeb5d4bbdf5e7107a891b22393fe` |
+| `v2_fixed20_recall90/evaluation_started.json` | 1,830 | `1f137bf860f7b4643b162e6d9795c404ff9bbeee1517278292d0fa2603446348` |
+| `v2_fixed20_recall80/candidate.joblib` | 279,020 | `699be6ca67f904d773e60642ea37831dd302638212f6f780c885c20adcddf580` |
+| `v2_fixed20_recall80/manifest.json` | 9,810 | `b9c58736dd8b2b7fc05f3a2aa1c70a62c967b3be47350c6114377c361f9bb28e` |
+| `v2_fixed20_recall80/verification.json` | 254 | `036989c2a16b3420096ba81372ffb6da41ebfeb5d4bbdf5e7107a891b22393fe` |
+| `v2_fixed20_recall80/evaluation_started.json` | 1,839 | `79dad6fd39d343c846c445bbba3d5ec3e882e06675829f3c6acf3c1c446001d3` |
+
+경로는 모두 `models/candidates/` 기준이다. 목적별 전달 범위는 다음과 같다.
+
+- 모델 사용: 위 커밋, 두 묶음 폴더 전체, 고정 환경.
+- 결과 설명·감사: 위에 더해 이 절의 근거 로그(`logs/v2_fixed_sensor20_*`, `logs/secom/v2/v2_recall*_existing_test/`, `logs/secom/v2/v2_all_vs_fixed20_existing_test/`, `logs/secom/v1/m3_frozen_time_evaluation/`)와 `data/splits/integrated/manifest.json`.
+- 처음부터 재현: 위에 더해 원본 `data/raw/secom.data`·`secom_labels.data`와 `data/splits/integrated/` 전체. [재현 절차](USAGE.md#v2-시나리오-저장복원)의 옛 경로 제약을 따른다.
+
+manifest·`execution.json`의 절대 경로는 저장 당시 저장소 위치 `D:\workspace\secom-waferguard`를 기록한 이력이며 현재 존재하지 않는다. 복원·예측은 이 경로를 사용하지 않는다. 기록 보존을 위해 경로를 수정하지 않는다.
 
 V1 S0·M3 후보는 retired 이력이다. [V1 Model Card](model_card.md)의 성능·문턱·검증 결과를 V2에 승계하지 않는다. 이 문서는 새 학습·Test 평가·배포 승인을 수행하지 않는다.

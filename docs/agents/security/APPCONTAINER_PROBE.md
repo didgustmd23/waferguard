@@ -1,6 +1,6 @@
 # AppContainer 호환성 검사 — 2단계
 
-갱신일: 2026-10-16. **검사 도구 구현·합성 검증 완료, 실제 호환성 검사는 권한 준비 단계에서 중단했다.** Python·라이브러리 호환성이나 네트워크 차단 통과를 아직 주장하지 않는다.
+고정 합성 probe의 런타임·파일 접근·토큰 검사와 외부·loopback WFP 폐기 확인 이력이 있다. 최신 근거와 한계는 [GUIDE](../GUIDE.md#네트워크-시험)·[WFP 진단](WFP_DIAGNOSTIC.md#etl-대조-근거와-확인-범위)을 따른다. 아래 초기 권한 준비 실패와 후속 실제 실행을 구분하며, 운영 worker 전체나 SEC-12 전체 검증 완료를 뜻하지 않는다.
 
 ## 검사 범위
 
@@ -41,7 +41,7 @@ compatibility_passed일 때 종료 코드 0, 검토 필요·검사 미완료일 
 - output/: 합성 CSV·그림·쓰기 검사 파일과 Matplotlib 캐시.
 - runtime/: 검사 전용 복사본. 추후 재사용은 별도 검증·정책 필요.
 
-부모는 환경 변수를 최소화하고 API 키·사용자 PYTHONPATH·부모 PATH·상속 핸들을 전달하지 않는다. Windows 프로필 조회용 SystemRoot·LOCALAPPDATA·USERPROFILE 및 존재하는 APPDATA는 명시적 allowlist로 보존한다. 이 경로 전달이 해당 사용자 폴더의 읽기 권한을 부여하는 것은 아니며 AppContainer token·ACL 제한을 유지한다. python -I -S -B로 실행하며 복사한 site-packages만 payload가 명시적으로 등록한다. 프로세스는 창 없이 실행하고 실험용 60초 제한 후 종료한다. 일반 worker의 Job Object·프로세스 트리 자원 제한은 다음 구현 범위다.
+부모는 환경 변수를 최소화하고 API 키·사용자 PYTHONPATH·부모 PATH·상속 핸들을 전달하지 않는다. Windows 프로필 조회용 SystemRoot·LOCALAPPDATA·USERPROFILE 및 존재하는 APPDATA는 명시적 allowlist로 보존한다. 이 경로 전달이 해당 사용자 폴더의 읽기 권한을 부여하는 것은 아니며 AppContainer token·ACL 제한을 유지한다. python -I -S -B로 실행하며 복사한 site-packages만 payload가 명시적으로 등록한다. 프로세스는 창 없이 실행한다. 현재 CLI는 `WorkerLimits`를 전달해 Job Object의 시간·메모리·프로세스 제한을 적용하며 기본 실행 시간 상한은 60초다. `limits=None`인 저수준 probe 호출과 일반 worker의 제한 계약은 구분한다. 자세한 제한은 [자원 제한](RESOURCE_LIMITS.md)을 따른다.
 
 매 실행에서 자신이 새로 만든 AppContainer 프로필만 finally에서 삭제한다. 삭제가 실패하면 상태를 review_required로 유지하고 로컬 result.json에 프로필명을 남긴다. 검사 폴더와 부분 결과는 자동 삭제하지 않으며 사용자가 확인 후 정리한다.
 
@@ -82,7 +82,7 @@ child의 연결 성공 또는 서버의 child 토큰 수신이 확인되면 `LOO
 
 전후 대조가 정상이어도 timeout은 `LOOPBACK_OS_DROP_EVIDENCE_MISSING`으로 검토 필요를 유지한다. 서버에서 연결을 관찰하지 못한 사실만으로 OS가 패킷을 차단했다고 증명할 수 없기 때문이다. 필요하면 다음 단계에서 해당 프로세스·목적지와 일치하는 Windows Filtering Platform 차단 증거를 별도로 확인한다. 시스템 감사 정책 변경이나 광범위 트래픽 캡처는 이번 구현에 포함하지 않으며 별도 승인 없이 실행하지 않는다.
 
-방화벽·loopback 예외는 변경하지 않는다. 일회성 프로필과 새 검사 폴더 권한만 기존 검사 범위대로 설정한다. 새 코드의 OS 검증은 관리자 PowerShell의 Python 3.10 환경에서 위 명령으로 별도 실행해야 한다. 이전 결과를 새 검사 통과로 소급하지 않으며 실데이터 worker는 계속 비활성이다.
+방화벽·loopback 예외는 변경하지 않는다. 일회성 프로필과 새 검사 폴더 권한만 기존 검사 범위대로 설정한다. 이 WFP 검사 절차의 OS 검증은 관리자 PowerShell의 Python 3.10 환경에서 위 명령으로 별도 실행해야 한다. 이전 결과를 새 검사 통과로 소급하지 않으며, 당시 이 probe 결과만으로 실데이터 실행을 활성화하지 않았다. 현재 worker의 지원·실행 확인 범위는 [운영 안내](../GUIDE.md#검증-상태와-남은-제한)를 따른다.
 
 ## 검증·제한
 

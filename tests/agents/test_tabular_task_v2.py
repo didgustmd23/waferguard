@@ -123,15 +123,39 @@ class TabularTaskV2Test(TabularTaskV2Fixture):
         self.assertTrue(Path(task["report"]["path"]).is_file())
         self.assertIn("로컬 전달 묶음", task["report"]["text"])
         self.assertEqual({item["label"]: item["value"] for item in facts["metrics"]}["입력 행"], 6)
-        comparison = {row["항목"]: row for row in facts["comparison"]}
-        self.assertEqual(comparison["입력 행"]["후 (실측)"], "train 3행 변환 · validation 2행 변환")
-        self.assertTrue(any(line.startswith("입력 해석: ") for line in facts["lines"]))
+        partitions = {row["대상 구간"]: row["처리 후"] for row in facts["comparison"] if row["항목"] == "구간 행 수"}
+        self.assertEqual(partitions, {"train": "3행 변환", "validation": "2행 변환", "test": "변환하지 않음"})
+        # 원래 입력 해석 키는 본문에 두지 않고 기술 상세에만 둔다. 사용자용 설명은 참고 사항에 있다.
+        self.assertFalse(any("read_spec" in line or "header_repair=" in line for line in facts["lines"]))
+        self.assertTrue(any(text.startswith("입력 해석: ") for text in facts["cautions"]))
+        self.assertIn("read_spec", facts["technical"])
+        # 그래프 설명의 표시 상한은 승인된 분할 설정값이다.
+        self.assertIn(f"상한 {self.profile.max_plot_features}", facts["image_notes"]["missing.png"])
         self.assertTrue(any("load_handoff_partition" in line for line in facts["usage"]))
         uses = {row["파일"]: row["용도"] for row in facts["files"]}
         self.assertIn("원래 자료형 보존", uses["prepared/train_rows.json"])
         self.assertEqual(facts["technical"]["source_contract_id"], source_id)
         self.assertEqual(len(facts["technical"]["manifest_sha256"]), 64)
         self.assertTrue(any(row["컬럼"] == "id" and row["역할"] == "식별자" for row in facts["processing"]))
+        # 처리 전 EDA·계획과 결정 절은 검증된 분할 EDA·진단·실행 값으로 채우고 화면과 같은 사실을 Markdown에 쓴다.
+        eda = {table["title"]: table for table in facts["eda_tables"]}
+        self.assertEqual({row["항목"]: row["값"] for row in eda["입력 개요"]["rows"]}["행 수"], 6)
+        self.assertEqual(eda["컬럼별 결측·고유값·비유한 값"]["rows"][0]["컬럼"], "x")
+        self.assertIn("분할 전 전체 입력", facts["eda_note"])
+        settings = {row["설정 이름"]: row for row in facts["decision_tables"][1]["rows"]}
+        self.assertEqual(settings["numeric_imputation"]["실행 기록 대조"], "실행 값과 같음")
+        self.assertEqual(settings["train_ratio"]["실행 기록 대조"], "실행 값과 같음")
+        self.assertIn("## 처리 전 데이터와 기본 EDA", task["report"]["text"])
+        self.assertIn("### 최종 실행 설정 (분할·전처리)", task["report"]["text"])
+        self.assertTrue(any("'처리 전 데이터와 기본 EDA' 절" in text for text in facts["cautions"]))
+        # 보고서 그래프는 분할 결과 표·target 표와 같은 값이며 Markdown에 값 표와 텍스트 막대로 남는다.
+        split_chart, target_chart = facts["charts"]
+        self.assertEqual([(row["구간"], f"{row['확정 비율']:.3f}", row["행 수"]) for row in split_chart["rows"]],
+                         [(row["구간"], row["확정 비율"], row["행 수"]) for row in facts["split_table"]["rows"]])
+        target_rows = next(table for table in facts["eda_tables"] if table["title"] == "target 클래스 분포")["rows"]
+        self.assertEqual([row["건수"] for row in target_chart["rows"]], [row["건수"] for row in target_rows])
+        self.assertIn("### 요청·확정 분할 비율 (구간별)", task["report"]["text"])
+        self.assertIn("### target 클래스 분포 (전체 입력, 분할 전)", task["report"]["text"])
         # 결과 파일은 자료형을 보존한 reader로 바로 쓸 수 있다.
         features, rows = load_handoff_partition(Path(facts["outputs"]["bundle"]), "train")
         self.assertEqual(rows["id"].tolist(), ["0012", "0034", "0056"])
@@ -323,6 +347,78 @@ class TabularTaskV2SourceBindingTest(TabularTaskV2Fixture):
             task = orchestrator.confirm_plan(self.diagnosed()["task_id"], self.plan(), root=self.store)
         self.assertNotEqual(task["phase"], "awaiting_apply", task.get("problem"))
         self.assertNotIn("audit", self.calls)
+
+
+class TabularTaskV2RecommendationRejectionTest(TabularTaskV2Fixture):
+    def test_rejected_split_recommendation_is_stored_with_limited_diagnostic_and_explained(self):
+        """v2에서도 group·계층 분할 권장은 역할·분할 방식 불일치로 전체 거부되고, 저장·재조회한 제한 진단으로 안내한다."""
+        from src.agents.task_report import recommendation_notice
+
+        def requester(payload, config):
+            self.requests.append(payload)
+            return model_reply(ROLES, changes=[{"path": "split.strategy", "value": "group", "reason": "이유"},
+                                               {"path": "split.stratify", "value": True, "reason": "이유"}])
+
+        task = self.diagnosed(requester=requester)
+        stored = task_store.load_task(task["task_id"], root=self.store)
+        draft = stored["draft"]
+        self.assertEqual((draft["source"], draft["code"], draft["changes"]), ("default", "SPLIT_ROLE_MISMATCH", []))
+        self.assertEqual(draft["rejection"]["reason"], "SPLIT_STRATIFY_STRATEGY")
+        self.assertEqual(draft["rejection"]["from_model"], ["strategy", "stratify"])
+        self.assertEqual(draft["plan"], task_adapters.adapter("tabular_v2").base_plan(stored))
+        lines = recommendation_notice(stored)
+        self.assertTrue(lines[0].startswith("로컬 LLM 권장안 전체를 거부해 기본 계획에서 시작했습니다"), lines)
+        self.assertIn("권장안의 변경은 적용하지 않았습니다", lines[0])
+        self.assertTrue(any(line.startswith("세부 원인: target 기준 계층 분할을") for line in lines), lines)
+        self.assertFalse(any("역할" in line and "버려" in line for line in lines), lines)
+
+        # 하위 진단이 없는 이전 기록(SPLIT_INVALID)은 상세 원인 미확인으로 보이고, 정상 읽기·안내가 된다.
+        old = dict(stored, draft={key: value for key, value in dict(draft, code="SPLIT_INVALID").items() if key != "rejection"})
+        lines = recommendation_notice(old)
+        self.assertTrue(lines[0].startswith("로컬 LLM 권장안 전체를 거부해 기본 계획에서 시작했습니다"), lines)
+        self.assertIn("세부 원인: 확인되지 않음(이 기록에는 하위 진단이 없습니다)", lines)
+        # 형태가 맞지 않는(손상·변조된) 하위 진단은 해석하지 않고 상세 원인 미확인으로 보인다.
+        for broken in ("문자열", {"reason": "SPLIT_RATIO_SUM"}, dict(draft["rejection"], values=["x"])):
+            lines = recommendation_notice(dict(stored, draft=dict(draft, rejection=broken)))
+            self.assertIn("세부 원인: 확인되지 않음(하위 진단을 읽지 못했습니다)", lines)
+        # 모델 요청 자체가 실패한 기록은 '거부' 안내를 쓰지 않는다.
+        failed = dict(stored, draft={key: value for key, value in dict(draft, code="OLLAMA_CONNECTION_FAILED").items()
+                                     if key != "rejection"})
+        self.assertTrue(recommendation_notice(failed)[0].startswith("로컬 LLM 권장안을 쓰지 못해 기본 계획에서 시작했습니다"))
+
+    def test_tampered_stored_rejection_is_not_interpreted_after_reload(self):
+        """정상 비율 합 진단은 저장·재조회 후 그대로 보이고, 저장 기록을 변조하면 재조회 후 값을 해석하지 않는다."""
+        from src.agents.task_report import recommendation_notice
+        from tests.agents.test_task_orchestrator import UNREADABLE_REJECTION, tampered_rejections
+
+        def requester(payload, config):
+            self.requests.append(payload)
+            return model_reply(ROLES, changes=[{"path": "split.train_ratio", "value": 0.6, "reason": "이유"}])
+
+        task = self.diagnosed(requester=requester)
+        stored = task_store.load_task(task["task_id"], root=self.store)
+        draft = stored["draft"]
+        self.assertEqual((draft["code"], draft["rejection"]["reason"], draft["rejection"]["from_model"]),
+                         ("SPLIT_INVALID", "SPLIT_RATIO_SUM", ["train_ratio"]))
+        self.assertTrue(task_adapters.adapter("tabular_v2").rejection_valid(draft["code"], draft["rejection"]))
+        lines = recommendation_notice(stored)
+        self.assertIn("세부 원인: Train·Validation·Test 비율의 합이 1이 아닙니다", lines)
+        # 저장 후 다시 읽은 기록은 키가 정렬되므로 값의 위치가 아니라 포함 여부를 본다.
+        self.assertTrue(any(line.startswith("거부한 분할 값(병합 결과):") and "train_ratio=0.6 " in line for line in lines), lines)
+
+        cases = tampered_rejections(draft["rejection"])
+        for name in ("unknown_value_key", "ratio_text", "unknown_section"):
+            with self.subTest(case=name):
+                current = task_store.load_task(task["task_id"], root=self.store)
+                task_store.save_task(dict(current, draft=dict(current["draft"], rejection=cases[name])),
+                                     expected_revision=current["revision"], root=self.store)
+                lines = recommendation_notice(task_store.load_task(task["task_id"], root=self.store))
+                self.assertTrue(lines[0].startswith("로컬 LLM 권장안 전체를 거부해 기본 계획에서 시작했습니다"), lines)
+                self.assertEqual(lines[1:], [UNREADABLE_REJECTION])
+
+        for name, broken in cases.items():
+            with self.subTest(case=name):
+                self.assertEqual(recommendation_notice(dict(stored, draft=dict(draft, rejection=broken)))[1:], [UNREADABLE_REJECTION])
 
 
 class TabularTaskV2SplitClassTest(TabularTaskV2Fixture):

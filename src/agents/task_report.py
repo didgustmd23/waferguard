@@ -6,6 +6,7 @@ LLM을 쓰지 않는다. 사실에 없는 수치는 추측하지 않고 '미집�
 import json
 
 from . import task_adapters, task_recommend
+from .task_plan import PlanError, get_path
 
 
 MISSING = "미집계"
@@ -15,6 +16,52 @@ def code_label(record, code):
     """권장안 거부·모델 오류 코드의 고정 설명. 등록되지 않은 코드는 설명하지 않는다."""
     labels = {**task_recommend.CODE_LABELS, **task_adapters.adapter(record["kind"]).CODE_LABELS}
     return labels.get(code)
+
+
+SECTION_NAMES = {"split": "분할"}
+
+
+def recommendation_notice(record):
+    """기본 계획을 쓴 사유 안내(화면·보고서 공용). 모델 권장안을 쓴 기록은 빈 목록이다.
+
+    계획 검증으로 권장안을 거부한 기록은 전체 거부·변경 미적용과 확인된 하위 원인·검사한 계약 값만 고정 문구로 보인다.
+    하위 진단이 생기는 코드인데 진단이 없는 이전 기록은 상세 원인 미확인으로 둔다. 역할 등 버려진 변경을 추정하지 않는다.
+    저장된 진단은 표시 직전에 유형 어댑터의 허용 명세(rejection_valid)로 다시 확인한다. 명세가 없는 유형은 해석하지 않는다.
+    """
+    draft = record["draft"]
+
+    if draft["source"] == "model":
+        return []
+
+    code = draft.get("code")
+    label = code_label(record, code) or "사유 코드 확인 불가"
+    rejection = draft.get("rejection")
+    adapter = task_adapters.adapter(record["kind"])
+    detailed = getattr(adapter, "REJECTION_DETAIL_CODES", ())
+    valid = getattr(adapter, "rejection_valid", None)
+
+    if rejection is None and code not in detailed:
+        return ["로컬 LLM 권장안을 쓰지 못해 기본 계획에서 시작했습니다: " + label + "."]
+
+    lines = ["로컬 LLM 권장안 전체를 거부해 기본 계획에서 시작했습니다(권장안의 변경은 적용하지 않았습니다): " + label + "."]
+
+    if rejection is None:
+        return lines + ["세부 원인: 확인되지 않음(이 기록에는 하위 진단이 없습니다)"]
+
+    if valid is None or not valid(code, rejection):
+        # 손상·변조된 진단은 해석하지 않는다(값을 지우거나 바꿔 정상처럼 보이지 않음). 화면·보고서 조립은 멈추지 않는다.
+        return lines + ["세부 원인: 확인되지 않음(하위 진단을 읽지 못했습니다)"]
+
+    lines.append("세부 원인: " + (code_label(record, rejection["reason"]) or "분류되지 않음"))
+    section = SECTION_NAMES.get(rejection["section"], rejection["section"])
+    values = " · ".join(f"{key}={value}" for key, value in rejection["values"].items())
+    changed = ", ".join(rejection["from_model"]) or "없음"
+    lines.append(f"거부한 {section} 값(병합 결과): {values} (모델이 바꾼 항목: {changed})")
+
+    if rejection["omitted"]:
+        lines.append("검사를 통과하지 못해 기록하지 않은 항목: " + ", ".join(rejection["omitted"]))
+
+    return lines
 
 
 def build_facts(record):
@@ -27,9 +74,7 @@ def build_facts(record):
     draft = record["draft"]
     cautions = list(facts["cautions"])
 
-    if draft["source"] != "model":
-        cautions.append("로컬 LLM 권장안을 쓰지 못해 기본 계획에서 시작했습니다: "
-                        + (code_label(record, draft.get("code")) or "사유 코드 확인 불가") + ".")
+    cautions += recommendation_notice(record)
 
     coverage = draft.get("coverage") or {}
 
@@ -37,8 +82,7 @@ def build_facts(record):
         cautions.append(f"모델 검토 범위: 판단 대상 {coverage['total']}개 중 {coverage['summarized']}개는 요약만 제공해 모델이 "
                         "역할을 권하지 않았습니다(기본 계획 또는 사용자 편집 값 사용).")
 
-    for item in (record["confirmed"] or {}).get("answers", []):
-        cautions.append("질문 답변으로 정한 항목: " + str(item["path"] or item["id"]) + " = " + str(item["value"]))
+    cautions += answer_notes(record)
 
     technical = dict(facts["technical"], runs={step: item["run_name"] for step, item in record["steps"].items()},
                      delegations={step: len(item["delegations"]) for step, item in record["steps"].items()},
@@ -51,12 +95,44 @@ def build_facts(record):
                 recommendation={"source": draft["source"], "code": draft.get("code")})
 
 
+def answer_notes(record):
+    """질문 답변 한 줄씩. 응답값(고른 선택지)·계획 경로·확정 계획 값을 구분한다.
+
+    컬럼 선택 질문은 응답값이 컬럼 이름이고 선택지가 정한 역할은 확정 계획에 있다(확정 계획은 답변을 마지막에 반영한 결과).
+    응답값이 곧 그 항목 값이면 기존 표기를 쓴다. 확정 계획에 경로가 없는 이전 기록은 값을 추정하지 않는다.
+    """
+    confirmed = record.get("confirmed") or {}
+    lines = []
+
+    for item in confirmed.get("answers", []):
+        path, value = item.get("path"), item["value"]
+
+        if path is None:
+            lines.append("질문 답변(질문 " + str(item["id"]) + "): 고른 선택지 " + str(value) + " · 바꾼 계획 항목 없음")
+            continue
+
+        try:
+            final = get_path(confirmed["plan"], path)
+        except (KeyError, TypeError, PlanError):
+            lines.append("질문 답변 항목: " + str(path) + " · 확정 계획 값 확인되지 않음 (고른 선택지: " + str(value) + ")")
+            continue
+
+        if final == value:
+            lines.append("질문 답변으로 정한 항목: " + str(path) + " = " + str(value))
+        else:
+            lines.append("질문 답변으로 정한 항목: " + str(path) + " = " + str(final) + " (확정 계획 값, 고른 선택지: " + str(value) + ")")
+
+    return lines
+
+
 def _plain(value):
     """입력 유래 문자열(컬럼명·모델 문장)을 Markdown·HTML로 해석되지 않는 한 줄 글자로 바꾼다."""
     import html
 
     # 백슬래시를 먼저 바꿔야 뒤에 붙이는 이스케이프가 원래 글자의 백슬래시와 합쳐지지 않는다.
-    text = html.escape(str(value).replace("\\", "\\\\")).replace("\r", " ").replace("\n", " ").replace("|", "/")
+    # 따옴표는 태그 밖 본문에서 해석되지 않으므로 그대로 둔다(quote=True면 &#x27;의 #가 아래에서 다시 escape되어 표시가 깨진다).
+    # <, >, &는 계속 바꿔 HTML로 해석되지 않게 한다.
+    text = html.escape(str(value).replace("\\", "\\\\"), quote=False).replace("\r", " ").replace("\n", " ").replace("|", "/")
 
     for character in "`*_[]#!":
         text = text.replace(character, "\\" + character)
@@ -64,22 +140,73 @@ def _plain(value):
     return text
 
 
-def _table(rows):
+# 보고서 표의 열 순서. 저장한 사실을 다시 읽으면 행 키가 가나다순으로 정렬되므로 화면·Markdown 모두 이 순서로 열을 놓는다.
+# 기존 표 머리글(유형 어댑터의 조립 순서)을 모두 그대로 재현하는 하나의 순서다. 목록에 없는 열은 처음 나온 순서로 뒤에 둔다.
+COLUMN_ORDER = (
+    "구분", "순위", "항목", "설정 이름", "최종 값", "파일", "용도", "컬럼", "특징", "특징 A", "특징 B", "구간", "대상 구간", "대상",
+    "컬럼 범위", "단위", "역할", "자료형", "결측(건)", "결측 비율", "관측 고유값", "상수·전체 결측", "공백 문자열", "+무한대", "-무한대",
+    "유한 관측 수", "하한", "상한", "후보 수", "후보 비율", "관측 수", "평균", "표준편차", "최솟값", "25%", "중앙값", "75%", "최댓값",
+    "범주 수", "빈 표기(건)", "최빈 범주 점유율", "희소 범주 수", "희소 범주 행 비율", "Pearson", "Spearman", "쌍별 관측 수",
+    # 결정 D 화면의 예상 처리 영향·출력 폭 표(저장된 후보 사실을 다시 읽어 그린다).
+    "변환 전 고유값", "clipping 변경 값", "구간 수", "입력 특징", "출력 열", "변환 후 상수", "정보 손실",
+    "요청 비율", "확정 비율", "행 수", "그룹 수", "클래스", "건수", "비율", "변환", "값", "전", "후", "후 (실측)", "예상 (후보)",
+    "처리 전", "처리 후", "결정 출처", "모델 의견", "실행 기록 대조", "실제 변경(근거)", "내용", "처리", "제외 사유", "대상·분모",
+    "근거", "비고", "크기(byte)",
+)
+
+
+def table_columns(rows, columns=None):
+    """표의 열 이름. 화면 표와 Markdown 표가 같이 쓴다.
+
+    columns(표를 만드는 쪽이 정한 순서)가 있으면 그 순서를 먼저 쓰고, 목록에 없는 데이터 열은 사라지지 않게 뒤에 둔다.
+    없으면(이전 facts 등) 행마다 키가 달라도 모든 키를 모아 호환용 COLUMN_ORDER 순으로 둔다.
+    """
+    seen = list(dict.fromkeys(key for row in rows for key in row))
+    rank = {name: index for index, name in enumerate(COLUMN_ORDER)}
+
+    if columns:
+        return list(dict.fromkeys(columns)) + sorted((key for key in seen if key not in columns),
+                                                     key=lambda key: (rank.get(key, len(rank)), seen.index(key)))
+
+    return sorted(seen, key=lambda key: (rank.get(key, len(rank)), seen.index(key)))
+
+
+def _table(rows, columns=None):
     if not rows:
         return ["(없음)"]
 
-    keys = list(rows[0])
+    keys = table_columns(rows, columns)
+    # 일부 행에 없는 열은 빈 칸으로 둔다(값을 만들지 않는다).
     return ["| " + " | ".join(keys) + " |", "| " + " | ".join("---" for _ in keys) + " |",
-            *["| " + " | ".join(_plain(row[key]) for key in keys) + " |" for row in rows]]
+            *["| " + " | ".join(_plain(row.get(key, "")) for key in keys) + " |" for row in rows]]
 
 
-TECHNICAL_HEAD = "## 기술 상세\n<details><summary>경로·해시·내부 작업 (펼치기)</summary>\n\n```json\n"
+BAR_WIDTH = 20
+
+
+def _bars(chart):
+    """그래프 값 행에 계열별 텍스트 막대 열을 더한다. 막대 길이는 그래프 안 최댓값 기준이며 값 자체는 바꾸지 않는다.
+    0보다 큰 값은 최소 한 칸이라 작은 클래스·구간도 0처럼 보이지 않는다."""
+    peak = max((row[key] for row in chart["rows"] for key in chart["values"]), default=0)
+    return [dict(row, **{"막대 " + key: "█" * max(1, round(BAR_WIDTH * row[key] / peak)) if row[key] > 0 else ""
+                         for key in chart["values"]}) for row in chart["rows"]]
+
+
+def chart_rows(chart):
+    """그래프 값 표의 표시용 행. 사실이 자릿수(digits)를 정한 열만 고정 소수로 쓰고, 정하지 않은 이전 사실은 그대로다.
+    화면 표와 Markdown 표가 같이 쓴다. 그래프에 그리는 값은 바꾸지 않는다."""
+    digits = chart.get("digits") or {}
+    return [{key: f"{value:.{digits[key]}f}" if key in digits else value for key, value in row.items()} for row in chart["rows"]]
+
+
+TECHNICAL_HEAD ="## 기술 상세\n<details><summary>경로·해시·내부 작업 (펼치기)</summary>\n\n```json\n"
 TECHNICAL_TAIL = "\n```\n\n</details>"
 WARNING_KINDS = ("정보 손실", "미처리", "미검증")
 
 
 def render_markdown(facts):
-    """공통 절 구성: 핵심 결과·주요 문제 → 컬럼별 처리 → 실제 전후 비교 → 경고 → 활용 → 접힌 기술 상세.
+    """공통 절 구성: 핵심 결과·주요 문제 → (처리 전 EDA·계획과 결정·분할, 유형이 줄 때) → 컬럼별 처리 → 실제 전후 비교 →
+    그래프(보고서 그래프 값 표, 유형이 줄 때 → 검증된 PNG 이름) → 경고 → 활용 → 접힌 기술 상세.
 
     유형 어댑터가 준 사실만 배치한다. 이전 형식 사실(highlights·warnings·usage 없음)은 해당 줄을 비워 둔다.
     입력 유래 문자열은 _plain으로 한 줄 글자로 바꾼다. 절 제목만 고정 Markdown이다.
@@ -88,10 +215,39 @@ def render_markdown(facts):
              "## 핵심 결과와 주요 문제", *["- " + _plain(text) for text in facts.get("highlights", [])], "",
              _plain(" · ".join(f"{item['label']}: {item['value']}" for item in facts["metrics"])), "",
              *[_plain(text) for text in facts.get("lines", [])], "",
-             "### 주요 문제", *_table(facts["problems"]), "",
-             "## 컬럼별 처리와 제외 사유", *_table(facts["processing"]), "",
-             "## 실제 전후 비교", *([_plain(facts["comparison_note"]), ""] if facts.get("comparison_note") else []), *_table(facts["comparison"]), "",
-             "## 그래프", *(["- " + _plain(item["label"]) for item in facts["images"]] or ["(검증된 그래프 없음)"]), ""]
+             "### 주요 문제", *_table(facts["problems"]), ""]
+    # 처리 전 EDA·계획과 결정 절은 이를 주는 유형 어댑터만 채운다. 표마다 제목·대상·선정 안내(notes)·행을 둔다.
+    for key, heading, note in (("eda_tables", "## 처리 전 데이터와 기본 EDA", facts.get("eda_note")),
+                               ("decision_tables", "## 계획과 결정", None)):
+        if facts.get(key):
+            lines += [heading, *([_plain(note), ""] if note else [])]
+
+            for table in facts[key]:
+                lines += ["### " + _plain(table["title"]), *["- " + _plain(text) for text in table["notes"]], "", *_table(table["rows"], table.get("columns")), ""]
+
+    # 분할 표·그래프 설명은 이를 주는 유형 어댑터만 채운다. 없는 이전 형식·다른 유형 사실은 기존 줄 그대로 둔다.
+    split = facts.get("split_table")
+
+    if split:
+        lines += ["## 분할 결과", _plain(split["title"]), "", *_table(split["rows"]), ""]
+
+    notes = facts.get("image_notes") or {}
+    lines += ["## 컬럼별 처리와 제외 사유", *_table(facts["processing"]), "",
+              "## 실제 전후 비교", *([_plain(facts["comparison_note"]), ""] if facts.get("comparison_note") else []), *_table(facts["comparison"]), "",
+              "## 그래프"]
+    # 보고서 그래프(charts)는 이를 주는 유형만 채운다. 화면 그래프와 같은 값을 표와 텍스트 막대로 남긴다.
+    for chart in facts.get("charts") or []:
+        lines += ["### " + _plain(chart["title"]), *["- " + _plain(text) for text in chart["notes"]], ""]
+
+        if chart["rows"]:
+            lines += ["- 막대: 이 그래프의 최댓값을 " + str(BAR_WIDTH) + "칸으로 한 텍스트 막대입니다(화면 그래프와 같은 값).", "",
+                      *_table(chart_rows(dict(chart, rows=_bars(chart)))), ""]
+
+    if facts.get("charts"):
+        lines += ["### 분할 EDA 그래프 (검증된 PNG, 화면에서 표시)"]
+
+    lines += [*(["- " + _plain(item["label"]) + (" — " + _plain(notes[item["label"]]) if item["label"] in notes else "")
+                 for item in facts["images"]] or ["(검증된 그래프 없음)"]), ""]
     warnings = facts.get("warnings", [])
     lines += ["## 경고: 정보 손실·미처리·미검증"]
 

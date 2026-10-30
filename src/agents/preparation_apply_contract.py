@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from src.preprocessing.profiles import profile_from_dict
+from src.preprocessing.tabular_bundle import verification_scope
 from src.preprocessing.transform import PreparationRules
 from .approvals import ApprovalScope
 from .artifacts import _root, _fingerprint
@@ -59,6 +60,11 @@ class CandidateEvidence:
 
 def read_candidate_evidence(run_directory, actor):
     """저장 계획·선택·승인 소비·커밋·후보 파일을 대조한다. 승인 DB는 읽기 전용이다."""
+    with verification_scope():
+        return _read_candidate_evidence(run_directory, actor)
+
+
+def _read_candidate_evidence(run_directory, actor):
     root = _root(run_directory)
     saved = read_metadata(root / "execution_plan.json")
     record = read_metadata(root / "selection.json")

@@ -39,9 +39,23 @@ CODE_LABELS = {
 
 
 class RecommendationRejected(ValueError):
-    def __init__(self, code):
+    def __init__(self, code, rejection=None):
         super().__init__(code)
-        self.code = code
+        self.code, self.rejection = code, rejection
+
+
+def _rejection(detail, accepted):
+    """계획 검증이 남긴 제한된 진단을 기록용으로 고정한다. 하위 코드·검사한 계약 값·모델이 바꾼 키 이름만 둔다.
+
+    모델 원문·요약·이유 문장·질문은 넣지 않는다. 값은 어댑터가 허용 목록·타입·범위로 검사한 것만 받는다.
+    """
+    if type(detail) is not dict or set(detail) != {"section", "reason", "values", "omitted"}:
+        return None
+
+    changed = {item["path"] for item in accepted}
+    return {"section": detail["section"], "reason": detail["reason"], "values": dict(detail["values"]),
+            "omitted": list(detail["omitted"]),
+            "from_model": sorted(key for key in detail["values"] if detail["section"] + "." + key in changed)}
 
 
 def _value_schema(field):
@@ -99,24 +113,53 @@ def _spec(field):
     return spec
 
 
-def allowed_values(fields):
-    """경로별 허용 값. 같은 구획의 모든 항목이 같은 허용 값이면 '구획.*' 하나로 묶는다(예: 컬럼별 역할)."""
+def allowed_values(fields, subjects=()):
+    return _allowed_values(fields, subjects)[0]
+
+
+def _allowed_values(fields, subjects):
+    """경로별 허용 값. 같은 구획의 모든 항목이 같은 허용 값이면 '구획.*' 하나로 묶는다(예: 컬럼별 역할).
+
+    판단 대상별 항목(subjects: 대상이 가진 경로)의 허용 값이 일부만 다르면, 가장 많은 대상이 쓰는 허용 값을 '구획.*'로 두고
+    나머지 항목만 경로별로 적는다. 대상 수에 따라 요청이 커져 모델에 보내는 범위가 줄지 않게 한다. 개별 경로가 우선한다.
+    돌려주는 두 번째 값은 이 묶음 표기를 실제로 썼는지(우선순위 안내가 필요한지)다.
+    """
     sections = {}
 
     for field in fields:
         sections.setdefault(field["path"].split(".", 1)[0], []).append(field)
 
-    result = {}
+    result, overridden = {}, False
 
     for section, items in sections.items():
         specs = [_spec(item) for item in items]
 
         if len(items) > 1 and all(spec == specs[0] for spec in specs):
             result[section + ".*"] = specs[0]
-        else:
-            result.update({item["path"]: spec for item, spec in zip(items, specs)})
+            continue
 
-    return result
+        counts = {}
+
+        for item, spec in zip(items, specs):
+            if item["path"] in subjects:
+                counts.setdefault(json.dumps(spec, ensure_ascii=False, sort_keys=True), [spec, 0])[1] += 1
+
+        common = max(counts.values(), key=lambda entry: entry[1], default=None)
+
+        # 이름이 '*'이거나 '.*'로 끝나는 경로가 있으면 묶음 표기와 헷갈리지 않게 묶지 않는다.
+        if common is None or common[1] < 2 or any(item["path"].endswith(".*") for item in items):
+            result.update({item["path"]: spec for item, spec in zip(items, specs)})
+            continue
+
+        result[section + ".*"] = common[0]
+        result.update({item["path"]: spec for item, spec in zip(items, specs)
+                       if item["path"] not in subjects or spec != common[0]})
+        overridden = True
+
+    return result, overridden
+
+
+ALLOWED_OVERRIDE_NOTE = "개별 경로의 허용 값이 '구획.*'보다 우선합니다."
 
 
 # ==========================================
@@ -188,10 +231,14 @@ def _scope(source, base_plan, fields, detailed, named):
                 "named": [item["id"] for item in listed],
                 "summarized": {"count": len(summarized), "buckets": buckets}}
     model_fields = [field for field in fields if field["path"] not in hidden]
+    allowed, overridden = _allowed_values(model_fields, owned)
     content = {**source["data"], "subjects": subjects, "base_plan": _plan_view(base_plan, owned, hidden),
-               "allowed_values": allowed_values(model_fields),
+               "allowed_values": allowed,
                "scope_note": (f"판단 대상 {len(items)}개 중 상세 {len(shown)}개, 이름만 {len(listed)}개, 요약만 {len(summarized)}개를 "
                               "제공합니다. 요약만 제공한 대상은 base_plan 값을 유지하며 changes에 넣을 수 없습니다.")}
+    if overridden:
+        content["allowed_values_note"] = ALLOWED_OVERRIDE_NOTE
+
     coverage = {"total": len(items), "detailed": len(shown), "named": len(listed), "summarized": len(summarized),
                 "summarized_ids": [item["id"] for item in summarized], "summarized_buckets": buckets}
     question_paths = [field["path"] for field in model_fields if field["path"] not in owned]
@@ -287,7 +334,7 @@ def merge(base_plan, value, fields, validate):
     try:
         validate(plan)
     except PlanError as error:
-        raise RecommendationRejected(error.code) from error
+        raise RecommendationRejected(error.code, _rejection(error.detail, accepted)) from error
 
     asked, dropped = model_questions(questions, fields)
     return {"summary": summary, "notes": notes, "changes": accepted, "questions": asked, "dropped_questions": dropped,
@@ -324,6 +371,10 @@ def request(goal, source, base_plan, fields, validate, config, *, requester=None
         return dict(fallback, source="default", code=str(error) or "MODEL_REQUEST_FAILED")
     except RecommendationRejected as error:
         draft = dict(fallback, source="default", code=error.code)
+
+        if error.rejection is not None:
+            draft["rejection"] = error.rejection
+
         return on_rejected(draft) if on_rejected is not None else draft
     except (ValueError, TypeError, KeyError):
         return dict(fallback, source="default", code="RECOMMENDATION_RESPONSE_INVALID")
