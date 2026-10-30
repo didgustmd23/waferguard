@@ -273,6 +273,30 @@ class TaskSubmitUnitTest(unittest.TestCase):
         task_submit.reconcile(self.st)
         self.assertEqual(self.notice(), [("info", "저장된 작업 기록으로 확인: 적용 확인 필요")])
 
+    def test_normal_completion_with_empty_result_is_not_reported_as_unclear(self):
+        verified = []
+
+        def verify(progress):
+            verified.append(progress)
+            return "저장된 작업 기록으로 확인"
+
+        # 알릴 내용이 없는 정상 완료({})는 결과를 받은 것이다. 저장 상태 대조·대체 안내를 쓰지 않는다.
+        self.click()
+        self.execute(lambda progress: {}, verify)
+        self.assertEqual(task_submit.submit_state(self.st).request["state"], "done")
+        task_submit.reconcile(self.st)
+        self.assertFalse(task_submit.locked(self.st))
+        self.assertEqual(self.notice(), [])
+        self.assertEqual(verified, [])
+
+    def test_completion_without_a_dict_result_still_uses_the_stored_state_check(self):
+        # 결과가 dict가 아니면(형식 오류) 정상 결과로 보지 않고 기존 대체 경로로 정리한다. 자동 재실행은 없다.
+        self.click()
+        self.execute(lambda progress: None, lambda progress: None)
+        task_submit.reconcile(self.st)
+        self.assertEqual(self.notice(), [task_submit.UNCLEAR])
+        self.assertFalse(task_submit.locked(self.st))
+
     def test_decline_releases_lock_and_redraws_with_notice(self):
         task_submit.reserve(self.st, "confirm", "t", 0)
 

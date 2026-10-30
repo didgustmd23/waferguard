@@ -23,6 +23,13 @@ class TimeRestoreScreenTest(TimeRestoreFlowFixture):
     def button(self, app, label):
         return next(item for item in app.button if item.label == label)
 
+    def assert_no_fallback_notice(self, app):
+        """정상 완료(빈 결과)를 결과 불명확으로 보고 저장 상태 대조 안내를 내지 않는다."""
+        from src.ui import task_submit
+
+        texts = [item.value for kind in (app.info, app.error, app.warning) for item in kind]
+        self.assertFalse([text for text in texts if "결과를 화면에서 직접 받지 못했" in text or text == task_submit.UNCLEAR[1]])
+
     def test_preview_table_apply_and_rule_change_on_the_final_plan_screen(self):
         from streamlit.testing.v1 import AppTest
 
@@ -49,6 +56,7 @@ class TimeRestoreScreenTest(TimeRestoreFlowFixture):
         self.assertFalse(app.exception, [item.value for item in app.exception])
         self.assertEqual(task_store.load_task(task["task_id"], root=self.store)["time_restore"]["status"], "previewed")
         self.assertTrue(any(item.value.startswith("복원 대상: 전체 6행 중 2행") for item in app.text))
+        self.assert_no_fallback_notice(app)
         tables = [item.value for item in app.dataframe if "표에 기록할 값" in item.value.columns]
         self.assertEqual(tables[0]["표에 기록할 값"].tolist(), ["2026-10-20", "2026-10-23"])
 
@@ -58,6 +66,7 @@ class TimeRestoreScreenTest(TimeRestoreFlowFixture):
         stored = task_store.load_task(task["task_id"], root=self.store)
         self.assertEqual((stored["time_restore"]["status"], stored["phase"]), ("applied", "awaiting_review"))
         self.assertTrue(any(item.value.startswith("복원을 적용했습니다: 2행") for item in app.success))
+        self.assert_no_fallback_notice(app)
         self.assertFalse([item for item in app.button if item.label in ("복원 적용", "복원 미리보기 실행")])
         # 적용 뒤에는 같은 화면에 입력 출처 안내와 결정 C 동의·확인 버튼이 나온다(확정·분할 흐름은 test_time_split_flow).
         self.assertTrue(any(item.value.startswith("확정 시 입력: 파생 표(복원 2행)") for item in app.text))

@@ -11,7 +11,8 @@ import pandas as pd
 from src.agents import task_adapters, task_rag, task_store
 from src.agents import task_orchestrator as orchestrator
 from src.agents.task_plan import PlanError, flatten
-from src.agents.task_report import chart_rows, code_label, recommendation_notice, table_columns
+from src.agents.task_report import (MODEL_LIMITATION_NOTICE, chart_rows, code_text, recommendation_guidance, recommendation_notice,
+                                    table_columns)
 from . import runtime_notice, task_submit
 from .path_picker import path_input
 from .runtime_notice import render_permissions
@@ -30,11 +31,6 @@ DIAGNOSTIC_LABELS = {"INPUT_INVALID": "입력 검증 실패", "ACCESS_DENIED": "
                      "RUNTIME_FAILED": "실행 중 오류", "PASSED": "통과"}
 NO_ANSWER = "(답하지 않음)"
 INPUT_STATUS = {"inspecting": "검사 중", "waiting": "선택 대기", "materializing": "작업용 표 생성 중", "materialized": "완료"}
-MODEL_LIMITATION_NOTICE = (
-    "현재 로컬 모델의 한계: 확인한 사례에서 진단 수치 해석, 라벨·그룹 구분, 전처리 권장 이유에 오류가 관찰됐습니다. "
-    "응답 형식 검사를 통과해도 내용의 타당성을 보장하지 않습니다. 계산 결과와 모델 의견을 구분해 확인하세요. "
-    "이 한계를 모든 모델에 일반화하지 않으며, 다른 로컬·API 모델의 품질은 별도 평가가 필요합니다."
-)
 RECORD_ERRORS = {
     "RECORD_NOT_FOUND": "작업 기록을 찾지 못했습니다. 기록 폴더가 옮겨졌거나 지워졌을 수 있습니다. 새 작업으로 시작하세요.",
     "RECORD_TOO_LARGE": "작업 기록이 크기 상한(512 KiB)을 넘어 열지 않았습니다. 기록은 그대로 두었습니다. 컬럼이 매우 많은 입력이면 관리자에게 알려 주세요.",
@@ -714,8 +710,11 @@ def _render_review(st, task):
         for line in notice[1:]:
             st.text(line)
     else:
-        st.text("권장안: 기본 계획 (로컬 LLM 권장안을 사용할 수 없었습니다: "
-                + (code_label(task, draft.get("code")) or "사유 코드 확인 불가") + ")")
+        st.text(default_plan_line(task))
+
+    for line in recommendation_guidance(task):
+        st.text(line)
+
     st.text(MODEL_LIMITATION_NOTICE)
     _render_rag(st, draft)
 
@@ -1113,9 +1112,52 @@ def _rebuild(st, task_id, seen):
         st.session_state["task_rebuild_failed"] = task_id
 
 
-def _render_result(st, task):
+def default_plan_line(task):
+    """기본 계획으로 시작한 사유 한 줄. 설명과 코드에 괄호가 있으므로 바깥 괄호로 다시 감싸지 않는다."""
+    return "권장안: 기본 계획 — 로컬 LLM 권장안을 사용할 수 없었습니다: " + code_text(task, task["draft"].get("code"))
+
+
+def _figure_notice(st, facts, label):
+    """그림 파일 저장에 실패했으면 해당 그림 옆에 알린다. 사유는 경로 없는 고정 문구다."""
+    for item in (facts.get("figures") or {}).get("items", []):
+        if item["label"] == label and item["status"] == "failed":
+            st.text("그림 저장 실패: " + item["reason"] + ". 저장 보고서에 이 그림이 없습니다.")
+
+
+def _section_charts(st, facts, section):
+    for chart in facts.get("charts") or []:
+        if chart.get("section") == section:
+            _chart(st, chart)
+            _figure_notice(st, facts, chart["title"])
+
+
+def _render_images(st, task, facts):
     from src.agents.task_report import verified_images
 
+    # 저장된 경로를 다시 열지 않고, 표시할 때마다 기록 검사·결과 검증을 거친 그래프만 보여 준다.
+    try:
+        images = verified_images(task)
+    except Exception:
+        images = []
+        st.text("그래프를 결과 검증으로 다시 확인하지 못해 표시하지 않습니다.")
+
+    notes = facts.get("image_notes") or {}
+
+    for image in images:
+        st.image(image["data"], caption=image["label"])
+
+        # 설명은 보고서 사실에 저장된 문구이므로 Markdown으로 해석하지 않는 글자로 보인다. 설명이 없으면 이름만 보인다.
+        if image["label"] in notes:
+            st.text(notes[image["label"]])
+
+    for item in facts.get("images", []):
+        _figure_notice(st, facts, item["label"])
+
+    if not images:
+        st.text("(검증된 그래프 없음)")
+
+
+def _render_result(st, task):
     st.subheader("최종 결과")
     report = task["report"]
     facts = report.get("facts")
@@ -1144,7 +1186,7 @@ def _render_result(st, task):
     st.text("목표: " + facts["goal"])
     recommendation = facts["recommendation"]
     st.text("처리: 완료 · 로컬 LLM 권장안: " + ("사용함" if recommendation["source"] == "model" else
-                                         "사용 못 함(" + (code_label(task, recommendation["code"]) or "사유 코드 확인 불가") + ") — 기본 계획에서 시작"))
+                                         "사용 못 함(" + code_text(task, recommendation["code"]) + ") — 기본 계획에서 시작"))
     st.text(MODEL_LIMITATION_NOTICE)
     _render_rag(st, task["draft"])
     # 2026-10-22 이전에 저장한 보고서 사실에는 경고 절이 없다. 새 보고서는 공통 조립에서 항상 경고 목록을 둔다.
@@ -1165,6 +1207,8 @@ def _render_result(st, task):
     with st.expander("주요 문제 (진단·품질 검사)", expanded=legacy):
         _rows(st, facts["problems"])
 
+    placed = any("section" in chart for chart in facts.get("charts") or [])
+
     # 처리 전 EDA·계획과 결정 절은 이를 주는 유형만 채운다. 저장된 문구는 Markdown으로 해석하지 않는다.
     for key, heading, note in (("eda_tables", "#### 처리 전 데이터와 기본 EDA", facts.get("eda_note")),
                                ("decision_tables", "#### 계획과 결정", None)):
@@ -1182,12 +1226,18 @@ def _render_result(st, task):
 
                 _rows(st, table["rows"], table.get("columns"))
 
+            if placed and key == "eda_tables":
+                _section_charts(st, facts, "eda")
+                st.text("■ 분할 EDA 그래프 (검증된 PNG)")
+                _render_images(st, task, facts)
+
     # 분할 표는 이를 주는 유형만 채운다. 이전 형식·다른 유형 보고서에는 없다.
     if facts.get("split_table"):
         st.markdown("#### 분할 결과")
         # 저장된 사실 문자열은 Markdown으로 해석하지 않는다.
         st.text(facts["split_table"]["title"])
         _rows(st, facts["split_table"]["rows"])
+        _section_charts(st, facts, "split")
 
     st.markdown("#### 컬럼별 처리와 제외 사유")
     _rows(st, facts["processing"])
@@ -1198,33 +1248,17 @@ def _render_result(st, task):
 
     _rows(st, facts["comparison"])
     st.caption("검증된 결과 파일에 없는 수치는 계산하지 않고 '미집계' 또는 '미산출(사유)'로 표시합니다.")
-    st.markdown("#### 그래프")
+    if not placed:
+        st.markdown("#### 그래프")
 
-    # 보고서 그래프는 이를 주는 유형만 채운다. 저장 보고서의 값 표와 같은 사실로 그린다.
-    for chart in facts.get("charts") or []:
-        _chart(st, chart)
+        # 보고서 그래프는 이를 주는 유형만 채운다. 저장 보고서의 값 표와 같은 사실로 그린다.
+        for chart in facts.get("charts") or []:
+            _chart(st, chart)
 
-    if facts.get("charts"):
-        st.text("■ 분할 EDA 그래프 (검증된 PNG)")
+        if facts.get("charts"):
+            st.text("■ 분할 EDA 그래프 (검증된 PNG)")
 
-    # 저장된 경로를 다시 열지 않고, 표시할 때마다 기록 검사·결과 검증을 거친 그래프만 보여 준다.
-    try:
-        images = verified_images(task)
-    except Exception:
-        images = []
-        st.text("그래프를 결과 검증으로 다시 확인하지 못해 표시하지 않습니다.")
-
-    notes = facts.get("image_notes") or {}
-
-    for image in images:
-        st.image(image["data"], caption=image["label"])
-
-        # 설명은 보고서 사실에 저장된 문구이므로 Markdown으로 해석하지 않는 글자로 보인다. 설명이 없으면 이름만 보인다.
-        if image["label"] in notes:
-            st.text(notes[image["label"]])
-
-    if not images:
-        st.text("(검증된 그래프 없음)")
+        _render_images(st, task, facts)
 
     if not legacy:
         st.markdown("#### 경고: 정보 손실·미처리·미검증")
@@ -1240,6 +1274,16 @@ def _render_result(st, task):
 
     for text in facts["cautions"]:
         st.text("- " + text)
+
+    opinions = facts.get("model_opinions")
+
+    if opinions:
+        # 모델 문장은 계산 사실과 분리해 접어 둔다. 한계 안내는 화면 위쪽에 항상 보인다.
+        with st.expander("모델 의견과 한계 (계산 사실 아님)"):
+            for text in opinions["notes"]:
+                st.text("- " + text)
+
+            _rows(st, opinions["rows"], opinions["columns"])
 
     st.markdown("#### 적용 구간과 결과 파일 활용")
 

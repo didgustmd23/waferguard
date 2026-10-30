@@ -320,7 +320,7 @@ def _changed(name, candidate, application, expected):
 
 
 def decision_tables(record, plan, origin, recommendation, candidate, application, expected, split_rules):
-    """계획과 결정 절. 결정 출처와 모델 의견(모델 문장)을 계산 사실·실행 기록 대조와 다른 열에 둔다.
+    """계획과 결정 절. 결정 출처와 실행 기록 대조만 둔다. 모델 문장은 model_opinions의 별도 절에 있다.
 
     origin(record, path)은 기존 결정 출처 판정(질문 답변 > 사용자 변경 > 모델 권장 > 기본 계획)이며,
     recommendation은 권장안 사용 여부 문장이다. 실행 기록 대조는 후보 계산 설정(binding.rules)과 분할 실행 규칙만 쓴다.
@@ -332,7 +332,7 @@ def decision_tables(record, plan, origin, recommendation, candidate, application
 
     for section in ("roles", "split", "preparation"):
         for name, value in plan[section].items():
-            source, reason = origin(record, section + "." + name)
+            source, _ = origin(record, section + "." + name)
             sources[source] += 1
 
             if section == "roles":
@@ -349,8 +349,7 @@ def decision_tables(record, plan, origin, recommendation, candidate, application
                 check = "다름(실행 값: " + str(executed[section][name]) + ")"
 
             rows.append({"구분": "분할" if section == "split" else "전처리", "항목": label, "설정 이름": name, "최종 값": shown,
-                         "결정 출처": source, "모델 의견": "-" if not reason else str(reason),
-                         "실행 기록 대조": check,
+                         "결정 출처": source, "실행 기록 대조": check,
                          "실제 변경(근거)": "분할 결과 표 참조" if section == "split" else _changed(name, candidate, application, expected)})
 
     answers = (record.get("confirmed") or {}).get("answers") or []
@@ -363,10 +362,37 @@ def decision_tables(record, plan, origin, recommendation, candidate, application
             "결정 출처는 모델 초안·기본 계획과 확정 값을 비교한 결과입니다. 재시도에서 직전 확정 값을 이어 쓴 항목은 '사용자 변경'으로 "
             "보일 수 있습니다. 컬럼별 역할 출처와 제외 사유는 '컬럼별 처리와 제외 사유' 표에 있습니다."], summary),
         _table("최종 실행 설정 (분할·전처리)", [
-            "모델 의견은 모델이 쓴 문장이며 계산 사실이 아닙니다. 실행 기록 대조는 분할 실행 규칙과 후보 계산 설정(승인된 실행 값)과의 비교입니다.",
+            "모델이 쓴 이유는 '모델 의견과 한계' 절에 따로 있습니다. 실행 기록 대조는 분할 실행 규칙과 후보 계산 설정(승인된 실행 값)과의 비교입니다.",
             "실제 변경은 저장된 집계만 적었습니다. 후보 worker 집계는 부모가 형식·범위·결정적 관계만 확인한 값이고 원본 건수를 다시 센 것이 "
             "아닙니다. 대치값·경계·스케일 기준은 '컬럼별 처리와 제외 사유' 표에 있습니다."], rows),
     ]
+
+
+MODEL_REASON_PREFIX = "모델 권장으로 제외("
+NO_MODEL_REASON = "모델 권장으로 제외(모델 의견: 이유 없음)"
+
+
+def model_opinions(record, plan, origin):
+    """모델 의견 절. 확정 계획에 남은 모델 권장 항목의 문장을 계산 사실과 분리해 모은다. 모델 문장을 해석·요약하지 않는다."""
+    rows = []
+
+    for section in ("roles", "split", "preparation"):
+        for name, value in plan[section].items():
+            source, reason = origin(record, section + "." + name)
+
+            if source == "모델 권장" and reason:
+                rows.append({"항목": section + "." + name, "최종 값": str(value), "모델 의견": str(reason)})
+
+    return {"notes": ["모델이 쓴 문장을 그대로 옮겼으며 계산으로 확인한 사실이나 EDA 해석이 아닙니다.",
+                      "확정 계획에 남은 모델 권장 항목만 표시합니다." if rows else "확정 계획에 남은 모델 의견이 없습니다."],
+            "columns": ["항목", "최종 값", "모델 의견"], "rows": rows}
+
+
+def without_model_reason(rows):
+    """처리 표의 제외 사유에서 모델 문장을 빼고 모델 의견 절을 가리킨다. 공유 처리 표의 v1 문구는 바꾸지 않는다."""
+    return [dict(row, **{"제외 사유": "모델 권장으로 제외('모델 의견과 한계' 절 참조)"})
+            if str(row.get("제외 사유", "")).startswith(MODEL_REASON_PREFIX) and row["제외 사유"] != NO_MODEL_REASON else row
+            for row in rows]
 
 
 # 그래프 축 이름 길이. 순위를 앞에 붙여 줄인 이름이 같아도 서로 다른 막대로 남는다.

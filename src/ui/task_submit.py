@@ -95,8 +95,10 @@ def reconcile(st):
 
             return state
 
-    # done: call이 결과를 돌려줌. aborted(BaseException)·스레드 없는 running: 결과를 모르므로 저장 상태로 대조한다.
-    outcome = (request.get("outcome") if request["state"] == "done" else None) or _unclear(request)
+    # done: call이 결과를 돌려줌. 빈 결과({})도 정상 완료다(알릴 내용·연결할 작업이 없을 뿐). 결과가 dict가 아니거나
+    # aborted(BaseException)·스레드 없는 running이면 결과를 모르므로 저장 상태로 대조한다.
+    done = request["state"] == "done" and type(request.get("outcome")) is dict
+    outcome = request["outcome"] if done else _unclear(request)
 
     if outcome.get("link"):
         st.session_state["ui_task_id"] = outcome["link"]

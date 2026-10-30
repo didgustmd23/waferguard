@@ -103,7 +103,7 @@ class TabularV2ScreenTest(unittest.TestCase):
         app = self.start(self.source)
         task = self.task()
         self.assertEqual((task["kind"], task["phase"], task["draft"]["source"]), ("tabular_v2", "awaiting_review", "default"))
-        self.assertTrue(any(item.value.startswith("권장안: 기본 계획 (로컬 LLM 권장안을 사용할 수 없었습니다") for item in app.text))
+        self.assertTrue(any(item.value.startswith("권장안: 기본 계획 — 로컬 LLM 권장안을 사용할 수 없었습니다") for item in app.text))
         # 기존 분할 계약의 클래스 조건을 양식에서 보이고 바꿀 수 있다. 기본은 켜짐(모든 구간에 모든 클래스 요구)이다.
         self.assertTrue(next(item for item in app.checkbox if item.label == "모든 구간에 모든 클래스 요구").value)
 

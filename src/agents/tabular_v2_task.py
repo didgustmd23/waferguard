@@ -912,8 +912,11 @@ def report_facts(record):
     report["decision_tables"] = evidence.decision_tables(
         record, plan, shared._origin, _recommendation(record), facts["candidate"], facts["application"],
         shared._expected_impact(facts["candidate"], facts["preprocessor"]), facts["split_rules"])
-    # 보고서 그래프는 위 분할 결과 표·target 표와 같은 검증된 값으로만 만든다. 그림 파일을 새로 쓰지 않는다.
-    report["charts"] = [evidence.split_chart(plan["split"], facts["proposal"]), evidence.target_chart(facts["eda"])]
+    # 보고서 그래프는 위 분할 결과 표·target 표와 같은 검증된 값으로만 만든다. 해당 절에 두고 그림 파일은 write_report가 저장한다.
+    report["charts"] = [dict(evidence.split_chart(plan["split"], facts["proposal"]), section="split", file="split_ratio.png"),
+                        dict(evidence.target_chart(facts["eda"]), section="eda", file="target_distribution.png")]
+    report["processing"] = evidence.without_model_reason(report["processing"])
+    report["model_opinions"] = evidence.model_opinions(record, plan, shared._origin)
     report["cautions"] = [EDA_CAUTION if text.startswith("분할 EDA의 사람 검토 단계") else text for text in report["cautions"]]
 
     if plan["split"]["strategy"] == "time":
@@ -957,7 +960,7 @@ def _time_report(record, report, plan, facts, source):
 
 
 EDA_CAUTION = ("분할 EDA의 사람 검토 단계는 결정 C 동의로 위임 승인했습니다. 처리 전 EDA 요약은 이 보고서의 '처리 전 데이터와 기본 EDA' 절에, "
-               "그래프는 '그래프' 절에, 전체 EDA 표는 기술 상세의 보고서 경로와 같은 폴더에 있습니다.")
+               "그래프는 같은 절과 '분할 결과' 절에, 전체 EDA 표는 기술 상세의 보고서 경로와 같은 폴더에 있습니다.")
 
 
 def _recommendation(record):

@@ -17,7 +17,8 @@ def render(st, record, plan, fields, key):
     by_path = {field["path"]: field for field in fields}
     columns = record["diagnostic"]["columns"]
     table = pd.DataFrame([{**{name: row[name] for name in SHOWN}, "role": plan["roles"][row["column"]]} for row in columns])
-    edited = st.data_editor(table, key=key + "_roles", hide_index=True, disabled=list(SHOWN),
+    # 역할은 편집하는 열이라 좁은 창에서도 보이도록 컬럼 이름 바로 뒤에 둔다. 표시 순서만 바꾸며 제출 값은 같다.
+    edited = st.data_editor(table, key=key + "_roles", hide_index=True, disabled=list(SHOWN), column_order=[SHOWN[0], "role", *SHOWN[1:]],
                             column_config={"role": st.column_config.SelectboxColumn("역할", options=list(ROLE_LABELS), required=True)})
     split, preparation = dict(plan["split"]), dict(plan["preparation"])
     strategy = by_path["split.strategy"]
