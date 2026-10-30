@@ -16,7 +16,7 @@ from .module_pipeline_results import read_tabular_profile_result
 from .module_pipeline_transport import code_manifest
 from .pipeline_csv_execution import CsvPipelineExecution
 from .snapshot_eda import _digest
-from .tabular_source_contract import TabularSourceContract
+from .tabular_source_contract import SOURCE_TYPES, TabularSourceContract
 from .tabular_worker_input import DIAGNOSTIC_POLICY, MAX_SPLIT_ROWS, table_files
 from .worker_contract import WorkerRequest, WorkerLimits, _decode
 from .worker_paths import WorkerPathPolicy
@@ -26,8 +26,8 @@ ADAPTER_ID = "tabular_canonical_diagnostic_v2"
 
 
 def check_source(source, limits):
-    """선택·동의·worker 생성 전에 생성 승인 증거와 제한을 확인한다."""
-    if type(source) is not TabularSourceContract or type(limits) is not WorkerLimits:
+    """선택·동의·worker 생성 전에 생성(또는 시간 복원 적용) 승인 증거와 제한을 확인한다."""
+    if type(source) not in SOURCE_TYPES or type(limits) is not WorkerLimits:
         raise TypeError("검증된 v2 표형 출처·자원 계약이 필요합니다.")
     if source.bundle.rows > MAX_SPLIT_ROWS or any(getattr(limits, k) > getattr(source.limits, k) for k in asdict(limits)):
         raise ValueError("현재 표형 실행의 행 수 또는 자원 한도를 초과했습니다.")
@@ -55,7 +55,7 @@ def stage_table(tool, request, packet, settings, *, extras=None):
     Path(request.output_directory).mkdir()
     Path(request.scratch_directory).mkdir()
     request.check_policy(WorkerPathPolicy(tuple(root / p for p in ("runtime", "input", "tools")), root / "output", root / "scratch",
-                                         protected_roots=(tool.states.directory, Path(source.bundle_directory), Path(source.snapshot_directory))), tool.limits)
+                                         protected_roots=(tool.states.directory, *source.protected_directories)), tool.limits)
     check_source(source, tool.limits)
     return root
 

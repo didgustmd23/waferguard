@@ -124,7 +124,7 @@ def checked_values(schema, values, limits):
                 raise ValueError("설정 JSON은 64 KiB 이하여야 합니다.")
         elif kind == "run_directory":
             selected[field["name"]] = str(_path(Path(value).absolute(), directory=True))
-        elif kind == "source_contract_id" and re.fullmatch(r"tabular_source:[0-9a-f]{64}", value) is None:
+        elif kind == "source_contract_id" and re.fullmatch(r"tabular_(?:time_)?source:[0-9a-f]{64}", value) is None:
             raise ValueError("검증된 표형 출처 ID 형식이 필요합니다.")
     return selected
 

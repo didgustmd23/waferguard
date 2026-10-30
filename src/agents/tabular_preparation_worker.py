@@ -35,7 +35,9 @@ def check_part(directory, packet, *, partition=None):
         if type(value) is not str or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
             raise ValueError("구간 지문이 올바르지 않습니다.")
     parent = packet["parent_source_id"]
-    if type(parent) is not str or not parent.startswith("tabular_source:") or len(parent) != 79 or any(c not in "0123456789abcdef" for c in parent[15:]):
+    import re
+    # 원래 생성 표 또는 시간 복원 파생 표 출처(tabular_source_contract.SOURCE_ID_PATTERN과 같은 형식).
+    if type(parent) is not str or re.fullmatch(r"tabular_(?:time_)?source:[0-9a-f]{64}", parent) is None:
         raise ValueError("부모 생성 출처가 필요합니다.")
     reference = BundleRef.from_dict(packet["bundle"])
     if type(packet["rows"]) is not int or reference.rows != packet["rows"] or not 1 <= reference.rows <= 1_000_000:

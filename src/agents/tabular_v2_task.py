@@ -7,6 +7,8 @@ CSV v1 어댑터(tabular_task)와 같은 코드를 쓰고, 결과 파일은 v2 �
 
 from dataclasses import asdict, replace
 import json
+from pathlib import Path
+import re
 
 from src.preprocessing.input_profile import bind_input_profile_plan, input_profile_pipeline
 from src.preprocessing.tabular_bundle import verification_scope
@@ -18,6 +20,7 @@ from . import pipeline_approval_cli as diagnostics
 from . import tabular_input_flow as flow
 from . import tabular_report_evidence as evidence
 from . import tabular_task as shared
+from . import tabular_time_flow as time_flow
 from .csv_workflow_creation import _pipeline
 from .csv_workflow_proposal_catalogue import workflow_proposal_specifications
 from .input_profile_pipeline import committed_diagnostic, parse_profile_table, profile_table_files
@@ -25,9 +28,10 @@ from .llm_workflow_binding import binding_code_id, bind_workflow_step, create_bo
 from .llm_workflow_contract import validate_workflow_proposal
 from .module_pipeline_transport import code_manifest
 from .profile_store import save_profile
+from .protected_store import StoreUnavailable
 from .snapshot_eda import _digest
 from .tabular_pipeline import ADAPTER_ID as DIAGNOSTIC_ADAPTER
-from .tabular_source_contract import ADAPTER_ID as PROFILE_ADAPTER, TabularSourceContract
+from .tabular_source_contract import ADAPTER_ID as PROFILE_ADAPTER, TabularSourceContract, source_from_dict
 from .tabular_workflow_service import (_committed_bytes, candidate_sources, code_id as tabular_code_id,
                                       report_sources, source_of, verified_images)
 from .task_plan import PlanError, TaskProblem, signature
@@ -58,21 +62,26 @@ CODE_LABELS = dict(shared.CODE_LABELS, NUMERIC_ROLE_TYPE_UNSUPPORTED=(
 # 시간 분할 설정(계획의 time 구획)
 # - 사용자가 직접 지정·승인한다. 모델 요청 항목·기본 계획 표시에서 빼고(user_only) 모델 변경은 받지 않는다
 # - time 분할일 때만 채우고, 다른 분할 방식이면 기본값(모두 비움·확인 안 함) 그대로여야 한다
-# - 이번 단계는 설정·검증·동의 결합까지다. 시간 복원·time 분할 실행은 연결하지 않아 결정 C 발급 전에 멈춘다
+# - 시간 결측 복원은 확정 전 계획 동작(tabular_time_flow: 미리보기 결정 T → 적용 결정 R)으로만 실행한다
+# - time 분할 확정은 복원 적용(파생 표) 또는 복원 대상 0행(기존 생성 표)일 때만 열고, 확정 직전 증거를 다시 확인한다
+# - 확정 때 실행 출처(confirmed.source)를 고정하고 결정 C·D·위임 대조·단계 생성·보고서가 같은 출처를 쓴다
+# - 분할 규칙의 timestamp_format은 확정 time 설정에서 채운다(SPLIT_FIELDS·SplitRules 시간대는 바꾸지 않음)
 # ==========================================
 TIME_FIELDS = ("column", "timestamp_format", "timezone", "frequency", "interval_minutes", "row_order_confirmed")
 TIME_DEFAULT = {"column": None, "timestamp_format": None, "timezone": None, "frequency": None, "interval_minutes": None,
                 "row_order_confirmed": False}
-TIME_NOT_READY = ("time 분할 설정은 검증했지만, 시간 복원 미리보기·적용과 time 분할 실행은 아직 연결되지 않아 처리를 시작하지 않습니다. "
-                  "동의·승인은 만들지 않았고 작업은 그대로입니다. 다음 행동: 지금 진행하려면 분할 방식을 random 또는 group으로 바꾸고, "
-                  "time 분할은 후속 단계(복원 미리보기·확인 뒤 적용)가 연결된 뒤 사용하세요.")
+TIME_NOT_READY = ("time 분할 설정은 검증했지만 분할 입력(시간 결측 복원 결과)이 준비되지 않아 처리를 시작하지 않습니다. 결정 C 동의·승인은 "
+                  "만들지 않았습니다. 다음 행동: ")
+TIME_SOURCE_UNVERIFIED = ("복원 결과 또는 작업용 표를 다시 확인하지 못했습니다. 동의·작업은 만들지 않았습니다. 다음 행동: 아래 '시간 결측 복원'에서 "
+                          "새 미리보기부터 진행하세요.")
 CODE_LABELS.update(TIME_RESTORE_CODES, **{
     "TIME_SETTINGS_INVALID": "시간 설정 항목 구성이 계약과 다릅니다",
     "TIME_SETTINGS_MISSING": "time 분할에 필요한 시간 설정(시간 컬럼·복원 주기·행 순서 확인)이 비어 있습니다",
     "TIME_SETTINGS_UNUSED": "time 분할이 아닌데 시간 설정이 채워져 있습니다. time 분할을 고르거나 시간 설정을 비우세요",
     "TIME_COLUMN_ROLE_MISMATCH": "시간 컬럼은 timestamp 역할로 지정한 한 컬럼과 같아야 합니다",
     "TIME_FORMAT_REQUIRED": "시간 컬럼이 문자열로 읽혔으므로 시간 형식을 지정해야 합니다",
-    "TIME_SPLIT_NOT_READY": "시간 복원·time 분할 실행은 아직 연결되지 않았습니다",
+    "TIME_SPLIT_NOT_READY": "time 분할 입력(시간 결측 복원 결과)이 준비되지 않았습니다",
+    "TIME_SOURCE_UNVERIFIED": "시간 결측 복원 결과 또는 작업용 표를 다시 확인하지 못했습니다",
 })
 TIME_CODES = set(TIME_RESTORE_CODES) | {"TIME_SETTINGS_INVALID", "TIME_SETTINGS_MISSING", "TIME_SETTINGS_UNUSED",
                                         "TIME_COLUMN_ROLE_MISMATCH", "TIME_FORMAT_REQUIRED"}
@@ -111,7 +120,22 @@ def _diagnostic_code():
 
 
 def _source(record):
+    """원래 생성 출처(입력 검사·생성 결과). 진단과 입력 사실의 근거다."""
     return TabularSourceContract.from_dict(record["input_selection"]["source"])
+
+
+def _run_source(record):
+    """확정 때 고정한 실행 출처(원래 생성 표 또는 시간 복원 파생 표). 고정 전 이전 기록은 time이 아닌 계획만 원래 출처로 읽는다."""
+    confirmed = record.get("confirmed") or {}
+    if "source" in confirmed:
+        return source_from_dict(confirmed["source"])
+    if (confirmed.get("plan") or {}).get("split", {}).get("strategy") == "time":
+        raise ValueError("time 계획의 실행 출처가 고정되지 않았습니다.")
+    return _source(record)
+
+
+def _time_source(record):
+    return (record.get("confirmed") or {}).get("time_source")
 
 
 def service(module_id):
@@ -172,9 +196,24 @@ def resume_input(record, directory, context, selection):
 
 
 def check_source(record):
-    """후속 단계 전에 원시 복사본과 생성 묶음·승인 연결을 다시 확인한다. 생성 전에는 원시 복사본 검사만 공통 조정기가 한다."""
+    """후속 단계 전에 원시 복사본과 생성 묶음·승인 연결을 다시 확인한다. 생성 전에는 원시 복사본 검사만 공통 조정기가 한다.
+
+    처리 단계(확정 이후)에서는 고정한 실행 출처도 다시 확인한다. 파생 표면 부모가 이 작업의 생성 출처여야 한다.
+    """
     if (record.get("input_selection") or {}).get("status") == "materialized":
         flow.check_source(record)
+    if record.get("phase") in ("processing", "awaiting_apply", "applying") and "source" in (record.get("confirmed") or {}):
+        source, original = _run_source(record), _source(record)
+        time_source = _time_source(record) or {}
+        run = time_source.get("apply_run")
+        # 파생 표는 이 작업 폴더의 적용 실행(작업 ID로 정해지는 이름)에서 나왔어야 한다(확정 때 restored_source와 같은 결합).
+        if (source.origin.source_id != original.source_id
+                or (source.kind == "time_restored" and (
+                    type(run) is not str or re.fullmatch(r"t" + record["task_id"][:10] + r"-ta[0-9]{1,6}", run) is None
+                    or Path(source.run_directory) != Path(original.snapshot_directory).parent / "time_runs" / "apply" / run))):
+            raise TaskProblem("SNAPSHOT_CHANGED", "고정한 실행 출처가 이 작업의 작업용 표와 다릅니다. 새 작업으로 시작하세요.")
+        if source.kind == "time_restored":
+            source.check_input()
 
 
 def _after_input(record, context):
@@ -409,6 +448,13 @@ def validate_plan(record, plan):
     _time_settings(record, plan)
     _numeric_types(record, plan)
 
+    if plan["split"]["strategy"] == "time":
+        # 분할 worker와 분할 전 품질 검사가 같은 형식으로 시각을 읽도록 확정 time 설정의 형식을 분할·품질 규칙에 넣는다
+        # (시각 자료형 컬럼이면 None). 두 규칙의 기존 필드만 채우며 SPLIT_FIELDS·시간대 필드는 추가하지 않는다.
+        fmt = plan["time"]["timestamp_format"]
+        profile = replace(profile, split_rules=replace(profile.split_rules, timestamp_format=fmt),
+                          quality_rules=replace(profile.quality_rules, timestamp_format=fmt))
+
     try:
         _proposal("task_check", profile, preparation)
     except (ValueError, TypeError) as error:
@@ -455,28 +501,71 @@ def prepare(record, directory, plan, label):
     plan_path = shared._write_preparation_plan(directory, label, plan["preparation"], preparation)
     proposal, context = _proposal(label, profile, preparation)
     plans.save_workflow(label, proposal, context, root=shared._plan_root(directory))
+    # 실행 출처를 확정 기록에 고정한다. time 계획은 확정 직전 검증한 복원 결과(파생 표 또는 0행이면 기존 생성 표)를 쓴다.
+    if plan["split"]["strategy"] == "time":
+        source, time_source = time_flow.ready_source(record, plan, directory)
+    else:
+        source, time_source = _source(record), None
     return {"profile_path": saved_profile["local_file"], "profile_signature": saved_profile["profile_signature"],
-            "preparation_plan": str(plan_path), "plan_name": label, "plan_signature": proposal.plan_signature}
+            "preparation_plan": str(plan_path), "plan_name": label, "plan_signature": proposal.plan_signature,
+            "source": source.to_dict(), "source_kind": source.kind, "time_source": time_source}
 
 
 # ==========================================
 # 동의 내용·실행 대조값
 # ==========================================
 
-def execution_block(record, plan):
-    """검증을 통과한 계획이라도 이번 단계에서 실행하지 않는 이유. 조정기가 시도·동의를 만들기 전에 확인한다. 없으면 None."""
-    if plan["split"]["strategy"] == "time":
-        return PlanError("TIME_SPLIT_NOT_READY", TIME_NOT_READY, subjects=["split.strategy"])
+def execution_block(record, plan, *, directory=None):
+    """검증을 통과한 계획이라도 실행하지 않는 이유. 조정기가 시도·동의를 만들기 전에 확인한다. 없으면 None.
+
+    time 계획은 복원 적용 완료 또는 복원 대상 0행일 때만 연다. 확정(directory 전달) 때는 출처 증거를 다시 확인하고,
+    확인하지 못하면 TIME_SOURCE_UNVERIFIED로 멈춘다(원본 값·경로 없음). 화면 판정은 기록만 본다.
+    """
+    if plan["split"]["strategy"] != "time":
+        return None
+
+    ready, next_action = time_flow.readiness(record, plan)
+
+    if not ready:
+        return PlanError("TIME_SPLIT_NOT_READY", TIME_NOT_READY + next_action, subjects=["split.strategy"])
+
+    if directory is not None:
+        try:
+            time_flow.ready_source(record, plan, directory)
+        except StoreUnavailable as error:
+            # 저장소 권한 이상은 데이터 손상과 구분해 기존 저장소 안내·다음 행동을 보인다(시간값 없음).
+            problem = time_flow._store_problem(error)
+            return PlanError(problem.code, problem.message, subjects=["split.strategy"])
+        except Exception:
+            return PlanError("TIME_SOURCE_UNVERIFIED", TIME_SOURCE_UNVERIFIED, subjects=["split.strategy"])
 
     return None
+
+
+def plan_actions(record, final):
+    """확정 전 계획 동작(시간 결측 복원)의 화면 내용. time 계획이 아니면 None."""
+    return time_flow.view(record, final)
+
+
+def plan_action_consent(record, final, action, expected):
+    """확정 전 계획 동작의 결정(T·R)과 동의 내용. 조건이 맞지 않으면 ValueError."""
+    return time_flow.consent_content(record, final, action, expected)
+
+
+def plan_action(record, directory, context, action, final):
+    """동의를 발급한 계획 동작을 실행하고 결과를 기록에 남긴다. 작업 단계는 바꾸지 않는다."""
+    return time_flow.run(record, directory, context, action, final)
 
 
 def consent_c_content(record):
     plan = shared._plan(record)
     # 사용자가 승인한 시간 설정을 동의 내용에 결합한다(time 분할이 아니면 기본값). 규칙이 바뀌면 동의 내용 해시도 달라진다.
     time = plan.get("time", TIME_DEFAULT)
+    # 실행 출처(파생 표면 tabular_time_source)와 원래 생성 출처, 시간 복원 결합 사실을 함께 고정한다.
     return {"profile_signature": record["confirmed"]["profile_signature"], "preparation": plan["preparation"],
-            "split": plan["split"], "time": time, "time_signature": signature(time), "source_contract_id": _source(record).source_id,
+            "split": plan["split"], "time": time, "time_signature": signature(time),
+            "source_contract_id": _run_source(record).source_id, "input_source_contract_id": _source(record).source_id,
+            "time_source": _time_source(record),
             "tabular_code_id": tabular_code_id(), "binding_code_id": binding_code_id(), "delegated_reviews": ["review_eda"]}
 
 
@@ -485,8 +574,8 @@ def consent_c_text():
 
 
 def consent_d_content(record):
-    return {"candidate_signature": review_signature(record), "source_contract_id": _source(record).source_id,
-            "tabular_code_id": tabular_code_id(), "binding_code_id": binding_code_id()}
+    return {"candidate_signature": review_signature(record), "source_contract_id": _run_source(record).source_id,
+            "time_source": _time_source(record), "tabular_code_id": tabular_code_id(), "binding_code_id": binding_code_id()}
 
 
 def consent_d_text():
@@ -496,7 +585,7 @@ def consent_d_text():
 def expected(record, decision):
     """위임 발급 직전 동의 내용과 같아야 하는 현재 코드 지문·출처·후보 서명."""
     values = {"tabular_code_id": tabular_code_id(), "binding_code_id": binding_code_id(),
-              "source_contract_id": _source(record).source_id}
+              "source_contract_id": _run_source(record).source_id, "time_source": _time_source(record)}
 
     if decision == "D":
         values["candidate_signature"] = review_signature(record)
@@ -510,10 +599,10 @@ def expected(record, decision):
 
 def _values(record, step_id, name):
     """v2 생성 폼 값을 조정기가 채운다. 사용자는 이름·경로를 입력하지 않는다."""
-    steps, source = record["steps"], _source(record)
+    steps, source = record["steps"], _run_source(record)
     source_id = source.source_id
     if step_id == "split":
-        return {"name": name, "source_run": source.materialization.run_directory, "source_contract_id": source_id,
+        return {"name": name, "source_run": source.run_directory, "source_contract_id": source_id,
                 "profile": record["confirmed"]["profile_path"]}
     if step_id == "export":
         return {"name": name, "split_name": steps["split"]["run_name"], "source_contract_id": source_id,
@@ -557,7 +646,7 @@ def check_lineage(record):
 
     _, tool, _ = service("tabular_split_review")._open(record["steps"]["split"]["run_name"])
 
-    if source_of("tabular_split_review", tool) != _source(record).source_id:
+    if source_of("tabular_split_review", tool) != _run_source(record).source_id:
         raise TaskProblem("SNAPSHOT_CHANGED", "분할 작업의 입력이 진단한 작업용 표와 다릅니다. 새 작업으로 시작하세요.")
 
     shared.check_profile(record, tool.contract.profile)
@@ -665,6 +754,15 @@ SPLIT_BLOCKED_MESSAGE = ("분할 단계에서 입력 차단으로 멈췄습니�
                          "이어서 진행합니다.")
 
 
+TIME_SPLIT_STOP_MESSAGE = ("time 분할 단계에서 멈췄습니다. 서로 다른 시각이 부족해 Train·Validation·Test 세 구간을 만들 수 없거나, 시간 값을 "
+                           "분할 형식으로 읽지 못했을 수 있습니다. 다른 분할 방식으로 자동 변경하지 않습니다. 다음 행동: 구간 비율과 "
+                           "'모든 구간에 모든 클래스 요구', 시간 설정(형식·시간대)을 확인해 고친 뒤 다시 확인하면 새 동의로 이어서 진행합니다. "
+                           "분할 방식을 바꾸려면 계획 양식에서 직접 고르세요.")
+TIME_CLASS_MISSING_MESSAGE = ("time 분할 제안에서 일부 구간에 target 클래스가 없어 멈췄습니다(시간 순서로 나누면 흔히 생깁니다). 아래 구간·클래스를 "
+                              "확인하세요. 다른 분할 방식으로 자동 변경하지 않습니다. 다음 행동: 구간 비율을 바꾸거나 '모든 구간에 모든 클래스 "
+                              "요구'를 끈 뒤 다시 확인하면 새 동의로 이어서 진행합니다.")
+
+
 def blocked_problem(record, step_id):
     """분할 실행이 입력 차단으로 멈췄을 때 멈춘 단계에 맞는 원인을 보이고 계획을 고쳐 이어 갈 수 있게 한다.
 
@@ -674,6 +772,14 @@ def blocked_problem(record, step_id):
         return None
 
     stage, missing = shared._safe(lambda: split_stop(record)) or (None, None)
+
+    if record.get("confirmed") and shared._plan(record)["split"]["strategy"] == "time" and stage not in (None, "audit"):
+        # time 분할 정지: 다른 분할 방식으로 자동 변경하지 않고 time에 맞는 원인과 다음 행동을 보인다.
+        if stage == "propose_split" and missing:
+            return TaskProblem("SPLIT_CLASS_MISSING", TIME_CLASS_MISSING_MESSAGE, retryable=True,
+                               detail={"CLASS_MISSING_IN_SPLIT": len(missing)},
+                               findings=[{"code": "CLASS_MISSING_IN_SPLIT", "subject": SPLIT_NAMES[name]} for name in missing])
+        return TaskProblem("SPLIT_REVIEW" if stage == "propose_split" else "SPLIT_BLOCKED", TIME_SPLIT_STOP_MESSAGE, retryable=True)
 
     if stage == "propose_split":
         if missing:
@@ -749,8 +855,18 @@ def review(record):
     name = record["steps"][REVIEW_STEP]["run_name"]
     _verified_step(record, REVIEW_STEP)
     sources = candidate_sources(name)
-    return {"run_name": name, "signature": sources["signature"],
-            "facts": shared.review_facts(record, sources["candidate"], sources["preprocessor"], sources["text"])}
+    facts = shared.review_facts(record, sources["candidate"], sources["preprocessor"], sources["text"])
+    plan = shared._plan(record)
+
+    if plan["split"]["strategy"] == "time":
+        # 적용 확인 화면에 사용 출처와 구간별 시간 범위를 보인다. 분할 결과는 확정 증거(부모 재검증을 통과한 제안)에서 읽는다.
+        from .csv_workflow_creation import _split
+        _, _, evidence_split = _split(record["steps"]["split"]["run_name"], typed=True)
+        table = evidence.time_range_table(evidence_split.proposal, plan["time"])
+        table["notes"].insert(0, "입력 출처: " + evidence.source_label(_time_source(record)))
+        facts["tables"] = [*facts["tables"], table]
+
+    return {"run_name": name, "signature": sources["signature"], "facts": facts}
 
 
 def images(record):
@@ -771,7 +887,7 @@ def report_facts(record):
         raise ValueError("작업 기록의 단계 구성이 완료 작업과 다릅니다.")
 
     check_lineage(record)
-    source = _source(record)
+    source = _run_source(record)
     runs = {step_id: item["run_name"] for step_id, item in record["steps"].items()}
     facts = report_sources(runs, source.source_id)
     handoff = facts["handoff"]
@@ -799,7 +915,45 @@ def report_facts(record):
     # 보고서 그래프는 위 분할 결과 표·target 표와 같은 검증된 값으로만 만든다. 그림 파일을 새로 쓰지 않는다.
     report["charts"] = [evidence.split_chart(plan["split"], facts["proposal"]), evidence.target_chart(facts["eda"])]
     report["cautions"] = [EDA_CAUTION if text.startswith("분할 EDA의 사람 검토 단계") else text for text in report["cautions"]]
+
+    if plan["split"]["strategy"] == "time":
+        _time_report(record, report, plan, facts, source)
+
     return report
+
+
+def _time_report(record, report, plan, facts, source):
+    """time 분할 보고: 사용 출처·구간별 시간 범위·적용한 시간 규칙과 실행 값 대조·복원 셀 주의. 검증된 근거만 쓴다.
+
+    복원 0행이면 보고서 조립 때 커밋된 미리보기를 다시 검증한다(고정한 미리보기 지문과 같아야 함).
+    """
+    from .tabular_time_service import TabularTimeService
+
+    time_source = _time_source(record)
+    if not time_source or time_source["parent_source_id"] != _source(record).source_id:
+        raise ValueError("time 분할의 고정 출처 사실이 없거나 이 작업의 작업용 표와 다릅니다.")
+    # 실행 출처의 종류·ID가 고정한 time_source 종류와 맞아야 한다(0행이면 원래 생성 표 그대로).
+    if (source.kind != time_source["kind"]
+            or (time_source["kind"] == "generated" and source.source_id != _source(record).source_id)):
+        raise ValueError("보고 근거의 실행 출처가 고정한 time 분할 출처 사실과 다릅니다.")
+    if time_source["kind"] == "time_restored":
+        restored = facts.get("time_source") or {}
+        if (restored.get("preview_sha256") != time_source["preview_sha256"] or restored.get("restored_count") != time_source["restored_count"]
+                or restored.get("rules_signature") != signature(plan["time"])):
+            raise ValueError("보고 근거의 파생 표 사실이 고정한 출처와 다릅니다.")
+    else:
+        root = Path(_source(record).snapshot_directory).parent / "time_runs"
+        _, result = TabularTimeService("preview", root=root).verified(time_source["preview_run"])
+        if (result["preview_sha256"] != time_source["preview_sha256"] or result["preview"]["restored_count"] != 0
+                or result["preview"]["rules_signature"] != signature(plan["time"])):
+            raise ValueError("보고 근거의 복원 0행 미리보기가 고정한 사실과 다릅니다.")
+    report["lines"].append("time 분할 입력: " + evidence.source_label(time_source) + ". 구간은 과거 → 미래 순서이며 같은 시각은 나누지 않았습니다.")
+    report["decision_tables"] += [
+        evidence.time_split_table(plan["time"], time_source, facts["split_rules"], source.source_id, _source(record).source_id),
+        evidence.time_range_table(facts["proposal"], plan["time"])]
+    if time_source["kind"] == "time_restored":
+        report["cautions"].append(f"시간 결측 복원으로 채운 {time_source['restored_count']}개 시간 셀은 원본 측정값이 아니라 확정한 규칙"
+                                  "(주기·시간대)으로 정한 값입니다. 원본 파일과 원래 작업용 표는 바뀌지 않았습니다.")
 
 
 EDA_CAUTION = ("분할 EDA의 사람 검토 단계는 결정 C 동의로 위임 승인했습니다. 처리 전 EDA 요약은 이 보고서의 '처리 전 데이터와 기본 EDA' 절에, "

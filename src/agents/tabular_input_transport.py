@@ -54,18 +54,20 @@ def _job_permissions_ok(root, request, sid):
                     for path in (request.output_directory, request.scratch_directory)))
 
 
-def run_input_worker(request, root, cancel_event, *, runtime_id, runtime_base=None):
+def run_input_worker(request, root, cancel_event, *, runtime_id, runtime_base=None, entry=ENTRY, worker_files=WORKER_FILES,
+                     manifest=code_manifest, container_prefix="waferguard.tabularinput."):
     """격리 대체 없이 공유 런타임·ACL·Job 제한으로 입력 worker를 실행한다.
 
     runtime_id는 승인한 packet의 런타임 ID이며 위치는 코드 상수의 저장소에서만 정해진다. 검증부터 worker 종료까지
     버전 폴더를 보유한다(lease). 준비·검증에 실패하면 원본 환경으로 대신 실행하지 않고 transport.json에 고정 코드만 남긴다.
+    entry·worker_files·manifest·container_prefix는 같은 운송을 쓰는 다른 표형 worker(시간 복원)의 고정 코드 목록이다. 기본값은 입력 worker다.
     """
     root = _root(root)
     project = Path(__file__).resolve().parents[2]
-    container = AppContainer("waferguard.tabularinput." + request.task_id)
+    container = AppContainer(container_prefix + request.task_id)
     outcome = {"request_id": request.request_id, "profile_cleanup": False}
     try:
-        before = code_manifest()
+        before = manifest()
         with ExitStack() as lease:
             try:
                 runtime = lease.enter_context(runtime_lease(runtime_id, base=runtime_base, cancel_event=cancel_event))
@@ -85,13 +87,13 @@ def run_input_worker(request, root, cancel_event, *, runtime_id, runtime_base=No
                 _acl(root / name, sid, "RX")
             for path in (request.output_directory, request.scratch_directory):
                 prepare_writable_directory(root, Path(path), sid)
-            for name in WORKER_FILES:
-                target = root / "tools" / ("worker.py" if name == ENTRY else name)
+            for name in worker_files:
+                target = root / "tools" / ("worker.py" if name == entry else name)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(project / name, target)
                 if _fingerprint(target)["sha256"] != before[name]:
                     raise ValueError("복사한 입력 worker 코드가 승인 범위와 다릅니다.")
-            if before != code_manifest():
+            if before != manifest():
                 raise ValueError("입력 worker 준비 중 코드가 바뀌었습니다.")
             if not _job_permissions_ok(root, request, sid):
                 # 작업 폴더에 다른 주체·넓은 권한이 있으면 실행하지 않는다. 권한을 고치지 않는다.

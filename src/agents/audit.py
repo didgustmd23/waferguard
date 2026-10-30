@@ -11,8 +11,8 @@ EVENT_TYPES = frozenset({
 })
 
 
-# 위임 이벤트에 남기는 동의 사용 근거의 고정 형식. 원문·경로·승인 ID는 넣지 않는다.
-EVIDENCE_FIELDS = {"decision": r"[ACD]", "consent_id": r"[0-9a-f]{32}", "consent_sha256": r"[0-9a-f]{64}",
+# 위임 이벤트에 남기는 동의 사용 근거의 고정 형식. 원문·경로·승인 ID는 넣지 않는다. 결정 종류는 task_consent.DECISIONS와 같다.
+EVIDENCE_FIELDS = {"decision": r"[ACDTR]", "consent_id": r"[0-9a-f]{32}", "consent_sha256": r"[0-9a-f]{64}",
                    "task_id": r"[0-9a-f]{32}", "scope_sha256": r"[0-9a-f]{64}"}
 
 

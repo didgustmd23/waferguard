@@ -66,6 +66,19 @@ class TimeSplitPlanTest(TabularTaskV2Fixture):
                          (before["revision"], before["attempt"], {"A"}, {}, "awaiting_review"))
         self.assertEqual(self.calls.count("apply_preparation"), 0)
 
+    def test_confirmed_time_format_fills_split_and_quality_rules_without_new_split_fields(self):
+        from src.agents import llm_task_assist
+        from src.agents.profile_store import SPLIT_FIELDS
+        task = self.diagnosed()
+        adapter = task_adapters.adapter("tabular_v2")
+        profile, _ = adapter.validate_plan(self.stored(task), self.time_plan())
+        self.assertEqual((profile.split_rules.timestamp_format, profile.quality_rules.timestamp_format), ("%Y-%m-%d", "%Y-%m-%d"))
+        profile, _ = adapter.validate_plan(self.stored(task), dict(self.plan(), time=dict(TIME_DEFAULT)))
+        self.assertIsNone(profile.split_rules.timestamp_format)
+        # 분할 설정 항목·v1 time 안내는 그대로다.
+        self.assertNotIn("timestamp_format", SPLIT_FIELDS)
+        self.assertFalse(llm_task_assist.TIME_SPLIT_AVAILABLE)
+
     def test_missing_conflicting_or_invalid_settings_are_rejected_before_execution(self):
         task = self.diagnosed()
         cases = [

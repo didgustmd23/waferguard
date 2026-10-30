@@ -886,7 +886,14 @@ def _render_final_plan(st, task, adapter, state, key, draft):
     if preview.get("blocked"):
         # 검증은 통과했지만 이번 단계에서 실행하지 않는 계획이다. 동의·확정 버튼을 내지 않고 이유와 다음 행동만 보인다(서버도 거부).
         st.warning(preview["blocked"]["message"])
+
+        if preview.get("plan_actions"):
+            _render_plan_actions(st, task, preview, key, draft)
         return
+
+    if preview.get("plan_actions"):
+        # 확정할 수 있는 계획의 선행 동작 결과(예: time 분할 입력 출처·규칙)를 결정 C 동의 바로 위에 보인다.
+        _render_plan_actions(st, task, preview, key, draft)
 
     st.info(adapter.consent_c_text())
     consent_key = "task_consent_c_" + key
@@ -904,6 +911,67 @@ def _render_final_plan(st, task, adapter, state, key, draft):
     seen = task_submit.bound(st)
     task_submit.execute(st, lambda progress: _confirm(task["task_id"], draft, seen or "-", [key + "_draft", "task_revise_" + task["task_id"]]),
                         "확인한 계획으로 처리 단계를 격리 실행하고 있습니다.", _verify_stored(task["task_id"], task["revision"]))
+
+
+def _render_plan_actions(st, task, preview, key, draft):
+    """확정 전 계획 동작(예: 시간 결측 복원 미리보기·적용). 상태·표·동의 문구·동작은 어댑터가 정하고 화면은 그대로 보인다.
+
+    실행은 다른 제출과 같이 예약 → 잠금 → 버튼 아래 실행이며, 클릭한 화면의 최종 계획 결합값과 확인 대상(미리보기 지문)을 버튼에 묶는다.
+    """
+    view = preview["plan_actions"]
+    st.markdown("#### " + view["title"])
+
+    # 문구에는 컬럼명이 들어갈 수 있어 강조 상자 외에는 일반 텍스트로만 표시한다.
+    for kind, text in view["lines"]:
+        getattr(st, kind if kind in ("info", "warning", "error", "success") else "text")(text)
+
+    if view.get("table"):
+        st.text(view["table"]["title"])
+        _rows(st, view["table"]["rows"], view["table"]["columns"])
+
+    action = view.get("action")
+
+    if action is None:
+        return
+
+    for text in view.get("consent") or []:
+        st.text(text)
+
+    action_key = "plan_action:" + action["id"]
+    agreed = st.checkbox(action["agree"], key="task_consent_" + action["id"] + "_" + key)
+    st.button(action["label"], key=key + "_" + action["id"], type="primary",
+              **_reserve_button(st, action_key, task["task_id"], bound=(preview["digest"], view.get("expected"))))
+
+    task_submit.wait_if_running(st, task["task_id"], action_key)
+
+    if not task_submit.reserved(st, action_key, task["task_id"]):
+        return
+
+    _checked(st, agreed, action["warning"])
+    seen = task_submit.bound(st)
+    task_submit.execute(st, lambda progress: _plan_action(task["task_id"], action["id"], draft, seen), action["progress"],
+                        _verify_stored(task["task_id"], task["revision"]))
+
+
+def _plan_action(task_id, action, draft, seen):
+    try:
+        if seen is None:
+            raise ValueError("확인한 계획이 없습니다.")
+
+        orchestrator.run_plan_action(task_id, action, draft["plan"], draft["answers"], expected_digest=seen[0],
+                                     expected_preview=seen[1])
+    except task_store.TaskRecordError as error:
+        return {"notice": [_record_error(error)]}
+    except PlanError as error:
+        return {"notice": [("error", error.message + " 동의·실행은 만들지 않았습니다.")]}
+    except Exception:
+        # 조정기는 실행 전에 결정 T·R 동의를 발급·저장하므로 동의만 남았을 수 있다. 남은 동의는 다시 쓰이지 않는다:
+        # 실행마다 현재 상태에서 새 동의를 발급하고(시도 번호·미리보기 지문 결합), 위임 발급 때 현재 값과 대조한다.
+        return {"notice": [("error", "실행 결과를 확인하지 못했습니다. 자동으로 다시 실행하지 않습니다. 원본 파일과 기존 작업용 표는 바뀌지 않습니다."),
+                           ("text", "다음 행동: 아래 저장된 시간 결측 복원 상태를 확인한 뒤 새 미리보기부터 진행하세요.")]}
+
+    # 결과(미리보기 표·멈춘 원인·적용 완료)는 다음 화면의 같은 절에서 저장된 기록으로 보인다. 미리본 계획은 그대로 둔다.
+    return {}
 
 
 def _confirm(task_id, draft, digest, done_keys):

@@ -103,12 +103,13 @@ def _time_inputs(st, plan, by_path, key, strategy):
     with st.expander("시간 분할 설정 (분할 방식 time일 때만 사용)", expanded=strategy == "time"):
         st.caption("모델은 시간 설정을 정하지 않습니다. 직접 지정하세요. 결측 시각은 앞뒤 유효 시각 사이에서 지정한 주기·행 순서로 하나로 "
                    "정해질 때만 복원 대상이 되며, 앞뒤 끝 결측·중복 시각·주기 불일치·서머타임 모호성은 복원하지 않고 멈춥니다. "
-                   "이번 단계는 설정 검증까지이며 실제 복원·time 분할 실행은 하지 않습니다.")
+                   "복원은 최종 계획 미리보기 아래 '시간 결측 복원'에서 미리보기·확인 뒤 새 작업용 표에만 적용합니다. 적용을 마치거나 "
+                   "복원 대상이 0행이면 같은 화면에서 확정해 그 표로 time 분할·Train/Validation 내보내기를 진행합니다.")
         columns = by_path["time.column"]["options"]
         time = {"column": st.selectbox("시간 컬럼 (timestamp 역할로 지정한 컬럼)", columns, placeholder="시간 컬럼 선택",
                                        index=columns.index(current["column"]) if current["column"] in columns else None,
                                        key=key + "_time_column")}
-        text = st.text_input("시간 형식 (예: %Y-%m-%d %H:%M · 허용: %Y %y %m %d %H %M %S %f %z)", value=current["timestamp_format"] or "",
+        text = st.text_input("시간 형식 (예: %Y-%m-%d %H:%M · 허용: %Y %m %d %H %M %S %f %z, 두 자리 연도 %y 불가)", value=current["timestamp_format"] or "",
                              max_chars=by_path["time.timestamp_format"]["maxLength"], key=key + "_time_format")
         time["timestamp_format"] = text.strip() or None
         zone = st.text_input("시간대 (IANA 이름, 예: Asia/Seoul · 형식에 %z가 있으면 비움)", value=current["timezone"] or "",

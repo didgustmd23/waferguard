@@ -6,8 +6,10 @@
 from datetime import datetime, timedelta, timezone
 import unittest
 
-from src.preprocessing.time_restore import (MAX_INTERVAL_MINUTES, TimeRestoreError, TimeRestoreRules, check_format,
-                                            find_restorations)
+import pandas as pd
+
+from src.preprocessing.time_restore import (MAX_INTERVAL_MINUTES, Restoration, TimeRestoreError, TimeRestoreRules,
+                                            apply_restorations, check_format, find_restorations, restoration_digest)
 
 
 def rules(**changes):
@@ -99,6 +101,68 @@ class RestorationTest(unittest.TestCase):
         self.assertEqual(len(find_restorations(["2026-11-01 03:30", "", "2026-11-01 05:30"], hourly).rows), 1)
 
 
+    def test_pandas_na_is_missing_like_none(self):
+        values = ["2026-10-19", pd.NA, "2026-10-21", pd.NaT, "2026-10-23"]
+        result = find_restorations(values, rules())
+        self.assertEqual(result.rows, (1, 3))
+        self.assertEqual([item.day for item in result.times], [20, 22])
+        self.assert_code("TIME_EDGE_MISSING", [pd.NA, "2026-10-20", "2026-10-21"], rules())
+
+    def test_aware_values_with_a_rule_timezone_conflict(self):
+        # 시간대가 있는 시각 값(예: 시간대가 있는 시각 자료형)에 규칙 시간대를 함께 지정하면 어느 쪽도 고르지 않고 멈춘다.
+        aware = pd.Timestamp("2026-10-19", tz="Asia/Seoul")
+        rule = rules(timestamp_format=None, timezone="Asia/Seoul")
+        self.assert_code("TIME_TIMEZONE_CONFLICT", [aware, None, aware + pd.Timedelta(days=2)], rule)
+
+
+class ApplyRestorationsTest(unittest.TestCase):
+    def test_apply_writes_rule_format_and_keeps_input_and_other_values(self):
+        values = ["2026-10-19", None, "2026-10-21", pd.NA, "2026-10-23"]
+        before = list(values)
+        restoration = find_restorations(values, rules())
+        result = apply_restorations(values, restoration, rules())
+        self.assertEqual(result, ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"])
+        self.assertEqual(values[:3], before[:3])
+        self.assertIs(values[3], pd.NA)
+        # 적용 결과를 다시 판정하면 복원할 행이 없다(왕복).
+        self.assertEqual(find_restorations(result, rules()).rows, ())
+
+    def test_offset_and_fixed_interval_formats_round_trip(self):
+        rule = rules(timestamp_format="%Y-%m-%d %H:%M%z", timezone=None)
+        values = ["2026-10-19 09:00+0900", "", "2026-10-21 09:00+0900"]
+        self.assertEqual(apply_restorations(values, find_restorations(values, rule), rule)[1], "2026-10-20 09:00+0900")
+        rule = rules(timestamp_format="%Y-%m-%d %H:%M", timezone="America/New_York", frequency="fixed", interval_minutes=60)
+        values = ["2026-11-01 03:30", "", "2026-11-01 05:30"]
+        self.assertEqual(apply_restorations(values, find_restorations(values, rule), rule)[1], "2026-11-01 04:30")
+
+    def test_restoration_target_must_be_missing_and_ordered(self):
+        values = ["2026-10-19", "", "2026-10-21"]
+        restoration = find_restorations(values, rules())
+        # 복원 대상 행이 결측이 아니거나(값이 생김) 행이 없으면(행 수가 줄어듦) 적용하지 않는다.
+        for changed in (["2026-10-19", "2026-10-20", "2026-10-21"], ["2026-10-19"]):
+            with self.subTest(changed=changed), self.assertRaises(TimeRestoreError) as caught:
+                apply_restorations(changed, restoration, rules())
+            self.assertEqual(caught.exception.code, "TIME_RESTORATION_MISMATCH")
+        reversed_rows = Restoration((2, 1), restoration.times * 2)
+        with self.assertRaises(TimeRestoreError):
+            apply_restorations(["2026-10-19", "", "", "2026-10-22"], reversed_rows, rules())
+
+    def test_written_value_that_does_not_read_back_to_the_same_instant_is_ambiguous(self):
+        # 복원 시각에 형식이 적지 못하는 성분(분)이 있으면 적은 표기가 다른 시각으로 읽힌다. 기록하지 않고 멈춘다.
+        time = datetime(2026, 10, 20, 9, 30, tzinfo=timezone(timedelta(hours=9)))
+        with self.assertRaises(TimeRestoreError) as caught:
+            apply_restorations(["2026-10-19", "", "2026-10-21"], Restoration((1,), (time,)), rules())
+        self.assertEqual(caught.exception.code, "TIME_AMBIGUOUS")
+
+    def test_digest_identifies_rows_and_times(self):
+        first = find_restorations(["2026-10-19", "", "2026-10-21"], rules())
+        same = find_restorations(["2026-10-19", None, "2026-10-21"], rules())
+        other = find_restorations(["2026-10-19", "", "2026-10-21"], rules(timezone="UTC"))
+        self.assertEqual(restoration_digest(first), restoration_digest(same))
+        self.assertNotEqual(restoration_digest(first), restoration_digest(other))
+        self.assertEqual(len(restoration_digest(Restoration((), ()))), 64)
+
+
 class RulesContractTest(unittest.TestCase):
     def assert_rule_code(self, code, **changes):
         with self.assertRaises(TimeRestoreError) as caught:
@@ -122,11 +186,13 @@ class RulesContractTest(unittest.TestCase):
         self.assertEqual(rules(frequency="fixed", interval_minutes=MAX_INTERVAL_MINUTES).interval_minutes, MAX_INTERVAL_MINUTES)
 
     def test_format_allows_only_listed_directives_with_a_full_date(self):
-        for text in ("%Y-%m-%d", "%y/%m/%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M%z", "%d.%m.%Y"):
+        for text in ("%Y-%m-%d", "%Y/%m/%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M%z", "%d.%m.%Y"):
             with self.subTest(text=text):
                 check_format(text)
 
-        for text in ("", "%A %Y-%m-%d", "%Y-%m", "%Y-%Y-%m-%d", "%Y년%m월%d일", "%Y-%m-%d %p", "%Y%y-%m-%d", "x" * 65):
+        # 두 자리 연도(%y)는 세기 기준이 정해지지 않아 받지 않는다(2026-10-30 결정). 네 자리 연도 %Y가 반드시 있어야 한다.
+        for text in ("", "%A %Y-%m-%d", "%Y-%m", "%Y-%Y-%m-%d", "%Y년%m월%d일", "%Y-%m-%d %p", "%Y%y-%m-%d", "x" * 65,
+                     "%y/%m/%d %H:%M:%S.%f", "%y-%m-%d", "%m-%d"):
             with self.subTest(text=text):
                 self.assert_rule_code("TIME_FORMAT_INVALID", timestamp_format=text)
 

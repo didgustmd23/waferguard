@@ -24,6 +24,8 @@ CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     "src/agents/partition_input_contract.py",
     "src/agents/tabular_source_contract.py", "src/agents/tabular_pipeline.py", "src/agents/tabular_split.py",
     "src/agents/tabular_input_worker.py", "src/agents/snapshot_split_cli.py", "src/agents/snapshot_split.py",
+    # 시간 복원 파생 출처 검증(TimeRestoredSource.application_config_id)이 쓰는 고정 packet 계약
+    "src/agents/tabular_time_worker.py",
 )))
 
 

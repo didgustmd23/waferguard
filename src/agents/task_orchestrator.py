@@ -1,7 +1,7 @@
 """지속 전처리 작업 조정기. 유형 어댑터가 정한 진단·계획·단계를 기존 서비스 API로 진행하고 사용자 결정 지점에서 멈춘다.
 
 데이터 형태·도메인·입력 형식을 모른다. 유형별 기능은 task_adapters 등록부의 어댑터로만 찾는다.
-새 worker·운송·계산 경로는 없다. 사용자가 동의한 범위(A·C·D)와 정확히 맞는 단계에만 기존 1회 승인을
+새 worker·운송·계산 경로는 없다. 사용자가 동의한 범위(A·C·D, 확정 전 계획 동작의 T·R)와 정확히 맞는 단계에만 기존 1회 승인을
 위임 발급한다. 실패한 실행은 자동으로 다시 시도하지 않는다.
 설계 기준: docs/agents/design/CSV_TASK_AGENT.md 7절
 """
@@ -22,7 +22,7 @@ from .worker_paths import _path
 
 
 __all__ = ["TaskProblem", "PlanError", "start_task", "diagnose", "resolve_problem", "resume_input", "review_state", "check_plan",
-           "preview_plan", "apply_revisable", "confirm_plan", "approve_apply"]
+           "preview_plan", "run_plan_action", "apply_revisable", "confirm_plan", "approve_apply"]
 TERMINAL = {"completed", "blocked_input", "failed_runtime", "security_locked", "cancelled"}
 
 
@@ -320,10 +320,15 @@ def _shown_plan(record):
     return _normalized(record, confirmed["plan"] if confirmed and "plan" in confirmed else record["draft"]["plan"])
 
 
-def _execution_block(adapter, record, final):
-    """검증을 통과한 계획이라도 어댑터가 이번 단계에서 실행하지 않는 이유(PlanError). 없으면 None."""
+def _execution_block(adapter, record, final, directory=None):
+    """검증을 통과한 계획이라도 어댑터가 실행하지 않는 이유(PlanError). 없으면 None.
+
+    확정 때만 작업 폴더(directory)를 넘겨 어댑터가 실행 입력 증거까지 다시 확인하게 한다. 화면 판정은 기록만 본다.
+    """
     block = getattr(adapter, "execution_block", None)
-    return None if block is None else block(record, final)
+    if block is None:
+        return None
+    return block(record, final) if directory is None else block(record, final, directory=directory)
 
 
 def review_state(record):
@@ -491,9 +496,12 @@ def preview_plan(record, plan, answers):
     guide = adapter.option_guide(record, final, source) if hasattr(adapter, "option_guide") else []
     block = _execution_block(adapter, record, final)
     # 실행하지 않는 계획이면 화면이 확정 버튼 대신 이유와 다음 행동을 보인다. 확정 요청은 confirm_plan이 같은 판정으로 거부한다.
+    # 확정 전 계획 동작(예: 표형 v2의 시간 복원 미리보기·적용)이 있으면 어댑터가 정한 상태·동의 문구·동작을 함께 보인다.
+    actions = getattr(adapter, "plan_actions", None)
     return {"plan": final, "answers": applied, "origins": source, "digest": _preview_digest(record, final),
             "plan_digest": signature(final), "changes": changes_between(state["plan"], final), "guide": guide,
-            "blocked": None if block is None else {"code": block.code, "message": block.message}}
+            "blocked": None if block is None else {"code": block.code, "message": block.message},
+            "plan_actions": None if actions is None else actions(record, final)}
 
 
 def _preview_digest(record, final):
@@ -502,6 +510,38 @@ def _preview_digest(record, final):
     확정이 한 번 진행되면 revision이 바뀌므로 같은 요청을 다시 보내도(다른 탭·재전송) 새 시도를 만들지 않는다.
     """
     return signature({"plan": final, "attempt": record["attempt"], "revision": record["revision"]})
+
+
+def run_plan_action(task_id, action, plan, answers=None, *, root=None, expected_digest, expected_preview=None):
+    """확정 전 계획 동작 하나를 새 동의로 실행한다. 동의 종류·내용·실행은 어댑터 hook(plan_action_consent·plan_action)이 정한다.
+
+    화면에서 미리 본 최종 계획·시도·기록 revision(expected_digest)과 동작이 확인할 값(expected_preview, 예: 미리보기 결과 지문)이
+    서버 값과 같을 때만 동의를 발급한다. 조건이 맞지 않으면 동의·실행 기록을 만들기 전에 거부한다. 작업 단계는 바꾸지 않으며
+    실행 결과·실패는 어댑터가 기록에 남긴다. 실패해도 자동으로 다시 시도하지 않는다.
+    """
+    with task_store.task_lock(task_id, root=root) as directory:
+        record = task_store.load_task(task_id, root=root)
+        adapter = _adapter(record)
+        consent = getattr(adapter, "plan_action_consent", None)
+
+        if consent is None or (record["phase"] != "awaiting_review" and not revisable(record) and not apply_revisable(record)):
+            raise ValueError("계획 동작을 실행할 단계가 아닙니다.")
+
+        try:
+            _check_snapshot(record)
+        except TaskProblem as problem:
+            return _stop(record, problem, root)
+
+        final, _ = check_plan(record, plan, answers)
+
+        if type(expected_digest) is not str or expected_digest != _preview_digest(record, final):
+            raise PlanError("PLAN_PREVIEW_CHANGED", "미리 본 최종 계획과 실행하려는 계획 또는 작업 상태가 다릅니다. 최종 계획을 다시 확인하세요.")
+
+        decision, content = consent(record, final, action, expected_preview)
+        record["consents"][decision] = task_consent.grant(decision, task_id, content)
+        record = _save(record, root)
+        context = SimpleNamespace(save=lambda value: _save(value, root), authorizer=task_consent.authorizer)
+        return adapter.plan_action(record, directory, context, action, final)
 
 
 def confirm_plan(task_id, plan, answers=None, *, root=None, expected_digest=None):
@@ -529,8 +569,8 @@ def confirm_plan(task_id, plan, answers=None, *, root=None, expected_digest=None
                 expected_digest is not None and expected_digest != _preview_digest(record, final)):
             raise PlanError("PLAN_PREVIEW_CHANGED", "미리 본 최종 계획과 확정하려는 계획 또는 작업 상태가 다릅니다. 최종 계획을 다시 확인하세요.")
 
-        # 이번 단계에서 실행하지 않는 계획은 이전 시도 보존·시도 번호·동의를 만들기 전에 거부한다.
-        block = _execution_block(adapter, record, final)
+        # 실행하지 않는 계획(입력 증거 재확인 실패 포함)은 이전 시도 보존·시도 번호·동의를 만들기 전에 거부한다.
+        block = _execution_block(adapter, record, final, directory)
 
         if block is not None:
             raise block

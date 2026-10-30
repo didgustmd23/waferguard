@@ -229,6 +229,13 @@ def read_split_files(directory, source_id, config_id, *, preview=False, committe
         if set(row) - {"split", "rows", "ratio", "classes", "group_count", "time_min", "time_max"}:
             raise ValueError("분할 구간 요약에 미지원 필드가 있습니다.")
 
+        # time 분할 요약에는 구간 시각 범위가 문자열로 모두 있어야 하고, 다른 방식에는 없어야 한다(값은 부모 도구가 출처로 재검증).
+        if proposal["rules"]["strategy"] == "time":
+            if any(type(row.get(key)) is not str or not 0 < len(row[key]) <= 64 for key in ("time_min", "time_max")):
+                raise ValueError("time 분할 구간 요약에 시간 범위가 필요합니다.")
+        elif {"time_min", "time_max"} & set(row):
+            raise ValueError("time 분할이 아닌 요약에 시간 범위가 있습니다.")
+
         if row["split"] != name or type(row["rows"]) is not int or row["rows"] != len(partitions[name]):
             raise ValueError("분할 구간 요약의 행 수가 일치하지 않습니다.")
 

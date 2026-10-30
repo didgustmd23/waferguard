@@ -429,6 +429,63 @@ def split_chart(split_rules, proposal):
 def _short(text):
     return text if len(text) <= CHART_NAME_LIMIT else text[:CHART_NAME_LIMIT - 1] + "…"
 
+# ==========================================
+# time 분할 입력·시간 범위 (로컬 보고서 전용)
+# - 구간 시각 범위는 부모가 출처 묶음으로 재검증한 분할 제안 요약(time_min/time_max) 값만 쓴다
+# - 분할은 시각을 UTC로 읽는다. 규칙에 시간대가 있으면(현지 벽시계 값) +00:00을 떼고 '현지 시각(시간대)'로,
+#   없으면(오프셋이 있는 값) 'UTC'로 표기한다. 표기 접미어가 예상과 다르면 원문과 '표기 확인 불가'를 함께 보인다
+# - 시각 값은 결과 보고서(로컬)에만 둔다. 오류 문구·worker 진단·로그·모델 요청에는 넣지 않는다
+# ==========================================
+
+def time_text(value, timezone):
+    """분할 요약의 시각 ISO 표기를 사람이 읽을 형태와 기준으로 바꾼다. 값은 바꾸지 않는다."""
+    if type(value) is not str:
+        return MISSING
+    if timezone is not None:
+        return (value[:-6].replace("T", " ") + " (현지 시각, " + timezone + ")" if value.endswith("+00:00")
+                else value + " (표기 확인 불가)")
+    return value[:-6].replace("T", " ") + " (UTC)" if value.endswith("+00:00") else value + " (표기 확인 불가)"
+
+
+def source_label(time_source):
+    """실행 출처 설명. 파생 표면 복원 행 수, 0행이면 기존 생성 표."""
+    if not time_source:
+        return MISSING
+    if time_source["kind"] == "time_restored":
+        return f"파생 표(시간 결측 복원 {time_source['restored_count']}행 적용)"
+    return "기존 작업용 표(복원 대상 0행, 결정 R 없음)"
+
+
+def time_range_table(proposal, time):
+    """구간별 행 수와 시작·끝 시각. 검증된 분할 제안 요약만 쓴다."""
+    rows = [{"구간": item["split"], "행 수": item["rows"], "시작 시각": time_text(item.get("time_min"), time["timezone"]),
+             "끝 시각": time_text(item.get("time_max"), time["timezone"])} for item in (proposal or {}).get("summary", [])]
+    return _table("time 분할 구간별 시간 범위", [
+        "대상: 확정 분할의 행 배정. 시각은 분할 결과 검증(부모가 출처 표의 시간 컬럼으로 구간 범위·순서를 다시 확인)을 통과한 값입니다.",
+        "구간은 과거 → 미래 순서이며 같은 시각의 행은 한 구간에만 있습니다. Test 구간에는 변환을 적용하지 않았습니다."], rows)
+
+
+def time_split_table(time, time_source, split_rules, run_source_id, input_source_id):
+    """time 분할에 쓴 입력 출처와 시간 규칙, 실행 값 대조. 확정 계획·고정 출처·실행 규칙(승인 계약 값)만 쓴다."""
+    def same(left, right):
+        return "실행 값과 같음" if left == right else "실행 값과 다름"
+
+    rows = [{"항목": "입력 출처", "값": source_label(time_source), "실행 값 대조": "-"},
+            {"항목": "실행 출처 ID", "값": run_source_id, "실행 값 대조": "-"},
+            {"항목": "원래 작업용 표 ID", "값": input_source_id,
+             "실행 값 대조": same((time_source or {}).get("parent_source_id"), input_source_id)},
+            {"항목": "시간 컬럼", "값": time["column"], "실행 값 대조": "-"},
+            {"항목": "시간 형식", "값": time["timestamp_format"] or "(시각 자료형)",
+             "실행 값 대조": same(split_rules.get("timestamp_format"), time["timestamp_format"])},
+            {"항목": "시간대", "값": time["timezone"] or "(값의 오프셋)", "실행 값 대조": "-"},
+            {"항목": "복원 주기", "값": time["frequency"] + (f" {time['interval_minutes']}분" if time["interval_minutes"] else ""),
+             "실행 값 대조": "-"},
+            {"항목": "행 순서 확인", "값": "확인함" if time["row_order_confirmed"] else "확인 안 함", "실행 값 대조": "-"},
+            {"항목": "분할 방식", "값": split_rules.get("strategy"), "실행 값 대조": same(split_rules.get("strategy"), "time")}]
+    return _table("시간 분할 입력과 규칙", [
+        "시간 규칙은 확정 계획 값이고, 입력 출처·규칙 지문은 확정 때 다시 확인해 결정 C·D 동의에 결합한 값입니다.",
+        "시간 형식·분할 방식의 실행 값 대조는 분할 실행 계약의 분할 규칙과 비교한 결과입니다."], rows)
+
 
 def target_chart(payloads):
     """target 클래스 분포. 처리 전 EDA 절의 target 표와 같은 검증된 EDA 바이트·같은 선정(_target_order)을 쓴다."""

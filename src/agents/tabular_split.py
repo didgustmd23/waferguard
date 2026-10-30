@@ -57,9 +57,30 @@ class TabularSplitTool(SnapshotSplitTool):
                              dependency_directories=(), output_directory=str(root / "output/result"), scratch_directory=str(root / "scratch/task"))
 
     def _check_rows(self, directory, stage):
-        return read_split_files(directory, self.plan.source_id, self.plan.config_id, preview=stage == "propose_split",
-                                committed=(directory / "AGENT_COMPLETE.json").exists(), allow_review=True,
-                                expected_rows=self.contract.source.bundle.rows)
+        report = read_split_files(directory, self.plan.source_id, self.plan.config_id, preview=stage == "propose_split",
+                                  committed=(directory / "AGENT_COMPLETE.json").exists(), allow_review=True,
+                                  expected_rows=self.contract.source.bundle.rows)
+        rules = self.contract.profile.split_rules
+        if rules.strategy == "time":
+            self._check_time(report, rules)
+        return report
+
+    def _check_time(self, report, rules):
+        """time 분할 결과를 부모가 출처 묶음의 timestamp 컬럼으로 다시 확인한다.
+
+        배정의 구간 시각 범위가 과거→미래 엄격 순서이고(같은 시각을 나누지 않음), 요약의 time_min/time_max가 같은 파싱으로
+        계산한 값과 정확히 같아야 한다. 자기 일관된 위조 요약·배정은 등록하지 않는다.
+        """
+        from src.preprocessing.split import time_partition_bounds
+        from src.preprocessing.tabular_bundle import load_bundle
+        if report["rules"] != asdict(rules):
+            raise ValueError("분할 결과의 규칙이 승인된 프로파일과 다릅니다.")
+        source, column = self.contract.source, self.contract.profile.roles.timestamp
+        values = load_bundle(source.bundle_directory, expected=source.bundle, columns=[column])[column]
+        bounds = time_partition_bounds(values, rules, report["partitions"])
+        for row in report["summary"]:
+            if (row["time_min"], row["time_max"]) != bounds[row["split"]]:
+                raise ValueError("time 분할 요약의 시간 범위가 출처와 다릅니다.")
 
     def _report_status(self, directory, stage):
         if stage not in {"propose_split", "commit_split"}:
