@@ -7,7 +7,7 @@
    "title": "표형 계획 규칙(지시문·판단 대상·계획 검증·결정적 질문)",
    "path": "src/agents/llm_task_assist.py",
    "version": null,
-   "sha256": "4c0583464e6e4cf72672dc4e9cac04edca0845d23b9d308ebf3096ad393fb4fd",
+   "sha256": "2a5c5c44bff24c8d113f51381c6383dc9744e5bc680185a0210f59d1f247c1fe",
    "enforce": true
   },
   {
