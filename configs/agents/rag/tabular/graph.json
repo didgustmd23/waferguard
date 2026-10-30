@@ -1,0 +1,1209 @@
+{
+ "schema_version": "rag_graph_v1",
+ "relation_types": [
+  "applies_to",
+  "requires",
+  "conflicts_with",
+  "may_cause",
+  "ask_question",
+  "alternative_to"
+ ],
+ "nodes": [
+  {
+   "id": "N_OPT_BINNING",
+   "type": "option",
+   "label": "수치 구간화(binning)",
+   "paths": [
+    "preparation.binning"
+   ]
+  },
+  {
+   "id": "N_OPT_BINNING_UNIFORM",
+   "type": "option",
+   "label": "같은 폭 구간화(uniform)",
+   "paths": [
+    "preparation.binning"
+   ]
+  },
+  {
+   "id": "N_OPT_BINNING_QUANTILE",
+   "type": "option",
+   "label": "분위수 구간화(quantile)",
+   "paths": [
+    "preparation.binning"
+   ]
+  },
+  {
+   "id": "N_OPT_SCALING",
+   "type": "option",
+   "label": "스케일링",
+   "paths": [
+    "preparation.scaling"
+   ]
+  },
+  {
+   "id": "N_OPT_SCALING_ROBUST",
+   "type": "option",
+   "label": "robust 스케일링",
+   "paths": [
+    "preparation.scaling"
+   ]
+  },
+  {
+   "id": "N_OPT_OUTLIER_CLIP",
+   "type": "option",
+   "label": "IQR clipping",
+   "paths": [
+    "preparation.outlier",
+    "preparation.iqr_multiplier"
+   ]
+  },
+  {
+   "id": "N_OPT_IMPUTE",
+   "type": "option",
+   "label": "수치 결측 대치",
+   "paths": [
+    "preparation.numeric_imputation"
+   ]
+  },
+  {
+   "id": "N_OPT_IMPUTE_MEAN",
+   "type": "option",
+   "label": "평균 대치",
+   "paths": [
+    "preparation.numeric_imputation"
+   ]
+  },
+  {
+   "id": "N_OPT_IMPUTE_MEDIAN",
+   "type": "option",
+   "label": "중앙값 대치",
+   "paths": [
+    "preparation.numeric_imputation"
+   ]
+  },
+  {
+   "id": "N_OPT_MISSING_THRESHOLD",
+   "type": "option",
+   "label": "결측률 제거 기준",
+   "paths": [
+    "preparation.missing_ratio_threshold"
+   ]
+  },
+  {
+   "id": "N_OPT_DROP_CONSTANT",
+   "type": "option",
+   "label": "상수 특징 제거",
+   "paths": [
+    "preparation.drop_constant"
+   ]
+  },
+  {
+   "id": "N_OPT_UNKNOWN_ERROR",
+   "type": "option",
+   "label": "unknown_category=error",
+   "paths": [
+    "preparation.unknown_category"
+   ]
+  },
+  {
+   "id": "N_OPT_STRATIFY",
+   "type": "option",
+   "label": "계층 분할",
+   "paths": [
+    "split.stratify"
+   ]
+  },
+  {
+   "id": "N_SPLIT_RANDOM",
+   "type": "split_strategy",
+   "label": "random 분할",
+   "paths": [
+    "split.strategy"
+   ]
+  },
+  {
+   "id": "N_SPLIT_GROUP",
+   "type": "split_strategy",
+   "label": "group 분할",
+   "paths": [
+    "split.strategy"
+   ]
+  },
+  {
+   "id": "N_SPLIT_TIME",
+   "type": "split_strategy",
+   "label": "time 분할",
+   "paths": [
+    "split.strategy"
+   ],
+   "support": "unsupported"
+  },
+  {
+   "id": "N_ROLE_TARGET",
+   "type": "role",
+   "label": "target 역할",
+   "paths": [
+    "roles.*"
+   ]
+  },
+  {
+   "id": "N_ROLE_GROUP",
+   "type": "role",
+   "label": "group 역할",
+   "paths": [
+    "roles.*"
+   ]
+  },
+  {
+   "id": "N_ROLE_IDENTIFIER",
+   "type": "role",
+   "label": "식별자·제외 역할",
+   "paths": [
+    "roles.*"
+   ]
+  },
+  {
+   "id": "N_ROLE_NUMERIC",
+   "type": "role",
+   "label": "수치형 역할",
+   "paths": [
+    "roles.*"
+   ]
+  },
+  {
+   "id": "N_ROLE_CATEGORICAL",
+   "type": "role",
+   "label": "범주형 역할",
+   "paths": [
+    "roles.*"
+   ]
+  },
+  {
+   "id": "N_ROLE_TIMESTAMP",
+   "type": "role",
+   "label": "timestamp 역할",
+   "paths": [
+    "roles.*"
+   ]
+  },
+  {
+   "id": "N_COND_FEW_VALUES",
+   "type": "condition",
+   "label": "값 종류가 적은 숫자형 컬럼(few_values)"
+  },
+  {
+   "id": "N_COND_SPARSE_BINARY",
+   "type": "condition",
+   "label": "대부분 같은 값인 0/1 특징"
+  },
+  {
+   "id": "N_COND_OUTLIERS",
+   "type": "condition",
+   "label": "극단값(IQR 이상치 후보 많음)"
+  },
+  {
+   "id": "N_COND_ALL_MISSING",
+   "type": "condition",
+   "label": "전체 결측 수치 특징"
+  },
+  {
+   "id": "N_COND_CONSTANT",
+   "type": "condition",
+   "label": "값이 하나뿐인 특징"
+  },
+  {
+   "id": "N_COND_HIGH_MISSING",
+   "type": "condition",
+   "label": "결측률이 높은 특징"
+  },
+  {
+   "id": "N_COND_IMBALANCE",
+   "type": "condition",
+   "label": "분류 target 클래스 불균형"
+  },
+  {
+   "id": "N_COND_RARE_CLASS",
+   "type": "condition",
+   "label": "표본이 매우 적은 클래스"
+  },
+  {
+   "id": "N_COND_REPEATED_UNIT",
+   "type": "condition",
+   "label": "같은 단위 반복 측정"
+  },
+  {
+   "id": "N_COND_TIME_ORDER",
+   "type": "condition",
+   "label": "시간 순서 예측 목표"
+  },
+  {
+   "id": "N_COND_ALL_DISTINCT",
+   "type": "condition",
+   "label": "행마다 다른 값(all_distinct)"
+  },
+  {
+   "id": "N_COND_MANY_CATEGORIES",
+   "type": "condition",
+   "label": "고유값이 많은 범주 특징"
+  },
+  {
+   "id": "N_COND_NUMERIC_STRING",
+   "type": "condition",
+   "label": "숫자 모양 문자열 컬럼(text 자료형)"
+  },
+  {
+   "id": "N_COND_NO_TARGET",
+   "type": "condition",
+   "label": "target 미지정·목적 불명"
+  },
+  {
+   "id": "N_COND_DIAG_LIMITS",
+   "type": "condition",
+   "label": "진단 집계에 없는 정보(클래스 분포·반복·시간 순서)"
+  },
+  {
+   "id": "N_EFF_CONSTANT_AFTER",
+   "type": "effect",
+   "label": "변환 후 상수화"
+  },
+  {
+   "id": "N_EFF_BIN_MERGE",
+   "type": "effect",
+   "label": "구간 경계 병합"
+  },
+  {
+   "id": "N_EFF_BIN_SKEW",
+   "type": "effect",
+   "label": "구간 편중"
+  },
+  {
+   "id": "N_EFF_LEAKAGE",
+   "type": "effect",
+   "label": "평가 누수(낙관적 평가)"
+  },
+  {
+   "id": "N_EFF_FIT_FAIL",
+   "type": "effect",
+   "label": "후보 계산 실패"
+  },
+  {
+   "id": "N_EFF_APPLY_FAIL",
+   "type": "effect",
+   "label": "적용 단계 실패"
+  },
+  {
+   "id": "N_EFF_SPLIT_FAIL",
+   "type": "effect",
+   "label": "분할 실패·검토 필요"
+  },
+  {
+   "id": "N_EFF_RATIO_DRIFT",
+   "type": "effect",
+   "label": "구간 행·클래스 비율 차이"
+  },
+  {
+   "id": "N_EFF_IMPUTE_BIAS",
+   "type": "effect",
+   "label": "극단값에 끌린 대치값"
+  },
+  {
+   "id": "N_EFF_SCALE_COMPRESS",
+   "type": "effect",
+   "label": "정상 값 구분이 압축됨"
+  },
+  {
+   "id": "N_EFF_MISSING_INFO_LOSS",
+   "type": "effect",
+   "label": "결측 여부 정보 소실"
+  },
+  {
+   "id": "N_Q_CODE_MEANING",
+   "type": "question",
+   "label": "코드인지 크기를 가진 측정값인지"
+  },
+  {
+   "id": "N_Q_OUTLIER_CAUSE",
+   "type": "question",
+   "label": "극단값이 센서 오류인지 실제 현상인지"
+  },
+  {
+   "id": "N_Q_MISSING_MEANING",
+   "type": "question",
+   "label": "결측 자체가 의미 있는 정보인지"
+  },
+  {
+   "id": "N_Q_TARGET",
+   "type": "question",
+   "label": "예측 대상 또는 예측 대상 없음"
+  },
+  {
+   "id": "N_Q_TIME_PATH",
+   "type": "question",
+   "label": "time 분할 미지원 상태에서 진행 방식"
+  },
+  {
+   "id": "N_Q_UNIT",
+   "type": "question",
+   "label": "반복 측정 단위 확인"
+  },
+  {
+   "id": "N_Q_RARE_CLASS",
+   "type": "question",
+   "label": "극소 클래스 처리 방법"
+  },
+  {
+   "id": "N_Q_PER_COLUMN",
+   "type": "question",
+   "label": "옵션이 같은 역할 특징 전체에 적용되는데 괜찮은지"
+  },
+  {
+   "id": "N_CAP_MISSING_INDICATOR",
+   "type": "capability",
+   "label": "결측 지시 특징",
+   "support": "unsupported"
+  },
+  {
+   "id": "N_CAP_ROW_DELETE",
+   "type": "capability",
+   "label": "이상치 행 삭제",
+   "support": "unsupported"
+  },
+  {
+   "id": "N_CAP_PER_COLUMN",
+   "type": "capability",
+   "label": "컬럼별 전처리 옵션",
+   "support": "unsupported"
+  },
+  {
+   "id": "N_OPT_IMPUTE_NONE",
+   "type": "option",
+   "label": "수치 결측 대치 끄기(none)",
+   "paths": [
+    "preparation.numeric_imputation"
+   ]
+  },
+  {
+   "id": "N_OPT_BIN_ENCODING",
+   "type": "option",
+   "label": "구간 표현 방식(bin_encoding)",
+   "paths": [
+    "preparation.bin_encoding"
+   ]
+  },
+  {
+   "id": "N_COND_FEW_GROUPS",
+   "type": "condition",
+   "label": "그룹 수가 매우 적은 group 후보"
+  },
+  {
+   "id": "N_COND_ROLE_VALUE_DUP",
+   "type": "condition",
+   "label": "식별자 역할 값 중복·분할 역할 컬럼 결측"
+  },
+  {
+   "id": "N_COND_OUTLIER_CANDIDATES",
+   "type": "condition",
+   "label": "진단 이상치 후보 수가 큼"
+  },
+  {
+   "id": "N_EFF_MISSING_REMAINS",
+   "type": "effect",
+   "label": "출력에 결측이 남음"
+  }
+ ],
+ "edges": [
+  {
+   "id": "E01",
+   "source": "N_OPT_BINNING",
+   "target": "N_ROLE_NUMERIC",
+   "type": "applies_to",
+   "scope": "product",
+   "condition": "binning이 none이 아닐 때 수치형 특징 전체",
+   "caution": "컬럼별 선택 불가",
+   "knowledge": [
+    "K01"
+   ]
+  },
+  {
+   "id": "E02",
+   "source": "N_OPT_OUTLIER_CLIP",
+   "target": "N_ROLE_NUMERIC",
+   "type": "applies_to",
+   "scope": "product",
+   "condition": "outlier=iqr_clip일 때 수치형 특징 전체",
+   "caution": "희소 0/1 특징도 포함",
+   "knowledge": [
+    "K01",
+    "K08"
+   ]
+  },
+  {
+   "id": "E03",
+   "source": "N_OPT_SCALING",
+   "target": "N_ROLE_NUMERIC",
+   "type": "applies_to",
+   "scope": "product",
+   "condition": "scaling이 none이 아닐 때 수치형 특징 전체",
+   "caution": "",
+   "knowledge": [
+    "K01"
+   ]
+  },
+  {
+   "id": "E04",
+   "source": "N_OPT_MISSING_THRESHOLD",
+   "target": "N_ROLE_NUMERIC",
+   "type": "applies_to",
+   "scope": "product",
+   "condition": "기준값을 정하면 입력 특징 전체에 Train 결측률로 적용",
+   "caution": "범주형 특징에도 적용",
+   "knowledge": [
+    "K15"
+   ]
+  },
+  {
+   "id": "E05",
+   "source": "N_OPT_BINNING",
+   "target": "N_CAP_PER_COLUMN",
+   "type": "conflicts_with",
+   "scope": "product",
+   "condition": "특정 컬럼만 구간화하려는 목표",
+   "caution": "역할을 바꾸거나 구간화를 끄는 선택을 묻는다",
+   "knowledge": [
+    "K01"
+   ]
+  },
+  {
+   "id": "E06",
+   "source": "N_COND_FEW_VALUES",
+   "target": "N_Q_CODE_MEANING",
+   "type": "ask_question",
+   "scope": "general",
+   "condition": "값 종류가 적다는 사실만으로는 코드인지 알 수 없음",
+   "caution": "제품 자동 질문 아님(권장 응답의 확인 권고); 단정하지 않는다",
+   "knowledge": [
+    "K03"
+   ]
+  },
+  {
+   "id": "E07",
+   "source": "N_COND_FEW_VALUES",
+   "target": "N_ROLE_CATEGORICAL",
+   "type": "alternative_to",
+   "scope": "general",
+   "condition": "코드로 확인된 경우",
+   "caution": "측정값이면 순서·거리 정보 소실",
+   "knowledge": [
+    "K03"
+   ]
+  },
+  {
+   "id": "E08",
+   "source": "N_OPT_BINNING_QUANTILE",
+   "target": "N_EFF_BIN_MERGE",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "분위수 구간화에서 값 종류가 적거나 한 값에 몰린 수치 특징",
+   "caution": "n_bins는 최대값",
+   "knowledge": [
+    "K04"
+   ]
+  },
+  {
+   "id": "E09",
+   "source": "N_EFF_BIN_MERGE",
+   "target": "N_EFF_CONSTANT_AFTER",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "병합 후 한 구간만 남을 때",
+   "caution": "",
+   "knowledge": [
+    "K04"
+   ]
+  },
+  {
+   "id": "E10",
+   "source": "N_COND_FEW_VALUES",
+   "target": "N_EFF_BIN_MERGE",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "해당 컬럼이 수치형 역할이고 binning=quantile일 때(uniform은 대치·clipping 뒤 값이 상수이거나 값 범위가 부동소수점 정밀도 수준일 때)",
+   "caution": "",
+   "knowledge": [
+    "K04"
+   ]
+  },
+  {
+   "id": "E11",
+   "source": "N_OPT_BINNING_UNIFORM",
+   "target": "N_EFF_BIN_SKEW",
+   "type": "may_cause",
+   "scope": "general",
+   "condition": "극단값이 있는 수치 특징",
+   "caution": "",
+   "knowledge": [
+    "K05"
+   ]
+  },
+  {
+   "id": "E12",
+   "source": "N_OPT_BINNING_QUANTILE",
+   "target": "N_OPT_BINNING_UNIFORM",
+   "type": "alternative_to",
+   "scope": "general",
+   "condition": "극단값 때문에 같은 폭 구간이 편중될 때",
+   "caution": "동점 경계는 병합될 수 있음",
+   "knowledge": [
+    "K05",
+    "K04"
+   ]
+  },
+  {
+   "id": "E13",
+   "source": "N_OPT_BINNING",
+   "target": "N_OPT_SCALING",
+   "type": "conflicts_with",
+   "scope": "product",
+   "condition": "binning이 none이 아니면 scaling은 none이어야 함",
+   "caution": "위반 시 권장 변경 전체 거부",
+   "knowledge": [
+    "K06"
+   ]
+  },
+  {
+   "id": "E14",
+   "source": "N_OPT_BINNING",
+   "target": "N_OPT_IMPUTE",
+   "type": "requires",
+   "scope": "product",
+   "condition": "binning이 none이 아니면 numeric_imputation이 none이 아니어야 함",
+   "caution": "위반 시 권장 변경 전체 거부",
+   "knowledge": [
+    "K07"
+   ]
+  },
+  {
+   "id": "E15",
+   "source": "N_OPT_OUTLIER_CLIP",
+   "target": "N_EFF_CONSTANT_AFTER",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "사분위 범위가 0인 수치 특징(대부분 같은 값인 0/1 등)",
+   "caution": "IQR 배수와 무관",
+   "knowledge": [
+    "K08"
+   ]
+  },
+  {
+   "id": "E16",
+   "source": "N_COND_SPARSE_BINARY",
+   "target": "N_ROLE_CATEGORICAL",
+   "type": "alternative_to",
+   "scope": "product",
+   "condition": "clipping·구간화를 쓰면서 희소 0/1 특징을 보존하려 할 때",
+   "caution": "",
+   "knowledge": [
+    "K08"
+   ]
+  },
+  {
+   "id": "E17",
+   "source": "N_OPT_IMPUTE_MEAN",
+   "target": "N_EFF_IMPUTE_BIAS",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "결측과 극단값이 함께 있는 특징(대치값은 clipping 전 값으로 계산)",
+   "caution": "대치값 계산은 clipping 전 값 기준이며 적용 시 대치된 칸도 clipping됨",
+   "knowledge": [
+    "K09"
+   ]
+  },
+  {
+   "id": "E18",
+   "source": "N_OPT_IMPUTE_MEDIAN",
+   "target": "N_OPT_IMPUTE_MEAN",
+   "type": "alternative_to",
+   "scope": "product",
+   "condition": "극단값이 있는 특징의 대치(제품은 대치값을 clipping 전 값으로 계산)",
+   "caution": "",
+   "knowledge": [
+    "K09"
+   ]
+  },
+  {
+   "id": "E19",
+   "source": "N_COND_OUTLIERS",
+   "target": "N_EFF_SCALE_COMPRESS",
+   "type": "may_cause",
+   "scope": "general",
+   "condition": "standard·minmax 스케일링을 적용할 때",
+   "caution": "",
+   "knowledge": [
+    "K10"
+   ]
+  },
+  {
+   "id": "E20",
+   "source": "N_OPT_SCALING_ROBUST",
+   "target": "N_OPT_SCALING",
+   "type": "alternative_to",
+   "scope": "general",
+   "condition": "극단값이 있는 수치 특징",
+   "caution": "극단값 자체를 없애지 않음",
+   "knowledge": [
+    "K10"
+   ]
+  },
+  {
+   "id": "E21",
+   "source": "N_COND_OUTLIERS",
+   "target": "N_Q_OUTLIER_CAUSE",
+   "type": "ask_question",
+   "scope": "general",
+   "condition": "극단값 처리 여부를 정하기 전",
+   "caution": "제품 자동 질문 아님(권장 응답의 확인 권고)",
+   "knowledge": [
+    "K10"
+   ]
+  },
+  {
+   "id": "E22",
+   "source": "N_COND_OUTLIERS",
+   "target": "N_CAP_ROW_DELETE",
+   "type": "conflicts_with",
+   "scope": "product",
+   "condition": "행 삭제를 원할 때",
+   "caution": "제품은 값 자르기만 제공",
+   "knowledge": [
+    "K11"
+   ]
+  },
+  {
+   "id": "E23",
+   "source": "N_COND_ALL_MISSING",
+   "target": "N_OPT_IMPUTE",
+   "type": "conflicts_with",
+   "scope": "product",
+   "condition": "해당 컬럼을 수치형 특징으로 두고 제거 기준이 없을 때",
+   "caution": "후보 계산 실패",
+   "knowledge": [
+    "K13"
+   ]
+  },
+  {
+   "id": "E24",
+   "source": "N_COND_ALL_MISSING",
+   "target": "N_EFF_FIT_FAIL",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "대치·스케일·clipping 중 하나라도 켜져 있고 제거되지 않을 때",
+   "caution": "",
+   "knowledge": [
+    "K13"
+   ]
+  },
+  {
+   "id": "E25",
+   "source": "N_COND_ALL_MISSING",
+   "target": "N_OPT_MISSING_THRESHOLD",
+   "type": "alternative_to",
+   "scope": "product",
+   "condition": "특징으로 두면서 실패를 피하려면 결측률 기준(1 미만)이나 drop_constant=true로 Train에서 제거",
+   "caution": "",
+   "knowledge": [
+    "K13",
+    "K15",
+    "K14"
+   ]
+  },
+  {
+   "id": "E26",
+   "source": "N_COND_CONSTANT",
+   "target": "N_OPT_DROP_CONSTANT",
+   "type": "applies_to",
+   "scope": "product",
+   "condition": "Train에서 관측값이 한 종류 이하",
+   "caution": "Validation에서만 변하는 특징도 제거",
+   "knowledge": [
+    "K14"
+   ]
+  },
+  {
+   "id": "E27",
+   "source": "N_COND_HIGH_MISSING",
+   "target": "N_Q_MISSING_MEANING",
+   "type": "ask_question",
+   "scope": "product",
+   "condition": "제거·대치 전에 결측이 정보인지 확인(결측 지시 특징 미지원)",
+   "caution": "제품 자동 질문 아님(권장 응답의 확인 권고)",
+   "knowledge": [
+    "K15",
+    "K16"
+   ]
+  },
+  {
+   "id": "E28",
+   "source": "N_OPT_IMPUTE",
+   "target": "N_EFF_MISSING_INFO_LOSS",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "결측 지시 특징이 없어 대치 후 결측 여부가 남지 않음",
+   "caution": "",
+   "knowledge": [
+    "K16"
+   ]
+  },
+  {
+   "id": "E29",
+   "source": "N_COND_HIGH_MISSING",
+   "target": "N_CAP_MISSING_INDICATOR",
+   "type": "conflicts_with",
+   "scope": "product",
+   "condition": "결측 지시 특징을 원할 때",
+   "caution": "미지원 기능으로 권하지 않는다",
+   "knowledge": [
+    "K16"
+   ]
+  },
+  {
+   "id": "E30",
+   "source": "N_COND_IMBALANCE",
+   "target": "N_OPT_STRATIFY",
+   "type": "applies_to",
+   "scope": "general",
+   "condition": "분류 target 소수 클래스 비율이 낮을 때",
+   "caution": "클래스 분포는 진단 집계에 없음",
+   "knowledge": [
+    "K17",
+    "K31"
+   ]
+  },
+  {
+   "id": "E31",
+   "source": "N_OPT_STRATIFY",
+   "target": "N_SPLIT_RANDOM",
+   "type": "requires",
+   "scope": "product",
+   "condition": "stratify=true",
+   "caution": "",
+   "knowledge": [
+    "K19"
+   ]
+  },
+  {
+   "id": "E32",
+   "source": "N_OPT_STRATIFY",
+   "target": "N_ROLE_TARGET",
+   "type": "requires",
+   "scope": "product",
+   "condition": "stratify=true",
+   "caution": "",
+   "knowledge": [
+    "K19"
+   ]
+  },
+  {
+   "id": "E33",
+   "source": "N_OPT_STRATIFY",
+   "target": "N_SPLIT_GROUP",
+   "type": "conflicts_with",
+   "scope": "product",
+   "condition": "group 분할과 동시 선택",
+   "caution": "구간별 클래스 비율 차이는 안내만",
+   "knowledge": [
+    "K19"
+   ]
+  },
+  {
+   "id": "E34",
+   "source": "N_COND_RARE_CLASS",
+   "target": "N_EFF_SPLIT_FAIL",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "계층 분할: 클래스 표본이 너무 적으면 오류. 계층 없음(또는 성공 후): 구간 클래스 누락 시 require_all_classes로 검토 필요",
+   "caution": "경계 건수는 비율 설정에 따라 다름",
+   "knowledge": [
+    "K18"
+   ]
+  },
+  {
+   "id": "E35",
+   "source": "N_COND_RARE_CLASS",
+   "target": "N_Q_RARE_CLASS",
+   "type": "ask_question",
+   "scope": "product",
+   "condition": "클래스 병합·제거는 제품 기능이 아님",
+   "caution": "제품 자동 질문 아님(권장 응답의 확인 권고)",
+   "knowledge": [
+    "K18"
+   ]
+  },
+  {
+   "id": "E36",
+   "source": "N_COND_REPEATED_UNIT",
+   "target": "N_SPLIT_GROUP",
+   "type": "requires",
+   "scope": "general",
+   "condition": "단위 간 일반화를 평가하려 할 때",
+   "caution": "진단만으로 반복 여부 확정 불가",
+   "knowledge": [
+    "K20"
+   ]
+  },
+  {
+   "id": "E37",
+   "source": "N_COND_REPEATED_UNIT",
+   "target": "N_EFF_LEAKAGE",
+   "type": "may_cause",
+   "scope": "general",
+   "condition": "행 단위 random 분할",
+   "caution": "",
+   "knowledge": [
+    "K20"
+   ]
+  },
+  {
+   "id": "E38",
+   "source": "N_COND_REPEATED_UNIT",
+   "target": "N_Q_UNIT",
+   "type": "ask_question",
+   "scope": "general",
+   "condition": "목표 문장에 단위가 없을 때",
+   "caution": "제품 자동 질문 아님(권장 응답의 확인 권고)",
+   "knowledge": [
+    "K20"
+   ]
+  },
+  {
+   "id": "E39",
+   "source": "N_ROLE_GROUP",
+   "target": "N_SPLIT_GROUP",
+   "type": "requires",
+   "scope": "product",
+   "condition": "group 역할이 있을 때",
+   "caution": "",
+   "knowledge": [
+    "K21"
+   ]
+  },
+  {
+   "id": "E40",
+   "source": "N_ROLE_GROUP",
+   "target": "N_SPLIT_RANDOM",
+   "type": "conflicts_with",
+   "scope": "product",
+   "condition": "group 역할과 random 분할 동시 선택",
+   "caution": "",
+   "knowledge": [
+    "K21"
+   ]
+  },
+  {
+   "id": "E41",
+   "source": "N_SPLIT_GROUP",
+   "target": "N_EFF_RATIO_DRIFT",
+   "type": "may_cause",
+   "scope": "general",
+   "condition": "그룹 크기가 고르지 않거나 그룹 수가 적어 구간당 그룹이 한두 개일 때",
+   "caution": "정확한 비율을 약속하지 않는다",
+   "knowledge": [
+    "K22",
+    "K35"
+   ]
+  },
+  {
+   "id": "E42",
+   "source": "N_COND_TIME_ORDER",
+   "target": "N_SPLIT_RANDOM",
+   "type": "conflicts_with",
+   "scope": "general",
+   "condition": "미래를 예측하는 목표",
+   "caution": "제품은 time 분할 미지원",
+   "knowledge": [
+    "K23"
+   ]
+  },
+  {
+   "id": "E43",
+   "source": "N_COND_TIME_ORDER",
+   "target": "N_EFF_LEAKAGE",
+   "type": "may_cause",
+   "scope": "general",
+   "condition": "random 분할",
+   "caution": "",
+   "knowledge": [
+    "K23"
+   ]
+  },
+  {
+   "id": "E44",
+   "source": "N_COND_TIME_ORDER",
+   "target": "N_SPLIT_TIME",
+   "type": "requires",
+   "scope": "general",
+   "condition": "과거로 학습하고 이후로 평가하려 할 때",
+   "caution": "제품 통합 작업 미지원(E45)",
+   "knowledge": [
+    "K23"
+   ]
+  },
+  {
+   "id": "E45",
+   "source": "N_SPLIT_TIME",
+   "target": "N_Q_TIME_PATH",
+   "type": "ask_question",
+   "scope": "product",
+   "condition": "통합 작업에서 time 분할을 쓸 수 없음",
+   "caution": "random으로 조용히 대체하지 않음",
+   "knowledge": [
+    "K24"
+   ]
+  },
+  {
+   "id": "E46",
+   "source": "N_ROLE_TIMESTAMP",
+   "target": "N_Q_TIME_PATH",
+   "type": "ask_question",
+   "scope": "product",
+   "condition": "시간 형식을 지정할 수 없어 품질 검사가 멈춤",
+   "caution": "필수 질문으로 제외 권장",
+   "knowledge": [
+    "K24"
+   ]
+  },
+  {
+   "id": "E47",
+   "source": "N_COND_ALL_DISTINCT",
+   "target": "N_ROLE_IDENTIFIER",
+   "type": "alternative_to",
+   "scope": "product",
+   "condition": "행마다 다른 값이 식별 번호일 때",
+   "caution": "측정값일 수 있으니 확인",
+   "knowledge": [
+    "K25"
+   ]
+  },
+  {
+   "id": "E48",
+   "source": "N_COND_ALL_DISTINCT",
+   "target": "N_EFF_APPLY_FAIL",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "범주형으로 두고 unknown_category=error일 때(가능성, 범주 상한이 먼저 걸릴 수 있음)",
+   "caution": "",
+   "knowledge": [
+    "K26"
+   ]
+  },
+  {
+   "id": "E49",
+   "source": "N_OPT_UNKNOWN_ERROR",
+   "target": "N_EFF_APPLY_FAIL",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "Train에 없던 범주가 다른 구간에 나올 때",
+   "caution": "ignore는 새 범주 정보를 버림",
+   "knowledge": [
+    "K26"
+   ]
+  },
+  {
+   "id": "E50",
+   "source": "N_COND_MANY_CATEGORIES",
+   "target": "N_EFF_FIT_FAIL",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "Train 범주 수(결측 범주 포함)가 max_categories 초과",
+   "caution": "반드시 실패인지는 분할 방식·비율에 따라 다름",
+   "knowledge": [
+    "K27"
+   ]
+  },
+  {
+   "id": "E51",
+   "source": "N_COND_NO_TARGET",
+   "target": "N_Q_TARGET",
+   "type": "ask_question",
+   "scope": "product",
+   "condition": "target 역할이 없음(필수 질문)",
+   "caution": "근거 없이 target을 정하지 않음",
+   "knowledge": [
+    "K28"
+   ]
+  },
+  {
+   "id": "E52",
+   "source": "N_COND_NUMERIC_STRING",
+   "target": "N_ROLE_NUMERIC",
+   "type": "conflicts_with",
+   "scope": "product",
+   "condition": "dtype_group이 numeric이 아닌 컬럼",
+   "caution": "자동 변환 없음",
+   "knowledge": [
+    "K30"
+   ]
+  },
+  {
+   "id": "E53",
+   "source": "N_COND_DIAG_LIMITS",
+   "target": "N_Q_UNIT",
+   "type": "ask_question",
+   "scope": "product",
+   "condition": "반복 측정 여부는 집계에 없음",
+   "caution": "제품 자동 질문 아님(권장 응답의 확인 권고)",
+   "knowledge": [
+    "K31",
+    "K29"
+   ]
+  },
+  {
+   "id": "E54",
+   "source": "N_COND_DIAG_LIMITS",
+   "target": "N_Q_RARE_CLASS",
+   "type": "ask_question",
+   "scope": "product",
+   "condition": "클래스 분포는 집계에 없음",
+   "caution": "제품 자동 질문 아님(권장 응답의 확인 권고)",
+   "knowledge": [
+    "K31",
+    "K29"
+   ]
+  },
+  {
+   "id": "E55",
+   "source": "N_ROLE_TARGET",
+   "target": "N_ROLE_NUMERIC",
+   "type": "alternative_to",
+   "scope": "product",
+   "condition": "목표에 이름이 있는 예측 대상 컬럼은 특징이 아닌 target으로 둠",
+   "caution": "target은 전처리 옵션 대상 아님",
+   "knowledge": [
+    "K02"
+   ]
+  },
+  {
+   "id": "E56",
+   "source": "N_OPT_BINNING",
+   "target": "N_Q_PER_COLUMN",
+   "type": "ask_question",
+   "scope": "product",
+   "condition": "특정 컬럼만 구간화하려는 목표",
+   "caution": "제품 자동 질문 아님(권장 응답의 확인 권고)",
+   "knowledge": [
+    "K01"
+   ]
+  },
+  {
+   "id": "E57",
+   "source": "N_COND_MANY_CATEGORIES",
+   "target": "N_ROLE_IDENTIFIER",
+   "type": "alternative_to",
+   "scope": "product",
+   "condition": "범주 상한 초과 위험이 있는 컬럼",
+   "caution": "시각 문자열이면 제외",
+   "knowledge": [
+    "K27"
+   ]
+  },
+  {
+   "id": "E58",
+   "source": "N_OPT_IMPUTE_NONE",
+   "target": "N_EFF_MISSING_REMAINS",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "결측이 있는 수치 특징이 있을 때",
+   "caution": "대치는 결측 칸에만 작용",
+   "knowledge": [
+    "K36"
+   ]
+  },
+  {
+   "id": "E59",
+   "source": "N_OPT_BIN_ENCODING",
+   "target": "N_OPT_BINNING",
+   "type": "applies_to",
+   "scope": "product",
+   "condition": "binning이 none이 아닐 때만 쓰이며 none이면 무시됨(거부 아님)",
+   "caution": "범주형 인코딩 옵션이 아님",
+   "knowledge": [
+    "K37"
+   ]
+  },
+  {
+   "id": "E60",
+   "source": "N_COND_FEW_GROUPS",
+   "target": "N_EFF_SPLIT_FAIL",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "group 분할에서 남은 그룹이 1개가 될 만큼 그룹이 적을 때",
+   "caution": "그룹 수 경계는 비율·시드에 따라 다름",
+   "knowledge": [
+    "K35"
+   ]
+  },
+  {
+   "id": "E62",
+   "source": "N_COND_ROLE_VALUE_DUP",
+   "target": "N_EFF_SPLIT_FAIL",
+   "type": "may_cause",
+   "scope": "product",
+   "condition": "식별자 역할 값 조합이 중복되거나 target·group·식별자에 결측이 있을 때",
+   "caution": "자동 보정·삭제 없음",
+   "knowledge": [
+    "K34"
+   ]
+  },
+  {
+   "id": "E63",
+   "source": "N_COND_ROLE_VALUE_DUP",
+   "target": "N_Q_UNIT",
+   "type": "ask_question",
+   "scope": "general",
+   "condition": "중복 값이 같은 단위의 반복 측정 키일 수 있을 때",
+   "caution": "제품 자동 질문 아님(권장 응답의 확인 권고); 진단만으로 반복 여부를 확정하지 않음",
+   "knowledge": [
+    "K34",
+    "K20"
+   ]
+  },
+  {
+   "id": "E64",
+   "source": "N_COND_OUTLIER_CANDIDATES",
+   "target": "N_Q_OUTLIER_CAUSE",
+   "type": "ask_question",
+   "scope": "general",
+   "condition": "후보 수는 IQR 1.5 기준 경계 밖 값 개수이며 오류값 판정이 아님",
+   "caution": "제품 자동 질문 아님(권장 응답의 확인 권고); 0/1 특징은 소수 값 개수일 수 있음",
+   "knowledge": [
+    "K38",
+    "K10"
+   ]
+  },
+  {
+   "id": "E65",
+   "source": "N_COND_ALL_MISSING",
+   "target": "N_OPT_DROP_CONSTANT",
+   "type": "alternative_to",
+   "scope": "product",
+   "condition": "특징으로 두면서 Train 전체 결측 특징을 대치 전에 제거하려 할 때",
+   "caution": "",
+   "knowledge": [
+    "K13",
+    "K14"
+   ]
+  },
+  {
+   "id": "E66",
+   "source": "N_OPT_MISSING_THRESHOLD",
+   "target": "N_ROLE_CATEGORICAL",
+   "type": "applies_to",
+   "scope": "product",
+   "condition": "기준값을 정하면 범주형 특징에도 Train 결측률로 적용",
+   "caution": "",
+   "knowledge": [
+    "K15"
+   ]
+  }
+ ]
+}

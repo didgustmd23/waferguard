@@ -5,10 +5,12 @@ from pathlib import Path
 from src.preprocessing.tabular_loaders import CsvReadSpec
 from . import task_consent
 from .input_snapshot import Snapshot, verify_snapshot
-from .tabular_input_service import TabularInputService, code_id
+from .protected_store import StoreUnavailable
+from .tabular_input_service import STORE_MESSAGES, TabularInputService, code_id
 from .tabular_input_worker import MAX_OUTPUT_BYTES, POLICY_VERSION
 from .tabular_source_contract import TabularSourceContract
 from .task_plan import TaskProblem
+from .worker_runtime import MESSAGES as RUNTIME_MESSAGES, NOTICE as RUNTIME_NOTICE, RuntimeUnavailable, current_runtime_id
 
 
 def _spec(record, selection=None):
@@ -33,6 +35,22 @@ def _verify_snapshot(record):
         raise ValueError("입력 해석 대상 복사본이 변경됐습니다.")
 
 
+def _store_problem(function):
+    """입력 실행 저장소 보호 실패를 입력 오류와 구분한 고정 문제·다음 행동으로 바꾼다."""
+    import functools
+
+    @functools.wraps(function)
+    def wrapper(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except StoreUnavailable as error:
+            if error.code not in STORE_MESSAGES:
+                raise
+            raise TaskProblem(error.code, STORE_MESSAGES[error.code] + " " + RUNTIME_NOTICE) from None
+    return wrapper
+
+
+@_store_problem
 def check_selection(record, selection, directory):
     """새 동의·실행 생성 전에 선택과 기존 검사 증거를 확인한다."""
     current = record["input_selection"]
@@ -64,6 +82,10 @@ def _drive(service, name, record, context, scope):
         if state["status"] == "completed":
             return service.verified(name)
         if state["status"] in {"blocked_input", "failed_runtime", "security_locked", "cancelled"}:
+            # 공유 런타임 준비·검증 실패는 입력 문제가 아니므로 확인된 원인과 다음 행동을 따로 보인다.
+            runtime = service.runtime_failure(name) if state["status"] == "failed_runtime" else None
+            if runtime is not None:
+                raise TaskProblem(runtime, {**RUNTIME_MESSAGES, **STORE_MESSAGES}[runtime] + " " + RUNTIME_NOTICE)
             raise TaskProblem("INPUT_PREPARATION_FAILED", "입력 준비 실행이 중단됐습니다. 자동 재시도하지 않습니다.")
         approval_id = None
         if state["status"] == "awaiting_approval":
@@ -75,6 +97,7 @@ def _drive(service, name, record, context, scope):
                                                    "snapshot_sha256": record["snapshot"]["snapshot"]["sha256"],
                                                    "input_code_id": scope["input_code_id"], "read_spec": scope["read_spec"],
                                                    "max_output_bytes": scope["max_output_bytes"],
+                                                   "runtime_id": record["input_selection"]["runtime_id"],
                                                    "inspection_id": dependency.get("inspection_id"),
                                                    "inspection_sha256": dependency.get("inspection_sha256")})
             # 선행 검사 지문은 미리보기에서 추출하는 데 그치지 않고 작업 기록의 검증된 값과 대조한다.
@@ -88,6 +111,7 @@ def _drive(service, name, record, context, scope):
     raise TaskProblem("INPUT_STATE_UNCLEAR", "입력 준비 상태를 확인해야 합니다. 자동 재시도하지 않습니다.")
 
 
+@_store_problem
 def prepare_input(record, directory, context, *, selection=None):
     """검사 대기에서는 모델·생성을 막고 준비된 해석만 별도 생성 승인으로 이어 간다."""
     _verify_snapshot(record)
@@ -106,15 +130,21 @@ def prepare_input(record, directory, context, *, selection=None):
         history.append({"inspect_run": previous["inspect_run"], "inspection_id": previous["inspection_id"],
                         "inspection_sha256": previous["inspection_sha256"], "attempt": previous["attempt"],
                         "previous_consent_id": previous["consent_id"], "consent_id": record["consents"]["A"]["consent_id"]})
+    # 승인 미리보기·위임 발급 전에 실행 런타임 구성 ID를 고정한다. 검사·생성 packet과 위임 대조에 같은 값을 쓴다.
+    try:
+        runtime_id = current_runtime_id()
+    except RuntimeUnavailable as error:
+        raise TaskProblem(error.code, RUNTIME_MESSAGES[error.code] + " " + RUNTIME_NOTICE) from None
     prefix = "t" + record["task_id"][:10]
     current = {"status": "inspecting", "attempt": expected_attempt, "spec": spec.to_dict(), "history": history,
                "consent_id": record["consents"]["A"]["consent_id"], "inspect_run": f"{prefix}-i{expected_attempt}",
-               "materialize_run": None}
+               "materialize_run": None, "runtime_id": runtime_id}
     record["input_selection"] = current
     record = context.save(record)
     inspect = TabularInputService("inspect", root=directory / "input_runs")
     arguments = {"snapshot_directory": record["snapshot"]["directory"], "snapshot": record["snapshot"]["snapshot"],
-                 "spec": spec.to_dict(), "limits": record["limits"], "max_output_bytes": MAX_OUTPUT_BYTES}
+                 "spec": spec.to_dict(), "limits": record["limits"], "max_output_bytes": MAX_OUTPUT_BYTES,
+                 "runtime_id": runtime_id}
     inspect.create(current["inspect_run"], **arguments)
     _, result = _drive(inspect, current["inspect_run"], record, context, expected)
     current.update(inspection=result["inspection"], inspection_id=result["inspection"]["inspection_id"],
@@ -139,6 +169,7 @@ def prepare_input(record, directory, context, *, selection=None):
     return context.save(record)
 
 
+@_store_problem
 def check_source(record):
     """후속 단계 전에 원시 복사본과 생성 묶음·승인 연결을 다시 확인한다.
 

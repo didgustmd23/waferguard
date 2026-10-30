@@ -36,6 +36,8 @@ TIME_SPLIT_AVAILABLE = "timestamp_format" in SPLIT_FIELDS
 NO_TARGET = "__no_target__"
 TIME_UNSUPPORTED_MESSAGE = ("통합 작업에서는 시간 형식을 지정할 수 없어 time 분할을 지원하지 않습니다. "
                             "random으로 자동 변경하지 않았습니다. 분할 방식을 직접 선택하세요.")
+TIME_SETTINGS_MESSAGE = ("time을 고르면 timestamp 역할 컬럼과 시간 설정(형식·시간대·복원 주기·행 순서 확인)을 직접 지정해야 합니다. "
+                         "모델은 시간 설정을 정하지 않습니다.")
 CODE_LABELS = {
     "PLAN_FIELDS_INVALID": "역할·분할·전처리 항목 구성이 계약과 다릅니다",
     "ROLES_INVALID": "역할이 역할 계약(1개만 허용되는 역할 중복, 특징 0개 등)에 맞지 않습니다",
@@ -88,7 +90,11 @@ def _defaults():
 
 
 def instructions():
-    """표형 계획의 역할 의미·분할 제약. 기본값은 user 메시지의 base_plan으로 따로 보낸다."""
+    """표형 계획의 역할 의미·분할 제약. 기본값은 user 메시지의 base_plan으로 따로 보낸다.
+
+    표형 v1·v2가 공유하는 안내일 뿐 계약이 아니다. 모델이 따르지 않아도 병합한 계획은 별도 검증(허용 값·분할 제약)에서
+    전체 거부되고 기본 계획으로 진행한다. 길이는 전달 범위(token_budget)를 줄이므로 판단에 필요한 의미만 둔다.
+    """
     roles = [f"{label}={ROLE_MEANINGS[key]}(여러 컬럼 가능)" for label, key in LIST_ROLES.items()]
     roles += [f"{label}={ROLE_MEANINGS[key]}(최대 1개, 해당 컬럼이 없으면 쓰지 않음)" for label, key in SINGLE_ROLES.items()]
     roles.append(f"{EXCLUDED}=사용하지 않음")
@@ -111,7 +117,12 @@ def instructions():
         "보이는 컬럼은 특징으로 쓰지 마세요. 목표에 예측 대상이 있으면 해당 컬럼을 target으로 두세요. "
         "split 제약: train_ratio·validation_ratio·test_ratio는 각각 0과 1 사이이고 합이 1; " + "; ".join(strategies) + ". "
         "병합한 계획 전체가 이 제약을 만족해야 하며(아니면 권장안 전체 거부), 역할을 바꾸면 관련 split 항목도 함께 쓰세요. "
-        "Test 구간에 맞추는 규칙은 없습니다."
+        "Test 구간에 맞추는 규칙은 없습니다. "
+        # 전처리 옵션의 적용 범위와 few_values 의미. 컬럼별 의미는 데이터마다 다르므로 특정 컬럼명을 예로 들지 않는다.
+        "전처리 옵션은 최종 역할 기준으로 일괄 적용됩니다(numeric_imputation·outlier·scaling·binning은 수치형 전체, "
+        "categorical_imputation·unknown_category는 범주형 전체). binning은 수치형 특징의 구간화이며 범주형 인코딩이 아닙니다. "
+        "few_values는 관측값 종류가 적다는 뜻으로 숫자 범주 코드일 수 있으니 역할을 검토하되 이것만으로 단정하지 마세요. "
+        "역할과 옵션을 함께 적용한 계획 전체를 고려하고, 데이터 설명은 제공된 집계와 일치시키세요."
     )
 
 
@@ -298,15 +309,18 @@ class SplitRoleError(ValueError):
         self.code, self.message, self.reason = code, message, reason
 
 
-def check_split_roles(roles, split):
-    """역할×분할 교차 검사. split._partition 실행 검사와 같은 조건이다. 기존 계약 검사를 대신하지 않고 더한다."""
+def check_split_roles(roles, split, *, time_split=False):
+    """역할×분할 교차 검사. split._partition 실행 검사와 같은 조건이다. 기존 계약 검사를 대신하지 않고 더한다.
+
+    time_split은 유형 어댑터가 시간 설정(형식·시간대·주기 등)을 따로 받아 검증할 때만 참이다. 표형 v1은 거짓이다.
+    """
     assigned = set(roles.values())
     strategy = split.get("strategy")
 
     if strategy not in ("random", *STRATEGY_ROLES):
         raise SplitRoleError("SPLIT_STRATEGY_MISSING", "분할 방식을 선택하세요.")
 
-    if strategy == "time" and not TIME_SPLIT_AVAILABLE:
+    if strategy == "time" and not (TIME_SPLIT_AVAILABLE or time_split):
         raise SplitRoleError("TIME_SPLIT_UNSUPPORTED", TIME_UNSUPPORTED_MESSAGE)
 
     required = STRATEGY_ROLES.get(strategy)
@@ -447,8 +461,11 @@ def _profile_reason(names, roles, split):
     return "PROFILE_INVALID"
 
 
-def validate_plan(columns, plan):
-    """계획 전체를 기존 계약으로 확인하고 프로파일·전처리 규칙을 돌려준다. 실패하면 고정 코드의 PlanError."""
+def validate_plan(columns, plan, *, time_split=False):
+    """계획 전체를 기존 계약으로 확인하고 프로파일·전처리 규칙을 돌려준다. 실패하면 고정 코드의 PlanError.
+
+    time_split은 check_split_roles와 같다. 시간 설정 자체의 검증은 그 설정을 받는 유형 어댑터가 한다.
+    """
     names = tuple(row["column"] for row in columns)
 
     if (type(plan) is not dict or set(plan) != set(SECTIONS) or any(type(plan[key]) is not dict for key in SECTIONS)
@@ -482,7 +499,7 @@ def validate_plan(columns, plan):
         raise PlanError(code, CODE_LABELS[code], detail=detail) from error
 
     try:
-        check_split_roles(roles, split)
+        check_split_roles(roles, split, time_split=time_split)
     except SplitRoleError as error:
         detail = None
 
@@ -569,19 +586,24 @@ def target_checks(goal, roles):
     return []
 
 
-def plan_questions(goal, summary, columns, plan):
-    """현재 계획에서 사용자가 정하거나 확인해야 할 항목. 필수 여부는 최종 계획에서 다시 계산한다."""
+def plan_questions(goal, summary, columns, plan, *, time_split=False):
+    """현재 계획에서 사용자가 정하거나 확인해야 할 항목. 필수 여부는 최종 계획에서 다시 계산한다.
+
+    time_split이면 time 분할을 선택지로 두고, time 분할에 쓰는 timestamp 역할에는 제외 질문을 내지 않는다.
+    """
     roles, split = plan["roles"], plan["split"]
     role_options = [{"value": label, "label": label} for label in ROLE_LABELS]
     result = []
-    strategies = [option for option in ("random", "group", "time") if option != "time" or TIME_SPLIT_AVAILABLE]
+    time_split = time_split or TIME_SPLIT_AVAILABLE
+    strategies = [option for option in ("random", "group", "time") if option != "time" or time_split]
+    guide = TIME_SETTINGS_MESSAGE if time_split else TIME_UNSUPPORTED_MESSAGE
 
     if split.get("strategy") is None:
-        result.append(question("split.strategy", "required", "분할 방식을 고르세요. " + TIME_UNSUPPORTED_MESSAGE,
+        result.append(question("split.strategy", "required", "분할 방식을 고르세요. " + guide,
                                path="split.strategy", options=[{"value": item, "label": item} for item in strategies]))
     else:
         try:
-            check_split_roles(roles, split)
+            check_split_roles(roles, split, time_split=time_split)
         except SplitRoleError as error:
             result.append(question("split.strategy.mismatch", "required", error.message, path="split.strategy",
                                    options=[{"value": item, "label": item} for item in strategies]))
@@ -614,11 +636,14 @@ def plan_questions(goal, summary, columns, plan):
     for row in columns:
         name = row["column"]
 
-        if roles.get(name) == _label("timestamp") and not TIME_SPLIT_AVAILABLE:
+        if roles.get(name) == _label("timestamp") and not (time_split and split.get("strategy") == "time"):
             asked.add(name)
             qid = "time_role:" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
-            result.append(question(qid, "required", "timestamp 역할은 시간 형식이 필요하지만 통합 작업에서는 형식을 지정할 수 없어 "
-                                                    "분할 전 품질 검사가 멈춥니다. 시간 정보를 특징에서 빼려면 제외를 고르세요.",
+            text = ("timestamp 역할은 time 분할을 고르고 시간 설정(형식·시간대·주기)을 직접 지정할 때만 쓸 수 있습니다. "
+                    "time 분할을 쓰지 않으면 시간 정보를 특징에서 빼도록 제외를 고르세요." if time_split else
+                    "timestamp 역할은 시간 형식이 필요하지만 통합 작업에서는 형식을 지정할 수 없어 "
+                    "분할 전 품질 검사가 멈춥니다. 시간 정보를 특징에서 빼려면 제외를 고르세요.")
+            result.append(question(qid, "required", text,
                                    path="roles." + name, options=[option for option in role_options if option["value"] == EXCLUDED],
                                    recommended=EXCLUDED, subjects=[name]))
 

@@ -38,6 +38,14 @@ CODE_LABELS = {
 }
 
 
+class RequestWithheld(Exception):
+    """근거를 붙이는 함수가 생성 요청 자체를 보내지 말라고 알린다(검색 근거 동의 불일치). code·rag만 담는다."""
+
+    def __init__(self, code, rag):
+        super().__init__(code)
+        self.code, self.rag = code, rag
+
+
 class RecommendationRejected(ValueError):
     def __init__(self, code, rejection=None):
         super().__init__(code)
@@ -209,7 +217,9 @@ def _plan_view(base_plan, owned, hidden):
             else:
                 plain[key] = value
 
-        view[section] = {"by_value": grouped, **plain} if grouped else plain
+        # 항목이 모두 빠진 구획(사용자 전용 시간 설정 등)은 보내지 않는다.
+        if grouped or plain:
+            view[section] = {"by_value": grouped, **plain} if grouped else plain
 
     return view
 
@@ -219,7 +229,8 @@ def _scope(source, base_plan, fields, detailed, named):
     items = source["items"]
     shown, listed, summarized = items[:detailed], items[detailed:detailed + named], items[detailed + named:]
     owned = {path for item in items for path in item["paths"]}
-    hidden = {path for item in summarized for path in item["paths"]}
+    # 요약만 제공한 대상의 항목과 사용자 전용 항목(user_only, 예: 시간 설정)은 모델 요청·허용 값·병합에서 뺀다.
+    hidden = {path for item in summarized for path in item["paths"]} | {field["path"] for field in fields if field.get("user_only")}
     keys = list(items[0]["detail"]) if items else []
     buckets = {}
 
@@ -341,10 +352,14 @@ def merge(base_plan, value, fields, validate):
             "plan": plan}
 
 
-def request(goal, source, base_plan, fields, validate, config, *, requester=None, on_rejected=None):
+def request(goal, source, base_plan, fields, validate, config, *, requester=None, on_rejected=None, augment=None):
     """로컬 모델에 한 번만 요청한다. 실패하면 자동 재전송하지 않고 기본 계획과 고정 코드를 돌려준다.
 
     source는 어댑터의 권장안 입력({data, instructions, items})이다. 실제 제공 범위는 결과의 coverage에 남는다.
+    augment(payload, config) -> (payload, rag)는 진단 배치를 확정한 요청에 검색 근거를 붙인다(실험적 Graph RAG, 선택).
+    augment.final_fits가 있으면 그 예산으로, 없으면 기존 바이트 예산(_fits)으로 최종 요청을 다시 확인한다.
+    붙인 요청이 예산 검사를 통과하지 못하거나 오류가 나면 근거 없는 요청을 보낸다. 어느 쪽이든 생성 요청은 1회이며,
+    augment를 준 경우에만 결과에 rag(실제 사용 기록)가 생긴다.
     """
     requester = request_local_proposal if requester is None else requester
     fallback = {"summary": [], "notes": [], "changes": [], "questions": [], "dropped_questions": 0, "plan": base_plan,
@@ -353,10 +368,30 @@ def request(goal, source, base_plan, fields, validate, config, *, requester=None
 
     if chosen is None:
         # 예산 안에 맞는 배치가 없으면 모델에 보내지 않는다. 응답 오류와 구분해 기록한다.
-        return dict(fallback, source="default", code="RECOMMENDATION_REQUEST_TOO_LARGE")
+        extra = {} if augment is None else {"rag": None}
+        return dict(fallback, source="default", code="RECOMMENDATION_REQUEST_TOO_LARGE", **extra)
 
     payload, model_fields, coverage = chosen
     fallback["coverage"] = coverage
+
+    if augment is not None:
+        # 근거 구성은 생성 요청 전에 끝낸다. 근거를 붙인 요청이 실패해도 근거 없는 요청으로 다시 보내지 않는다.
+        # 버린 근거는 {"discarded": True}로만 알린다. 사용 기록의 분류·문구는 호출자(task_rag)가 정한다.
+        try:
+            augmented, rag = augment(payload, config)
+        except RequestWithheld as withheld:
+            return dict(fallback, source="default", code=withheld.code, rag=withheld.rag)
+        except Exception:
+            augmented, rag = payload, {"discarded": True}
+
+        # 근거를 넣을 때 쓴 예산(RAG ON의 로컬 토큰 계산 또는 기존 바이트 추정)으로 최종 요청을 다시 확인한다.
+        if augmented is not payload and not getattr(augment, "final_fits", _fits)(augmented, config):
+            augmented, rag = payload, {"discarded": True}
+
+        payload = augmented
+        fallback["rag"] = rag
+
+    extra = {"rag": fallback["rag"]} if "rag" in fallback else {}
 
     try:
         response = requester(payload, config)
@@ -379,4 +414,4 @@ def request(goal, source, base_plan, fields, validate, config, *, requester=None
     except (ValueError, TypeError, KeyError):
         return dict(fallback, source="default", code="RECOMMENDATION_RESPONSE_INVALID")
 
-    return dict(draft, source="model", code=None, coverage=coverage)
+    return dict(draft, source="model", code=None, coverage=coverage, **extra)

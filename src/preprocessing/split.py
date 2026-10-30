@@ -77,7 +77,10 @@ def _timestamps(data, rules):
     if column is None:
         raise ValueError("Time 분할에는 timestamp 역할이 필요합니다.")
 
-    values = data.frame[column]
+    return _parse_times(data.frame[column], rules)
+
+
+def _parse_times(values, rules):
     _required_values(values)
 
     if not pd.api.types.is_datetime64_any_dtype(values) and rules.timestamp_format is None:
@@ -89,6 +92,37 @@ def _timestamps(data, rules):
         raise ValueError("유효한 시간 값이 필요합니다.")
 
     return parsed
+
+
+def time_partition_bounds(values, rules, partitions):
+    """검증 전용. 분할과 같은 파싱으로 구간별 (최소, 최대) 시각 ISO 표기를 계산하고 과거→미래 엄격 순서를 확인한다.
+
+    values는 원래 행 순서의 timestamp 컬럼 값(Series)이다. 같은 시각이 두 구간에 걸치거나 순서가 어긋나면 ValueError.
+    분할을 다시 만들지 않는다(_partition과 무관한 독립 검사).
+    """
+    if not isinstance(rules, SplitRules) or rules.strategy != "time":
+        raise ValueError("time 분할 규칙이 필요합니다.")
+
+    try:
+        times = _parse_times(pd.Series(values).reset_index(drop=True), rules)
+    except (ValueError, TypeError, OverflowError):
+        # 파서 예외 원문에는 원본 값이 들어갈 수 있다. 고정 문구로만 다시 던지고 원인 연결을 남기지 않는다.
+        raise ValueError("time 분할 검증에서 시간 값을 분할 형식으로 읽지 못했습니다.") from None
+
+    if type(partitions) is not dict or set(partitions) != set(SPLITS):
+        raise ValueError("Train·Validation·Test 배정 목록이 필요합니다.")
+
+    flattened = sorted(position for name in SPLITS for position in partitions[name])
+
+    if any(not partitions[name] for name in SPLITS) or flattened != list(range(len(times))):
+        raise ValueError("분할에 빈 구간·행 중복·누락이 있습니다.")
+
+    bounds = [(times.iloc[partitions[name]].min(), times.iloc[partitions[name]].max()) for name in SPLITS]
+
+    if not (bounds[0][1] < bounds[1][0] and bounds[1][1] < bounds[2][0]):
+        raise ValueError("시간 경계가 중복되거나 과거·미래 순서를 위반합니다.")
+
+    return {name: (low.isoformat(), high.isoformat()) for name, (low, high) in zip(SPLITS, bounds)}
 
 
 # ==========================================

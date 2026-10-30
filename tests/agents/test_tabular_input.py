@@ -21,11 +21,20 @@ from src.agents.worker_contract import WorkerLimits, WorkerResult
 from src.preprocessing.tabular_loaders import CsvReadSpec
 
 
-def transport(request, root, cancel):
-    """OS 운송만 모의하고 고정 worker 계산·부모 검증·승인 소비는 실제로 수행한다."""
-    reply = execute_request(request, root)
+# 합성 공유 런타임 구성 ID. 입력 흐름 fixture는 current_runtime_id를 이 값으로 모의한다.
+RUNTIME_ID = "e" * 64
+
+
+def transport(request, root, cancel, *, runtime_id):
+    """OS 운송만 모의하고 고정 worker 계산·부모 검증·승인 소비는 실제로 수행한다.
+
+    실제 transport처럼 승인 packet의 runtime_id로 실행했다고 기록한다(worker도 같은 ID를 대조한다).
+    """
+    reply = execute_request(request, root, runtime_id)
     (Path(request.output_directory) / "worker_result.json").write_text(reply.to_json(), encoding="utf-8")
+    # 실제 transport처럼 부모가 고른 공유 런타임 기록을 남긴다(값은 합성 ID).
     outcome = {"request_id": request.request_id, "profile_cleanup": True,
+               "runtime": {"id": runtime_id, "prepared": False, "timings": {}},
                "launch": {"status": "exited", "exit_code": 0 if reply.status == "succeeded" else 2,
                           "resources": {"status": "succeeded", "cleanup_confirmed": True, "active_processes": 0,
                                         "configured_job_memory_bytes": request.limits.memory_mib * 1024 * 1024,
@@ -66,7 +75,7 @@ class TabularInputTest(unittest.TestCase):
         self.addCleanup(self.mock.stop)
 
     def create(self, item, name, inspection_run=None):
-        return item.create(name, snapshot_directory=str(self.root / "snapshot"), snapshot=asdict(self.snapshot),
+        return item.create(name, snapshot_directory=str(self.root / "snapshot"), snapshot=asdict(self.snapshot), runtime_id=RUNTIME_ID,
                            spec=self.spec.to_dict(), limits=asdict(self.limits), inspection_run=inspection_run,
                            max_output_bytes=8 * 1024 * 1024)
 
@@ -130,8 +139,8 @@ class TabularInputTest(unittest.TestCase):
             self.create(self.materialize, "materialize1", "inspect1")
 
     def test_parent_rejects_tampered_worker_output_and_cleanup_claims(self):
-        def altered(request, root, cancel):
-            result = transport(request, root, cancel)
+        def altered(request, root, cancel, **kwargs):
+            result = transport(request, root, cancel, **kwargs)
             result["launch"]["resources"]["active_processes"] = 1
             return result
 
@@ -145,24 +154,24 @@ class TabularInputTest(unittest.TestCase):
         self.source.write_bytes(b"x,x\n1,2\n")
         self.snapshot = create_snapshot(self.source, self.root / "duplicate", max_input_bytes=65536)
         item = service.TabularInputService("inspect", root=self.root / "runs")
-        item.create("duplicate1", snapshot_directory=str(self.root / "duplicate"), snapshot=asdict(self.snapshot),
+        item.create("duplicate1", snapshot_directory=str(self.root / "duplicate"), snapshot=asdict(self.snapshot), runtime_id=RUNTIME_ID,
                     spec=self.spec.to_dict(), limits=asdict(self.limits))
         self.assertEqual(drive(item, "duplicate1")["status"], "completed")
         self.assertEqual(item.verified("duplicate1")[1]["inspection"]["status"], "review_required")
         with self.assertRaises(ValueError):
-            self.materialize.create("materialize1", snapshot_directory=str(self.root / "duplicate"), snapshot=asdict(self.snapshot),
+            self.materialize.create("materialize1", snapshot_directory=str(self.root / "duplicate"), snapshot=asdict(self.snapshot), runtime_id=RUNTIME_ID,
                                     spec=self.spec.to_dict(), limits=asdict(self.limits), inspection_run="duplicate1")
 
     def test_large_inspection_is_sidecar_not_worker_ipc(self):
         payload = ",".join(f"column_{i}" for i in range(600)) + "\n" + ",".join("1" for _ in range(600)) + "\n"
         self.source.write_text(payload, encoding="utf-8")
         self.snapshot = create_snapshot(self.source, self.root / "wide", max_input_bytes=65536)
-        self.inspect.create("wide1", snapshot_directory=str(self.root / "wide"), snapshot=asdict(self.snapshot),
+        self.inspect.create("wide1", snapshot_directory=str(self.root / "wide"), snapshot=asdict(self.snapshot), runtime_id=RUNTIME_ID,
                             spec=self.spec.to_dict(), limits=asdict(self.limits))
         drive(self.inspect, "wide1")
         folder, result = self.inspect.verified("wide1")
         self.assertGreater((folder / "inspection.json").stat().st_size, 65536)
-        self.materialize.create("wide2", snapshot_directory=str(self.root / "wide"), snapshot=asdict(self.snapshot),
+        self.materialize.create("wide2", snapshot_directory=str(self.root / "wide"), snapshot=asdict(self.snapshot), runtime_id=RUNTIME_ID,
                                 spec=self.spec.to_dict(), limits=asdict(self.limits), inspection_run="wide1")
         _, tool, _ = self.materialize._open("wide2")
         request = tool._request("a" * 32)
@@ -174,7 +183,7 @@ class TabularInputTest(unittest.TestCase):
         _, tool, _ = self.inspect._open("inspect1")
         request = tool._request("a" * 32)
         root = tool._stage(request)
-        reply = execute_request(replace(request, stage="run_eda", action_id="run_eda"), root)
+        reply = execute_request(replace(request, stage="run_eda", action_id="run_eda"), root, RUNTIME_ID)
         self.assertEqual(reply.status, "blocked_input")
         self.assertFalse((Path(request.output_directory) / "operation").exists())
 
@@ -192,7 +201,7 @@ class TabularInputTest(unittest.TestCase):
             return real_lstat(path, *args, **kwargs)
 
         with patch.object(Path, "lstat", restricted):
-            reply = execute_request(request, root)
+            reply = execute_request(request, root, RUNTIME_ID)
         self.assertEqual(reply.status, "succeeded")
 
     def test_materialize_does_not_stat_ungranted_intermediate_folders(self):
@@ -212,7 +221,7 @@ class TabularInputTest(unittest.TestCase):
             return real_lstat(path, *args, **kwargs)
 
         with patch.object(Path, "lstat", restricted):
-            reply = execute_request(request, root)
+            reply = execute_request(request, root, RUNTIME_ID)
         diagnostic = root / "scratch/task/diagnostic.json"
         self.assertEqual(reply.status, "succeeded", diagnostic.read_text() if diagnostic.exists() else None)
         self.assertTrue((root / "output/result/operation/table/SUCCESS.json").is_file())
@@ -222,8 +231,8 @@ class TabularInputTest(unittest.TestCase):
             name = "attack_" + attack
             self.create(self.inspect, name)
 
-            def altered(request, root, cancel):
-                result = transport(request, root, cancel)
+            def altered(request, root, cancel, **kwargs):
+                result = transport(request, root, cancel, **kwargs)
                 folder = Path(request.output_directory) / "operation"
                 if attack == "extra":
                     (folder / "extra.txt").write_text("x", encoding="utf-8")
@@ -269,7 +278,7 @@ class TabularInputTest(unittest.TestCase):
         path.write_text(json.dumps(packet), encoding="utf-8")
         from src.agents.snapshot_eda import _digest
         changed = replace(request, config_id=_digest(packet))
-        self.assertEqual(execute_request(changed, root).status, "blocked_input")
+        self.assertEqual(execute_request(changed, root, RUNTIME_ID).status, "blocked_input")
         self.assertFalse((root / "output/result/operation").exists())
 
     def test_materialize_requires_exact_snapshot_spec_and_limits(self):
@@ -277,7 +286,8 @@ class TabularInputTest(unittest.TestCase):
         for key, value in (("spec", dict(self.spec.to_dict(), empty_field="preserve")),
                            ("limits", dict(asdict(self.limits), memory_mib=1024))):
             args = {"snapshot_directory": str(self.root / "snapshot"), "snapshot": asdict(self.snapshot),
-                    "spec": self.spec.to_dict(), "limits": asdict(self.limits), "inspection_run": "inspect1"}
+                    "spec": self.spec.to_dict(), "limits": asdict(self.limits), "inspection_run": "inspect1",
+                    "runtime_id": RUNTIME_ID}
             args[key] = value
             with self.subTest(key=key), self.assertRaises(ValueError):
                 self.materialize.create("wrong_" + key, **args)
@@ -299,7 +309,7 @@ class TabularInputTest(unittest.TestCase):
                   "from src.agents.worker_contract import WorkerRequest; "
                   "root=pathlib.Path(sys.argv[3]); "
                   "r=WorkerRequest.from_json((root/'input/request.json').read_text(encoding='utf-8')); "
-                  "reply=ns['execute_request'](r,root); "
+                  "reply=ns['execute_request'](r,root,'" + RUNTIME_ID + "'); "
                   "assert reply.status=='succeeded',reply; "
                   "assert 'src.agents.tabular_input_service' not in sys.modules; "
                   "assert 'src.agents.approval_store' not in sys.modules; print('COPIED_WORKER_OK')")

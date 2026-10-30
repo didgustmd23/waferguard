@@ -320,7 +320,7 @@ def _changed(name, candidate, application, expected):
 
 
 def decision_tables(record, plan, origin, recommendation, candidate, application, expected, split_rules):
-    """계획과 결정 절. 결정 출처와 모델 의견(모델 문장)을 계산 사실·실행 기록 대조와 다른 열에 둔다.
+    """계획과 결정 절. 결정 출처와 실행 기록 대조만 둔다. 모델 문장은 model_opinions의 별도 절에 있다.
 
     origin(record, path)은 기존 결정 출처 판정(질문 답변 > 사용자 변경 > 모델 권장 > 기본 계획)이며,
     recommendation은 권장안 사용 여부 문장이다. 실행 기록 대조는 후보 계산 설정(binding.rules)과 분할 실행 규칙만 쓴다.
@@ -332,7 +332,7 @@ def decision_tables(record, plan, origin, recommendation, candidate, application
 
     for section in ("roles", "split", "preparation"):
         for name, value in plan[section].items():
-            source, reason = origin(record, section + "." + name)
+            source, _ = origin(record, section + "." + name)
             sources[source] += 1
 
             if section == "roles":
@@ -349,8 +349,7 @@ def decision_tables(record, plan, origin, recommendation, candidate, application
                 check = "다름(실행 값: " + str(executed[section][name]) + ")"
 
             rows.append({"구분": "분할" if section == "split" else "전처리", "항목": label, "설정 이름": name, "최종 값": shown,
-                         "결정 출처": source, "모델 의견": "-" if not reason else str(reason),
-                         "실행 기록 대조": check,
+                         "결정 출처": source, "실행 기록 대조": check,
                          "실제 변경(근거)": "분할 결과 표 참조" if section == "split" else _changed(name, candidate, application, expected)})
 
     answers = (record.get("confirmed") or {}).get("answers") or []
@@ -363,10 +362,37 @@ def decision_tables(record, plan, origin, recommendation, candidate, application
             "결정 출처는 모델 초안·기본 계획과 확정 값을 비교한 결과입니다. 재시도에서 직전 확정 값을 이어 쓴 항목은 '사용자 변경'으로 "
             "보일 수 있습니다. 컬럼별 역할 출처와 제외 사유는 '컬럼별 처리와 제외 사유' 표에 있습니다."], summary),
         _table("최종 실행 설정 (분할·전처리)", [
-            "모델 의견은 모델이 쓴 문장이며 계산 사실이 아닙니다. 실행 기록 대조는 분할 실행 규칙과 후보 계산 설정(승인된 실행 값)과의 비교입니다.",
+            "모델이 쓴 이유는 '모델 의견과 한계' 절에 따로 있습니다. 실행 기록 대조는 분할 실행 규칙과 후보 계산 설정(승인된 실행 값)과의 비교입니다.",
             "실제 변경은 저장된 집계만 적었습니다. 후보 worker 집계는 부모가 형식·범위·결정적 관계만 확인한 값이고 원본 건수를 다시 센 것이 "
             "아닙니다. 대치값·경계·스케일 기준은 '컬럼별 처리와 제외 사유' 표에 있습니다."], rows),
     ]
+
+
+MODEL_REASON_PREFIX = "모델 권장으로 제외("
+NO_MODEL_REASON = "모델 권장으로 제외(모델 의견: 이유 없음)"
+
+
+def model_opinions(record, plan, origin):
+    """모델 의견 절. 확정 계획에 남은 모델 권장 항목의 문장을 계산 사실과 분리해 모은다. 모델 문장을 해석·요약하지 않는다."""
+    rows = []
+
+    for section in ("roles", "split", "preparation"):
+        for name, value in plan[section].items():
+            source, reason = origin(record, section + "." + name)
+
+            if source == "모델 권장" and reason:
+                rows.append({"항목": section + "." + name, "최종 값": str(value), "모델 의견": str(reason)})
+
+    return {"notes": ["모델이 쓴 문장을 그대로 옮겼으며 계산으로 확인한 사실이나 EDA 해석이 아닙니다.",
+                      "확정 계획에 남은 모델 권장 항목만 표시합니다." if rows else "확정 계획에 남은 모델 의견이 없습니다."],
+            "columns": ["항목", "최종 값", "모델 의견"], "rows": rows}
+
+
+def without_model_reason(rows):
+    """처리 표의 제외 사유에서 모델 문장을 빼고 모델 의견 절을 가리킨다. 공유 처리 표의 v1 문구는 바꾸지 않는다."""
+    return [dict(row, **{"제외 사유": "모델 권장으로 제외('모델 의견과 한계' 절 참조)"})
+            if str(row.get("제외 사유", "")).startswith(MODEL_REASON_PREFIX) and row["제외 사유"] != NO_MODEL_REASON else row
+            for row in rows]
 
 
 # 그래프 축 이름 길이. 순위를 앞에 붙여 줄인 이름이 같아도 서로 다른 막대로 남는다.
@@ -428,6 +454,63 @@ def split_chart(split_rules, proposal):
 
 def _short(text):
     return text if len(text) <= CHART_NAME_LIMIT else text[:CHART_NAME_LIMIT - 1] + "…"
+
+# ==========================================
+# time 분할 입력·시간 범위 (로컬 보고서 전용)
+# - 구간 시각 범위는 부모가 출처 묶음으로 재검증한 분할 제안 요약(time_min/time_max) 값만 쓴다
+# - 분할은 시각을 UTC로 읽는다. 규칙에 시간대가 있으면(현지 벽시계 값) +00:00을 떼고 '현지 시각(시간대)'로,
+#   없으면(오프셋이 있는 값) 'UTC'로 표기한다. 표기 접미어가 예상과 다르면 원문과 '표기 확인 불가'를 함께 보인다
+# - 시각 값은 결과 보고서(로컬)에만 둔다. 오류 문구·worker 진단·로그·모델 요청에는 넣지 않는다
+# ==========================================
+
+def time_text(value, timezone):
+    """분할 요약의 시각 ISO 표기를 사람이 읽을 형태와 기준으로 바꾼다. 값은 바꾸지 않는다."""
+    if type(value) is not str:
+        return MISSING
+    if timezone is not None:
+        return (value[:-6].replace("T", " ") + " (현지 시각, " + timezone + ")" if value.endswith("+00:00")
+                else value + " (표기 확인 불가)")
+    return value[:-6].replace("T", " ") + " (UTC)" if value.endswith("+00:00") else value + " (표기 확인 불가)"
+
+
+def source_label(time_source):
+    """실행 출처 설명. 파생 표면 복원 행 수, 0행이면 기존 생성 표."""
+    if not time_source:
+        return MISSING
+    if time_source["kind"] == "time_restored":
+        return f"파생 표(시간 결측 복원 {time_source['restored_count']}행 적용)"
+    return "기존 작업용 표(복원 대상 0행, 결정 R 없음)"
+
+
+def time_range_table(proposal, time):
+    """구간별 행 수와 시작·끝 시각. 검증된 분할 제안 요약만 쓴다."""
+    rows = [{"구간": item["split"], "행 수": item["rows"], "시작 시각": time_text(item.get("time_min"), time["timezone"]),
+             "끝 시각": time_text(item.get("time_max"), time["timezone"])} for item in (proposal or {}).get("summary", [])]
+    return _table("time 분할 구간별 시간 범위", [
+        "대상: 확정 분할의 행 배정. 시각은 분할 결과 검증(부모가 출처 표의 시간 컬럼으로 구간 범위·순서를 다시 확인)을 통과한 값입니다.",
+        "구간은 과거 → 미래 순서이며 같은 시각의 행은 한 구간에만 있습니다. Test 구간에는 변환을 적용하지 않았습니다."], rows)
+
+
+def time_split_table(time, time_source, split_rules, run_source_id, input_source_id):
+    """time 분할에 쓴 입력 출처와 시간 규칙, 실행 값 대조. 확정 계획·고정 출처·실행 규칙(승인 계약 값)만 쓴다."""
+    def same(left, right):
+        return "실행 값과 같음" if left == right else "실행 값과 다름"
+
+    rows = [{"항목": "입력 출처", "값": source_label(time_source), "실행 값 대조": "-"},
+            {"항목": "실행 출처 ID", "값": run_source_id, "실행 값 대조": "-"},
+            {"항목": "원래 작업용 표 ID", "값": input_source_id,
+             "실행 값 대조": same((time_source or {}).get("parent_source_id"), input_source_id)},
+            {"항목": "시간 컬럼", "값": time["column"], "실행 값 대조": "-"},
+            {"항목": "시간 형식", "값": time["timestamp_format"] or "(시각 자료형)",
+             "실행 값 대조": same(split_rules.get("timestamp_format"), time["timestamp_format"])},
+            {"항목": "시간대", "값": time["timezone"] or "(값의 오프셋)", "실행 값 대조": "-"},
+            {"항목": "복원 주기", "값": time["frequency"] + (f" {time['interval_minutes']}분" if time["interval_minutes"] else ""),
+             "실행 값 대조": "-"},
+            {"항목": "행 순서 확인", "값": "확인함" if time["row_order_confirmed"] else "확인 안 함", "실행 값 대조": "-"},
+            {"항목": "분할 방식", "값": split_rules.get("strategy"), "실행 값 대조": same(split_rules.get("strategy"), "time")}]
+    return _table("시간 분할 입력과 규칙", [
+        "시간 규칙은 확정 계획 값이고, 입력 출처·규칙 지문은 확정 때 다시 확인해 결정 C·D 동의에 결합한 값입니다.",
+        "시간 형식·분할 방식의 실행 값 대조는 분할 실행 계약의 분할 규칙과 비교한 결과입니다."], rows)
 
 
 def target_chart(payloads):

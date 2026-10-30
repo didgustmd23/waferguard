@@ -1,4 +1,9 @@
-"""v2 표형 출처·프로파일·구간을 기존 승인 소비와 커밋 증거에 결합한다."""
+"""v2 표형 출처·프로파일·구간을 기존 승인 소비와 커밋 증거에 결합한다.
+
+표형 출처는 두 종류다. 입력 검사·생성으로 만든 원래 작업용 표(TabularSourceContract)와 시간 결측 복원을 적용한 파생 표
+(TimeRestoredSource). 하위 단계(분할·내보내기)는 두 계약의 같은 인터페이스(source_id·packet·bundle·bundle_directory·limits·
+check_input·origin·commit·run_directory·protected_directories·kind)만 쓴다.
+"""
 
 from dataclasses import asdict, dataclass
 import hashlib
@@ -20,8 +25,11 @@ from .worker_contract import WorkerLimits
 
 
 POLICY_VERSION = "tabular_input_v2"
+TIME_POLICY_VERSION = "tabular_time_restore_v1"
 ADAPTER_ID = "tabular_canonical_v2"
 MAX_CONTRACT_BYTES = 1024 * 1024
+# 하위 단계가 받는 표형 출처 ID 형식(원래 생성 표·시간 복원 파생 표). worker는 같은 값을 tabular_worker_input에 둔다.
+SOURCE_ID_PATTERN = r"tabular_(?:time_)?source:[0-9a-f]{64}"
 
 
 def _require(condition):
@@ -52,14 +60,16 @@ def _spec(payload):
     return CsvReadSpec.from_json(payload).to_dict()
 
 
-def materialization_config_id(snapshot, read_spec_json, inspection_id, limits, execution_code_id, *, inspection_sha256, max_output_bytes):
-    """생성 승인이 고정해야 할 입력·해석·검사 증거·코드·자원 서명을 산출한다."""
+def materialization_config_id(snapshot, read_spec_json, inspection_id, limits, execution_code_id, *, inspection_sha256, max_output_bytes,
+                              execution_runtime_id):
+    """생성 승인이 고정해야 할 입력·해석·검사 증거·코드·실행 런타임·자원 서명을 산출한다."""
     _require(type(snapshot) is Snapshot and type(limits) is WorkerLimits)
     _hash(inspection_id)
     _hash(execution_code_id)
+    _hash(execution_runtime_id)
     from .tabular_input_worker import build_packet
     return _digest(build_packet("materialize", asdict(snapshot), _spec(read_spec_json), asdict(limits), execution_code_id,
-                                inspection_id=inspection_id, inspection_sha256=inspection_sha256, max_output_bytes=max_output_bytes))
+                                runtime_id=execution_runtime_id, inspection_id=inspection_id, inspection_sha256=inspection_sha256, max_output_bytes=max_output_bytes))
 
 
 @dataclass(frozen=True)
@@ -77,6 +87,8 @@ class TabularSourceContract:
     execution_code_id: str
     inspection_sha256: str
     max_output_bytes: int
+    # 생성 승인에 결합한 공유 런타임 구성 ID. 이 필드가 없는 이전 계약은 복원하지 않는다.
+    execution_runtime_id: str
     loader_id: str = "delimited_v1"
     loader_version: str = "1.0.0"
     policy_version: str = POLICY_VERSION
@@ -96,7 +108,7 @@ class TabularSourceContract:
         """묶음 생성 전 승인 인자와 대조할 설정 식별값이다."""
         return materialization_config_id(self.snapshot, self.read_spec_json, self.inspection_id,
                                          self.limits, self.execution_code_id, inspection_sha256=self.inspection_sha256,
-                                         max_output_bytes=self.max_output_bytes)
+                                         max_output_bytes=self.max_output_bytes, execution_runtime_id=self.execution_runtime_id)
 
     @property
     def source_id(self):
@@ -112,7 +124,24 @@ class TabularSourceContract:
                 "materialization_config_id": self.materialization_config_id}
 
     def check_input(self):
-        """생성 승인 소비·커밋과 snapshot·묶음·해석·출처 연결을 매번 다시 확인한다."""
+        """생성 실행의 입력 저장소 보호와 생성 승인 소비·커밋, snapshot·묶음·해석·출처 연결을 매번 다시 확인한다.
+
+        입력 저장소 루트(<input_runs>)를 보유한 채 action 폴더·실행 기록 트리의 소유자·권한을 검사한 뒤 기존 대조를 한다.
+        해시·DB 대조만으로 권한 보호를 대신하지 않는다. 사용 구간 전체의 상위 경로 고정은 호출하는 작업 잠금(task_lock)이 담당한다.
+        """
+        from .protected_store import StoreUnavailable, check_object, check_tree, store_lease, trusted_principals
+        run = Path(self.materialization.run_directory)
+        trusted = trusted_principals()
+        try:
+            with store_lease(run.parent.parent, trusted):
+                _require(run.parent.name == "materialize")
+                if not (check_object(run.parent, trusted) and check_tree(run, trusted)):
+                    raise StoreUnavailable("INPUT_STORE_PERMISSION_INVALID")
+                return self._check_input()
+        except StoreUnavailable:
+            raise StoreUnavailable("INPUT_STORE_PERMISSION_INVALID") from None
+
+    def _check_input(self):
         self.materialization.check()
         scope = self.materialization.scope
         _require((scope.stage, scope.tool_id, scope.source_id, scope.config_id, scope.policy_version)
@@ -130,6 +159,27 @@ class TabularSourceContract:
                     "inspection_sha256": self.inspection_sha256, "policy_version": self.policy_version}
         _require(all(provenance.get(key) == value for key, value in expected.items()))
         return True
+
+    kind = "generated"
+
+    @property
+    def origin(self):
+        """원래 생성 출처(입력 해석·snapshot 사실의 근거). 원래 표는 자기 자신이다."""
+        return self
+
+    @property
+    def commit(self):
+        """묶음을 만든 승인·커밋 증거."""
+        return self.materialization
+
+    @property
+    def run_directory(self):
+        return self.materialization.run_directory
+
+    @property
+    def protected_directories(self):
+        """worker가 쓰면 안 되는 출처 경로(묶음·snapshot)."""
+        return (Path(self.bundle_directory), Path(self.snapshot_directory))
 
     def to_dict(self):
         """로컬 저장용 계약이며 반환값은 모델 전송 자료가 아니다."""
@@ -155,6 +205,141 @@ class TabularSourceContract:
 
 
 @dataclass(frozen=True)
+class TimeRestoredSource:
+    """시간 결측을 복원한 작업용 표(파생 표). 원래 생성 표·커밋된 적용 실행·파생 묶음·규칙·확인한 미리보기 지문에 결합한다.
+
+    식별값은 경로가 아닌 내용(부모 출처·묶음·규칙·미리보기·적용 설정)으로 정한다. 확인(check_input)은 부모 출처·적용 승인 소비·
+    커밋·저장소 보호·묶음·출처 정보를 매번 다시 대조한다. 원래 생성 표는 바뀌지 않는다.
+    """
+
+    parent: TabularSourceContract
+    bundle_directory: str
+    bundle: BundleRef
+    application: CommittedArtifact
+    rules_json: str
+    preview_sha256: str
+    restoration_digest: str
+    restored_count: int
+    limits: WorkerLimits
+    execution_code_id: str
+    execution_runtime_id: str
+    max_output_bytes: int
+    policy_version: str = TIME_POLICY_VERSION
+    schema_version: str = "tabular_time_source_v1"
+    kind = "time_restored"
+
+    def __post_init__(self):
+        _require(type(self.parent) is TabularSourceContract and type(self.bundle) is BundleRef
+                 and type(self.application) is CommittedArtifact and type(self.limits) is WorkerLimits)
+        _require(type(self.bundle_directory) is str and Path(self.bundle_directory).is_absolute())
+        _require(type(self.restored_count) is int and self.restored_count > 0)
+        _hash(self.restoration_digest)
+        _require((self.policy_version, self.schema_version) == (TIME_POLICY_VERSION, "tabular_time_source_v1"))
+        self.application_config_id
+
+    @property
+    def rules(self):
+        return loads(self.rules_json, 65536)
+
+    @property
+    def application_config_id(self):
+        """적용 승인 인자와 대조할 설정 식별값이다."""
+        from .tabular_time_worker import build_packet
+        return _digest(build_packet("apply", self.parent.source_id, asdict(self.parent.bundle), self.rules, asdict(self.limits),
+                                    self.execution_code_id, runtime_id=self.execution_runtime_id,
+                                    max_output_bytes=self.max_output_bytes, preview_sha256=self.preview_sha256))
+
+    @property
+    def rules_signature(self):
+        return _digest(self.rules)
+
+    @property
+    def origin(self):
+        """원래 생성 출처(입력 해석·snapshot 사실의 근거)."""
+        return self.parent
+
+    @property
+    def commit(self):
+        """파생 묶음을 만든 적용 승인·커밋 증거."""
+        return self.application
+
+    @property
+    def run_directory(self):
+        return self.application.run_directory
+
+    @property
+    def protected_directories(self):
+        """worker가 쓰면 안 되는 출처 경로(파생 묶음·부모 묶음·부모 snapshot)."""
+        return (Path(self.bundle_directory), *self.parent.protected_directories)
+
+    def packet(self):
+        """경로·승인 DB를 제외한 worker용 내용 식별 정보다."""
+        return {"schema_version": self.schema_version, "parent_source_id": self.parent.source_id, "bundle": asdict(self.bundle),
+                "rules": self.rules, "rules_signature": self.rules_signature, "preview_sha256": self.preview_sha256,
+                "restoration_digest": self.restoration_digest, "restored_count": self.restored_count,
+                "policy_version": self.policy_version, "application_config_id": self.application_config_id}
+
+    @property
+    def source_id(self):
+        return "tabular_time_source:" + _digest(self.packet())
+
+    def check_input(self):
+        """부모 출처와 적용 실행의 저장소 보호·승인 소비·커밋, 파생 묶음·출처 정보를 다시 확인한다."""
+        from .protected_store import StoreUnavailable, check_object, check_tree, store_lease, trusted_principals
+        self.parent.check_input()
+        run = Path(self.application.run_directory)
+        trusted = trusted_principals()
+        try:
+            with store_lease(run.parent.parent, trusted):
+                _require(run.parent.name == "apply")
+                if not (check_object(run.parent, trusted) and check_tree(run, trusted)):
+                    raise StoreUnavailable("TIME_STORE_PERMISSION_INVALID")
+                return self._check()
+        except StoreUnavailable:
+            raise StoreUnavailable("TIME_STORE_PERMISSION_INVALID") from None
+
+    def _check(self):
+        self.application.check()
+        scope = self.application.scope
+        _require((scope.stage, scope.tool_id, scope.source_id, scope.config_id, scope.policy_version)
+                 == ("ingest", "run_ingest", self.parent.source_id, self.application_config_id, TIME_POLICY_VERSION))
+        directory = _root(self.bundle_directory)
+        _require(directory == self.application.directory / "table" and self.bundle.size_bytes <= self.max_output_bytes)
+        inspect_bundle(directory, expected=self.bundle, max_bytes=self.bundle.size_bytes)
+        provenance = read_bundle_provenance(directory, expected=self.bundle)
+        expected = {"parent_source_id": self.parent.source_id, "rules_signature": self.rules_signature,
+                    "preview_sha256": self.preview_sha256, "restoration_digest": self.restoration_digest,
+                    "restored_count": self.restored_count, "policy_version": self.policy_version}
+        _require(all(provenance.get(key) == value for key, value in expected.items()))
+        return True
+
+    def to_dict(self):
+        """로컬 저장용 계약이며 모델 전송 자료가 아니다."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, value):
+        """정적 계약 타입만 복원하며 복원 자체는 승인·실행을 하지 않는다."""
+        data = dict(_dict(value, cls))
+        data["parent"] = TabularSourceContract.from_dict(data["parent"])
+        data["bundle"] = BundleRef.from_dict(data["bundle"])
+        for key, item_type in (("application", CommittedArtifact), ("limits", WorkerLimits)):
+            data[key] = item_type(**_dict(data[key], item_type))
+        return cls(**data)
+
+
+SOURCE_TYPES = (TabularSourceContract, TimeRestoredSource)
+
+
+def source_from_dict(value):
+    """저장된 표형 출처를 schema_version으로만 골라 복원한다. 등록되지 않은 형식은 거부한다."""
+    _require(type(value) is dict)
+    kinds = {"tabular_source_v2": TabularSourceContract, "tabular_time_source_v1": TimeRestoredSource}
+    _require(value.get("schema_version") in kinds)
+    return kinds[value["schema_version"]].from_dict(value)
+
+
+@dataclass(frozen=True)
 class TabularEdaInputContract:
     """일반 EDA/분할의 필수 프로파일을 v2 출처와 결합한다."""
 
@@ -164,7 +349,7 @@ class TabularEdaInputContract:
     schema_version: str = "tabular_eda_input_v2"
 
     def __post_init__(self):
-        _require(type(self.source) is TabularSourceContract and type(self.limits) is WorkerLimits)
+        _require(type(self.source) in SOURCE_TYPES and type(self.limits) is WorkerLimits)
         _require(self.schema_version == "tabular_eda_input_v2" and self.profile.adapter_id == ADAPTER_ID)
         _require(all(getattr(self.limits, key) <= getattr(self.source.limits, key) for key in WorkerLimits.__dataclass_fields__))
 
@@ -198,7 +383,7 @@ class TabularEdaInputContract:
     def from_dict(cls, value):
         """허용된 v2 출처와 자원 계약만 복원한다."""
         data = dict(_dict(value, cls))
-        data["source"] = TabularSourceContract.from_dict(data["source"])
+        data["source"] = source_from_dict(data["source"])
         data["limits"] = WorkerLimits(**_dict(data["limits"], WorkerLimits))
         return cls(**data)
 
@@ -218,7 +403,7 @@ class TabularPartitionInputContract:
     def __post_init__(self):
         _require(type(self.split) is ConfirmedSplit and type(self.export) is CommittedArtifact and type(self.bundle) is BundleRef)
         _require(self.partition in ("train", "validation") and self.schema_version == "tabular_partition_input_v2")
-        _require(type(self.parent_source_id) is str and re.fullmatch(r"tabular_source:[0-9a-f]{64}", self.parent_source_id) is not None)
+        _require(type(self.parent_source_id) is str and re.fullmatch(SOURCE_ID_PATTERN, self.parent_source_id) is not None)
         self.roles
 
     @property

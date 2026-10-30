@@ -207,7 +207,7 @@ def verify_bundle(directory):
     report = read_metadata(root / "prepared/application.json")
 
     if version["typed"] and (type(provenance.get("source_contract_id")) is not str
-                             or re.fullmatch(r"tabular_source:[0-9a-f]{64}", provenance["source_contract_id"]) is None
+                             or re.fullmatch(r"tabular_(?:time_)?source:[0-9a-f]{64}", provenance["source_contract_id"]) is None
                              or any(type(part) is not dict or part.get("parent_source_id") != provenance["source_contract_id"]
                                     for part in ((report.get("binding") or {}).get("partitions") or {"": None}).values())):
         raise ValueError("typed 전달의 출처 ID가 적용 기록과 다릅니다.")

@@ -21,7 +21,7 @@ WORKER_FILES = tuple(dict.fromkeys(BASE_FILES + (
 CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     ENTRY, "src/agents/array_task_transport.py", "src/agents/array_task_service.py", "src/agents/array_task_results.py",
     "src/agents/array_task.py", "src/agents/array_options.py", "src/agents/task_orchestrator.py",
-    "src/agents/task_consent.py", "src/agents/task_store.py", "src/agents/task_plan.py", "src/agents/task_recommend.py",
+    "src/agents/task_consent.py", "src/agents/task_store.py", "src/agents/protected_store.py", "src/agents/task_plan.py", "src/agents/task_recommend.py",
     "src/agents/task_adapters.py", "src/agents/delegated_approval.py", "src/agents/workflow_approval.py",
     "src/agents/snapshot_eda.py", "src/agents/audit.py", "src/agents/cli.py", "src/agents/task_report.py",
 )))

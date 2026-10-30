@@ -93,8 +93,13 @@ class V2RoleSpecTest(TabularTaskV2Fixture):
         self.assertEqual([key for key in v1_content["allowed_values"] if key.startswith("roles.")], ["roles.*"])
         v2_fields = {field["path"]: field for field in adapter.plan_fields(stored)}
         self.assertEqual(v2_fields["roles.id"]["options"], [o for o in v1_fields["roles.id"]["options"] if o != "수치형"])
-        self.assertEqual({path: field for path, field in v2_fields.items() if not path.startswith("roles.")},
-                         {path: field for path, field in v1_fields.items() if not path.startswith("roles.")})
+        # 분할·전처리 명세는 같다. v2만 계획 단계에서 time 분할을 고를 수 있고(미지원 표시 없음), 사용자 전용 시간 설정 항목이 있다.
+        shared = {path: field for path, field in v2_fields.items() if not path.startswith(("roles.", "time."))}
+        self.assertEqual(shared, {path: field for path, field in v1_fields.items()
+                                  if not path.startswith("roles.") and path != "split.strategy"} | {"split.strategy": shared["split.strategy"]})
+        self.assertEqual(v1_fields["split.strategy"], dict(shared["split.strategy"], unsupported=["time"]))
+        self.assertTrue(all(field["user_only"] for path, field in v2_fields.items() if path.startswith("time.")))
+        self.assertFalse([path for path in v1_fields if path.startswith("time.")])
 
     def test_old_records_without_sub_diagnostic_keep_default_plan_notice(self):
         stored = self.diagnosed()

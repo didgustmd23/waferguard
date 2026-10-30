@@ -64,6 +64,7 @@ class TaskInputInterpretationTest(unittest.TestCase):
         self.start_patch(patch.dict(task_adapters.ADAPTERS, {_Adapter.KIND: _Adapter}))
         self.start_patch(patch.object(task_adapters, "select", return_value=_Adapter.KIND))
         self.start_patch(patch.object(service, "run_input_worker", side_effect=inputs.transport))
+        self.start_patch(patch.object(flow, "current_runtime_id", return_value=inputs.RUNTIME_ID))
         self.start_patch(patch.object(orchestrator, "_recommend", side_effect=self.recommend))
         self.new_task()
 

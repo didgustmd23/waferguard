@@ -325,13 +325,19 @@ def _record_approval(name, preview, code, authorize=None):
         if _approval_preview(directory, selection, run) != preview:
             raise ValueError("승인 확인 중 입력·코드·계획 또는 상태가 변경되었습니다.")
 
-        if authorize is not None:
-            authorize(preview)
-
+        evidence = authorize(preview) if authorize is not None else None
         current_state = run.states.load()
         approval_path = directory / "approval.json"
 
         scope = run.executor.scope_for("run_pipeline")
+
+        if evidence is not None:
+            # 위임 발급은 판정기가 사용한 동의 근거와 범위 해시를 승인 DB 발급 전에 남긴다(실패하면 발급 없음).
+            import hashlib
+            digest = hashlib.sha256(json.dumps(asdict(scope), ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+            append_event(directory / "events.jsonl", "approval_requested", code, stage=current_state.current_stage,
+                         revision=current_state.revision, evidence=dict(evidence, scope_sha256=digest))
+
         record = run.approvals.record_confirmed_approval(scope)
         approval_record = {
             "approval_id": record.approval_id,
@@ -345,10 +351,13 @@ def _record_approval(name, preview, code, authorize=None):
 
         current_state.approval_ids.append(record.approval_id)
         run.states.save(current_state, expected_revision=current_state.revision)
-        append_event(
-            directory / "events.jsonl", "approval_requested", code,
-            stage=current_state.current_stage, revision=current_state.revision,
-        )
+
+        # 사용자 직접 승인은 기존처럼 발급 뒤에 기록한다.
+        if evidence is None:
+            append_event(
+                directory / "events.jsonl", "approval_requested", code,
+                stage=current_state.current_stage, revision=current_state.revision,
+            )
 
     return {
         "status": "approval_recorded",

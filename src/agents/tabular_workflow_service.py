@@ -34,7 +34,10 @@ def code_id():
                  "src/agents/csv_handoff_contract.py", "src/agents/tabular_source_contract.py",
                  "src/agents/tabular_input_service.py", "src/agents/tabular_preparation_worker.py",
                  "src/preprocessing/tabular_bundle.py", "src/agents/preparation_apply_cli.py",
-                 "src/agents/preparation_pipeline_cli.py", "src/agents/preparation_apply_contract.py"):
+                 "src/agents/preparation_pipeline_cli.py", "src/agents/preparation_apply_contract.py",
+                 # 시간 복원 파생 표를 실행 출처로 열고 다시 검증하는 코드(결정 C·D 위임 직전 대조에 쓰인다).
+                 "src/agents/tabular_time_service.py", "src/agents/tabular_time_flow.py", "src/agents/tabular_time_worker.py",
+                 "src/agents/tabular_time_results.py"):
         digest.update(name.encode())
         digest.update((root / name).read_bytes())
     return digest.hexdigest()
@@ -61,6 +64,25 @@ def _same_source(found, expected):
 PROJECT = Path(__file__).resolve().parents[2]
 INPUT_ROOT = PROJECT / "logs/agents/tabular_input"
 TASK_ROOT = PROJECT / "logs/agents/tasks"
+
+
+def opened_source(run_directory):
+    """완료된 출처 실행 폴더(입력 생성 또는 시간 복원 적용)에서 승인·커밋을 재검증한 출처 계약을 돌려준다.
+
+    입력 생성은 _materialized와 같은 신뢰 루트, 시간 복원 적용은 작업 폴더의 time_runs/apply 아래 실행만 받는다.
+    외부 폴더·다른 이름의 실행 폴더를 신뢰 루트로 쓰지 않는다.
+    """
+    from .artifacts import _root
+    from .tabular_time_service import TabularTimeService
+
+    path = Path(run_directory)
+    if path.parent.name == "materialize":
+        return _materialized(path)[2]
+    root = path.parent.parent
+    if path.parent.name != "apply" or root.name != "time_runs" or root.parent.parent != TASK_ROOT or root.parent.name == "":
+        raise ValueError("관리 루트 아래의 표형 입력 생성 또는 시간 복원 적용 실행 폴더가 필요합니다.")
+    _root(root)
+    return TabularTimeService("apply", root=root).derived_source(path.name)
 
 
 def _materialized(run_directory):
@@ -104,14 +126,14 @@ def preview_creation(module_id, values, limits):
     if module_id == "tabular_split_review":
         from .tabular_source_contract import TabularEdaInputContract
 
-        _, _, source = _materialized(selected["source_run"])
+        source = opened_source(selected["source_run"])
         _same_source(source.source_id, source_id)
         path = Path(selected["profile"])
         profile = profile_from_dict(read_metadata(path))
         if profile.adapter_id != "tabular_canonical_v2" or profile.workflow_id != "split_review_v1" or profile.split_rules is None:
             raise ValueError("표형 v2 분할 검토 프로파일이 필요합니다.")
         TabularEdaInputContract(source, json.dumps(profile.to_dict(), ensure_ascii=False), limits).check_input()
-        parents["materialization"] = source.materialization.marker_sha256
+        parents["materialization"] = source.commit.marker_sha256
         files[str(path)] = _fingerprint(path)
         target = split_cli._directory(name)
     elif module_id in ("tabular_partition_export", "tabular_prepare_candidate"):
@@ -183,8 +205,8 @@ def create(preview, *, confirmed=False):
     parents = packet["parents"]
     # 재대조 직후 다시 연 객체도 미리보기에서 고정한 출처·생성·분할 증거와 같아야 한다.
     if module == "tabular_split_review":
-        _, _, source = _materialized(values["source_run"])
-        if source.source_id != parents["source"] or source.materialization.marker_sha256 != parents["materialization"]:
+        source = opened_source(values["source_run"])
+        if source.source_id != parents["source"] or source.commit.marker_sha256 != parents["materialization"]:
             raise ValueError("미리보기 이후 표형 생성 출처가 변경됐습니다.")
         profile = profile_from_dict(read_metadata(Path(values["profile"])))
         result = split_cli.create_from_tabular(name, source, profile, limits, confirmed=True)
@@ -428,7 +450,9 @@ def _report_sources(runs, source_contract_id):
 
     source = split.contract.source
     source.check_input()
-    service, name, _ = _materialized(Path(source.materialization.run_directory))
+    # 입력 해석·snapshot 사실은 원래 생성 출처(파생 표면 부모)에서 읽는다.
+    origin = source.origin
+    service, name, _ = _materialized(Path(origin.materialization.run_directory))
     _, materialized = service.verified(name)
     inspection = materialized["inspection"]
     split_outputs = _outputs(verified["split"])
@@ -439,10 +463,15 @@ def _report_sources(runs, source_contract_id):
         raise ValueError("전달 묶음이 승인된 적용 결과와 다릅니다.")
     eda_step = next(item for item in managers["split"].plan.steps if item.stage == "run_eda")
     return {
-        "source": {"source_contract_id": source.source_id, "snapshot_sha256": source.snapshot.sha256,
-                   "loader": source.loader_id, "read_spec": json.loads(source.read_spec_json),
-                   "inspection_id": source.inspection_id, "header_mapping": inspection["header_mapping"],
+        "source": {"source_contract_id": source.source_id, "snapshot_sha256": origin.snapshot.sha256,
+                   "loader": origin.loader_id, "read_spec": json.loads(origin.read_spec_json),
+                   "inspection_id": origin.inspection_id, "header_mapping": inspection["header_mapping"],
                    "columns": inspection["columns"], "rows": inspection["rows"]},
+        # 실행 출처가 시간 복원 파생 표면 그 결합 사실(검증한 계약 값). 원래 생성 표면 None이다.
+        "time_source": None if source.kind != "time_restored" else {
+            "kind": source.kind, "parent_source_id": source.parent.source_id, "restored_count": source.restored_count,
+            "rules": source.rules, "rules_signature": source.rules_signature, "preview_sha256": source.preview_sha256,
+            "restoration_digest": source.restoration_digest},
         # 검증을 마친 커밋 폴더라도 원본을 다시 열 때는 완료 표식의 해시에 묶인 바이트만 쓴다.
         # quality는 승인 체인에 묶인 기대 해시가 없어 완료 표식의 손상 검사 수준이다.
         "quality": _committed_json(split_outputs["audit"], "quality/quality.json"),

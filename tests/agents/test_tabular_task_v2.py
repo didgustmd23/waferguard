@@ -9,7 +9,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from src.agents import task_adapters, task_orchestrator as orchestrator, task_store
+from src.agents import task_adapters, task_orchestrator as orchestrator, task_report, task_store
 from src.agents.csv_handoff_contract import load_handoff_partition
 from src.agents.llm_config import load_local_config
 from src.agents.llm_task_assist import PREPARATION_FIELDS
@@ -36,6 +36,8 @@ def add_v2_patches(test, store, handoff_runs):
 
     test.start_patch("src.agents.tabular_workflow_service.TASK_ROOT", new=Path(store))
     test.start_patch("src.agents.tabular_input_service.run_input_worker", side_effect=input_fixture.transport)
+    # 공유 런타임 구성 ID 계산(원본 환경 전체 해시)도 모의한다. 실제 격리 검사는 이 모의를 쓰지 않는다.
+    test.start_patch("src.agents.tabular_input_flow.current_runtime_id", return_value=input_fixture.RUNTIME_ID)
     for module in ("tabular_input_service", "tabular_workflow_service"):
         test.start_patch("src.agents." + module + "._current_actor", return_value="synthetic_actor")
     test.start_patch("src.agents.tabular_workflow_service.TabularWorkflowService.runtime",
@@ -156,6 +158,17 @@ class TabularTaskV2Test(TabularTaskV2Fixture):
         self.assertEqual([row["건수"] for row in target_chart["rows"]], [row["건수"] for row in target_rows])
         self.assertIn("### 요청·확정 분할 비율 (구간별)", task["report"]["text"])
         self.assertIn("### target 클래스 분포 (전체 입력, 분할 전)", task["report"]["text"])
+        # 그림 파일은 보고서 폴더 안 상대 경로로 연결되고 EDA PNG는 검증된 바이트 그대로다.
+        figures = facts["figures"]
+        self.assertEqual({item["status"] for item in figures["items"]}, {"saved"})
+        self.assertEqual({"split_ratio.png", "target_distribution.png"} - {item["file"] for item in figures["items"]}, set())
+        folder = Path(task["report"]["path"]).parent / figures["directory"]
+        self.assertEqual({path.name for path in folder.iterdir()}, {item["file"] for item in figures["items"]})
+        self.assertTrue(all(f"]({figures['directory']}/{item['file']})" in task["report"]["text"] for item in figures["items"]))
+        verified = {item["label"]: item["data"] for item in task_report.verified_images(task)}
+        self.assertTrue(verified)
+        self.assertTrue(all((folder / label).read_bytes() == data for label, data in verified.items()))
+        self.assertIn("## 모델 의견과 한계 (계산 사실 아님)", task["report"]["text"])
         # 결과 파일은 자료형을 보존한 reader로 바로 쓸 수 있다.
         features, rows = load_handoff_partition(Path(facts["outputs"]["bundle"]), "train")
         self.assertEqual(rows["id"].tolist(), ["0012", "0034", "0056"])

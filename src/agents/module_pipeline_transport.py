@@ -37,7 +37,7 @@ CONTROL_FILES = tuple(dict.fromkeys(BASE_CONTROLS + WORKER_FILES + (
     "src/agents/pipeline_approval_cli.py", "src/agents/pipeline_binding_registry.py",
     "src/agents/pipeline_approval.py", "src/agents/pipeline_csv_execution.py",
     # 입력 진단 승인을 위임 발급하는 작업 조정기·동의 판정 코드와 조정기가 쓰는 초안·확인 검사
-    "src/agents/task_orchestrator.py", "src/agents/task_consent.py", "src/agents/task_store.py",
+    "src/agents/task_orchestrator.py", "src/agents/task_consent.py", "src/agents/task_store.py", "src/agents/protected_store.py",
     "src/agents/llm_task_assist.py", "src/agents/task_adapters.py", "src/agents/tabular_task.py",
     "src/agents/task_plan.py", "src/agents/task_recommend.py", "src/agents/delegated_approval.py",
     "src/agents/strict_json.py",
@@ -151,8 +151,11 @@ def run_pipeline_worker(request, root, cancel_event):
         raise
     finally:
         try:
-            report_progress("cleanup")
-            outcome["profile_cleanup"] = container.close() if container is not None else True
+            try:
+                report_progress("cleanup")
+            finally:
+                # 진행 표시 구독자가 어떤 예외(화면 재실행 신호 포함)로 끊겨도 프로필 정리는 건너뛰지 않는다.
+                outcome["profile_cleanup"] = container.close() if container is not None else True
         except Exception as error:
             # 정리 예외로 원래 실패 진단을 덮어쓰지 않는다. 정리 확인이 없으면
             # 상위 실행기는 결과를 성공으로 커밋할 수 없다.

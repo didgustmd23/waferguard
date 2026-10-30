@@ -26,6 +26,10 @@ class ProcessInfo(ct.Structure):
     _fields_ = [("process", wt.HANDLE), ("thread", wt.HANDLE), ("pid", wt.DWORD), ("tid", wt.DWORD)]
 
 
+class SidAndAttributes(ct.Structure):
+    _fields_ = [("sid", ct.c_void_p), ("attributes", wt.DWORD)]
+
+
 class SecurityCapabilities(ct.Structure):
     _fields_ = [("sid", ct.c_void_p), ("capabilities", ct.c_void_p), ("count", wt.DWORD), ("reserved", wt.DWORD)]
 
@@ -54,6 +58,8 @@ class AppContainer:
         self.advapi.ConvertSidToStringSidW.argtypes = [ct.c_void_p, ct.POINTER(ct.c_void_p)]
         self.advapi.ConvertSidToStringSidW.restype = wt.BOOL
         self.advapi.FreeSid.argtypes = [ct.c_void_p]
+        self.advapi.ConvertStringSidToSidW.argtypes = [wt.LPCWSTR, ct.POINTER(ct.c_void_p)]
+        self.advapi.ConvertStringSidToSidW.restype = wt.BOOL
         self.kernel.LocalFree.argtypes = [ct.c_void_p]
         self.kernel.LocalFree.restype = ct.c_void_p
         self.kernel.InitializeProcThreadAttributeList.argtypes = [ct.c_void_p, wt.DWORD, wt.DWORD, ct.POINTER(ct.c_size_t)]
@@ -100,9 +106,20 @@ class AppContainer:
 
         return cleaned
 
-    def launch(self, executable, arguments, environment, cwd, *, seconds=60, on_started=None, limits=None, cancel_event=None):
-        """고정 probe를 capabilities 없이 실행한다. 핸들 상속·셸·네트워크 권한은 주지 않는다."""
+    def launch(self, executable, arguments, environment, cwd, *, seconds=60, on_started=None, limits=None, cancel_event=None,
+               capabilities=()):
+        """고정 probe를 실행한다. 핸들 상속·셸·네트워크 권한은 주지 않는다.
+
+        capabilities는 비어 있거나 공유 런타임 읽기용 고정 capability SID 하나(worker_runtime.capability_sid())만 받는다.
+        다른 이름 파생·네트워크 capability는 모두 거부한다. 기본값은 기존처럼 capability 0개다.
+        """
         import subprocess
+
+        if capabilities != ():
+            from .worker_runtime import capability_sid
+
+            if type(capabilities) is not tuple or capabilities != (capability_sid(),):
+                raise ValueError("APPCONTAINER_CAPABILITY_INVALID")
 
         length = ct.c_size_t()
         self.kernel.InitializeProcThreadAttributeList(None, 1, 0, ct.byref(length))
@@ -116,6 +133,7 @@ class AppContainer:
             raise OSError("APPCONTAINER_ATTRIBUTES_FAILED")
 
         process = ProcessInfo()
+        sids = []
         started = False
         finished = False
         job = None
@@ -125,9 +143,19 @@ class AppContainer:
             if limits is not None:
                 job = WindowsJob(limits)
 
-            capabilities = SecurityCapabilities(self.sid, None, 0, 0)
+            for text in capabilities:
+                sid = ct.c_void_p()
 
-            if not self.kernel.UpdateProcThreadAttribute(attributes, 0, 0x20009, ct.byref(capabilities), ct.sizeof(capabilities), None, None):
+                if not self.advapi.ConvertStringSidToSidW(text, ct.byref(sid)):
+                    raise OSError(ct.get_last_error(), "APPCONTAINER_CAPABILITIES_FAILED")
+
+                sids.append(sid)
+
+            # SID_AND_ATTRIBUTES 배열. SE_GROUP_ENABLED(0x4)로 켠다.
+            entries = (SidAndAttributes * max(len(sids), 1))(*[SidAndAttributes(sid, 0x4) for sid in sids])
+            security = SecurityCapabilities(self.sid, ct.cast(entries, ct.c_void_p) if sids else None, len(sids), 0)
+
+            if not self.kernel.UpdateProcThreadAttribute(attributes, 0, 0x20009, ct.byref(security), ct.sizeof(security), None, None):
                 raise OSError("APPCONTAINER_CAPABILITIES_FAILED")
 
             startup = StartupInfoEx()
@@ -194,3 +222,6 @@ class AppContainer:
                     self.kernel.CloseHandle(handle)
 
             self.kernel.DeleteProcThreadAttributeList(attributes)
+
+            for sid in sids:
+                self.kernel.LocalFree(sid)

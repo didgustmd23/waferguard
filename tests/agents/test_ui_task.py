@@ -91,7 +91,7 @@ class TaskScreenTest(unittest.TestCase):
         self.assertFalse(app.exception, [item.value for item in app.exception])
         self.assertTrue(any(item.value == "최종 결과" for item in app.subheader))
         headings = [item.value for item in app.markdown]
-        for title in ("#### 핵심 결과와 주요 문제", "#### 컬럼별 처리와 제외 사유", "#### 실제 전후 비교", "#### 그래프",
+        for title in ("#### 핵심 결과와 주요 문제", "#### 컬럼별 처리와 제외 사유", "#### 실제 전후 비교",
                       "#### 경고: 정보 손실·미처리·미검증", "#### 참고 사항", "#### 적용 구간과 결과 파일 활용"):
             self.assertIn(title, headings)
         self.assertTrue(app.dataframe)
@@ -100,6 +100,10 @@ class TaskScreenTest(unittest.TestCase):
         for title in ("■ 요청·확정 분할 비율 (구간별)", "■ target 클래스 분포 (전체 입력, 분할 전)", "■ 분할 EDA 그래프 (검증된 PNG)"):
             self.assertIn(title, texts)
         self.assertEqual(len(app.get("vega_lite_chart")), 2)
+        # 그래프는 해당 절에 있고 모델 의견은 접힌 별도 절이다.
+        self.assertNotIn("#### 그래프", headings)
+        opinions = next(item for item in app.expander if item.label == "모델 의견과 한계 (계산 사실 아님)")
+        self.assertFalse(opinions.proto.expanded)
         self.assertFalse(any(self.root.name in str(item.value) for item in app.text if "보고서 파일" not in item.value))
         self.assertEqual(self.calls.count("apply_preparation"), 1)
         self.assertEqual(self.model_calls.call_count, 1)
@@ -128,13 +132,15 @@ class TaskScreenTest(unittest.TestCase):
         next(item for item in app.button if item.label == "작업 시작").click().run()
         self.assertFalse(app.exception, [item.value for item in app.exception])
 
+        # v2는 계획 단계에서 time을 고를 수 있지만 시간 설정은 사용자가 직접 정한다. 모델의 time 제안은 random으로 바꾸지 않고 비운다.
         strategy = next(item for item in app.selectbox if item.label == "분할 방식")
         self.assertIsNone(strategy.value)
-        self.assertNotIn("time", strategy.options)
+        self.assertIn("time", strategy.options)
         self.assertEqual(sum(item.value.startswith("현재 로컬 모델의 한계:")
                              and "내용의 타당성을 보장하지 않습니다" in item.value
                              for item in app.text), 1)
-        self.assertTrue(any("random으로 자동 변경하지 않았습니다" in item.value for item in app.text))
+        self.assertTrue(any("모델이 time 분할을 제안했습니다." in item.value and "모델은 시간 설정을 정하지 않습니다" in item.value
+                            for item in app.text))
         # 분할 방식과 target 미지정은 모두 필수 질문으로 드러난다.
         self.assertTrue(any("[필수]" in item.value and "분할 방식" in item.value for item in app.text))
         self.assertTrue(any("[필수]" in item.value and "target(예측 대상)이 지정되지 않았습니다" in item.value for item in app.text))
@@ -407,6 +413,36 @@ class TaskScreenTest(unittest.TestCase):
 
         self.assertTrue(any("크기 상한(512 KiB)" in item.value for item in app.error))
         self.assertFalse(any("새 작업으로 시작하세요" in item.value for item in app.error))
+
+    def test_goal_guide_is_shown_without_filling_the_goal_and_typed_goal_is_sent_unchanged(self):
+        from streamlit.testing.v1 import AppTest
+
+        from src.ui import task_view
+
+        app = AppTest.from_file(str(PROJECT_ROOT / "src/ui/app.py"), default_timeout=180).run()
+        goal = app.text_area(key="task_goal")
+        # 안내·예시는 표시만 한다. 입력란은 비어 있고 특정 데이터셋 컬럼명을 기본값처럼 채우지 않는다.
+        self.assertEqual(goal.value, "")
+        self.assertNotIn("Survived", goal.placeholder)
+        self.assertIn(task_view.GOAL_NOTICE, [item.value for item in app.caption])
+        self.assertTrue(any(item.label == "목표 작성 안내 (선택 사항)" for item in app.expander))
+        texts = [item.value for item in app.text]
+        self.assertIn(task_view.GOAL_EXAMPLE, texts)
+        self.assertTrue(all("- " + item in texts for item in task_view.GOAL_ITEMS))
+
+        typed = "  생존 여부 예측. 대상 컬럼은 label, id는 식별자로만 둡니다.\n그룹은 모릅니다.  "
+        app.text_input(key="_widget_task_source").set_value(str(self.source))
+        goal.set_value(typed)
+        app.checkbox(key="task_consent_a").check()
+        real = flow.orchestrator.start_task
+
+        with patch("src.agents.task_orchestrator.start_task", side_effect=real) as start:
+            next(item for item in app.button if item.label == "작업 시작").click().run()
+
+        self.assertFalse(app.exception, [item.value for item in app.exception])
+        self.assertEqual(start.call_args.args[0], typed)
+        # 화면은 적은 문장을 바꾸지 않고 전달하며, 기록에도 그대로 저장된다(기존 저장 형식).
+        self.assertEqual(flow.task_store.load_task(next(self.store.iterdir()).name, root=self.store)["goal"], typed)
 
     def test_non_admin_server_cannot_start_task(self):
         from streamlit.testing.v1 import AppTest

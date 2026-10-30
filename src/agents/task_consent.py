@@ -1,10 +1,12 @@
-"""작업 결정(A·C·D) 동의 기록과 위임 승인 발급 조건. 일치 판정은 계약 코드가 하며 LLM이 정하지 않는다.
+"""작업 결정(A·C·D·T·R) 동의 기록과 위임 승인 발급 조건. 일치 판정은 계약 코드가 하며 LLM이 정하지 않는다.
 
 # ==========================================
 # 위임 근거 (docs/agents/design/CSV_TASK_AGENT.md 2.5절·7.6절)
 # - A: 입력 진단(허용한 정비 포함)
 # - C: 확정한 계획의 처리 단계(결정 D 전까지)
 # - D: 사용자가 본 적용 대상의 적용과 결과 전달
+# - T: 확정 전 계획의 시간 결측 복원 미리보기(계획 지문·시간 규칙·입력 출처 결합, 표형 v2 time 계획)
+# - R: 사용자가 본 복원 미리보기 결과(미리보기 지문)의 적용과 파생 작업용 표 생성
 # - 결정별 허용 (모듈, 단계)는 확정 계획에서 계산해 동의 내용(allowed)에 고정한다. 고정 표를 두지 않는다.
 # - B(역할·기준 확인)만으로는 실행 권한을 주지 않는다.
 # ==========================================
@@ -20,7 +22,7 @@ from .cli import _current_actor
 
 CONSENT_VERSION = "task_consent_v2"
 LIFETIME = timedelta(hours=12)
-DECISIONS = frozenset({"A", "C", "D"})
+DECISIONS = frozenset({"A", "C", "D", "T", "R"})
 
 
 def _digest(value):
@@ -96,6 +98,10 @@ def authorizer(task, decision, module_id, stage, *, expected, bound=None, summar
         if any(summary.get(key) != value for key, value in bound.items()):
             raise ValueError("승인 범위의 입력이 동의 후 확보한 값과 다릅니다.")
 
-        check(task["consents"].get(decision), decision, task["task_id"], now=now)
+        consent = task["consents"].get(decision)
+        check(consent, decision, task["task_id"], now=now)
+        # 위임 기록에 남길 사용 근거(추적용). 서명이 아니므로 동의의 진본 인증으로 쓰지 않는다.
+        return {"decision": decision, "consent_id": consent["consent_id"], "consent_sha256": consent["content_sha256"],
+                "task_id": task["task_id"], "attempt": task.get("attempt", 0)}
 
     return authorize

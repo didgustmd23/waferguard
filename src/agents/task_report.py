@@ -5,17 +5,43 @@ LLM을 쓰지 않는다. 사실에 없는 수치는 추측하지 않고 '미집�
 
 import json
 
-from . import task_adapters, task_recommend
+from . import task_adapters, task_rag, task_recommend
 from .task_plan import PlanError, get_path
 
 
 MISSING = "미집계"
+MODEL_LIMITATION_NOTICE = (
+    "현재 로컬 모델의 한계: 확인한 사례에서 진단 수치 해석, 라벨·그룹 구분, 전처리 권장 이유에 오류가 관찰됐습니다. "
+    "응답 형식 검사를 통과해도 내용의 타당성을 보장하지 않습니다. 계산 결과와 모델 의견을 구분해 확인하세요. "
+    "이 한계를 모든 모델에 일반화하지 않으며, 다른 로컬·API 모델의 품질은 별도 평가가 필요합니다."
+)
+
+
+# 화면·보고서 표시 문구. task_recommend는 RAG 고정 출처이자 코드 지문 대상이라 그 라벨을 바꾸지 않고 표시만 정확히 한다.
+DISPLAY_LABELS = {
+    "RECOMMENDATION_CHANGE_INVALID": "모델 변경 항목이 권장안 계약에 맞지 않았습니다"
+                                     "(항목 형식 오류, 허용되지 않은 경로·값, 같은 경로 중복 중 하나이며 하위 원인은 기록되지 않았습니다)",
+}
+# 모델 응답을 받았지만 권장안 전체를 쓰지 않은 경우의 안내. 모델 응답 원문·값은 담지 않는다.
+REJECTED_GUIDANCE = "모델 변경 0건을 적용했고 자동으로 다시 요청하지 않습니다. 아래 질문과 계획 양식에서 직접 정할 수 있습니다."
 
 
 def code_label(record, code):
     """권장안 거부·모델 오류 코드의 고정 설명. 등록되지 않은 코드는 설명하지 않는다."""
-    labels = {**task_recommend.CODE_LABELS, **task_adapters.adapter(record["kind"]).CODE_LABELS}
+    labels = {**task_recommend.CODE_LABELS, **task_rag.REQUEST_CODE_LABELS, **task_adapters.adapter(record["kind"]).CODE_LABELS,
+              **DISPLAY_LABELS}
     return labels.get(code)
+
+
+def code_text(record, code):
+    """고정 설명과 코드를 함께 쓴다. 등록되지 않은 값은 기록에서 그대로 옮기지 않는다."""
+    label = code_label(record, code)
+    return "사유 코드 확인 불가" if label is None else f"{label} ({code})"
+
+
+def recommendation_guidance(record):
+    """권장안 거부 뒤 처리 결과와 다음 행동. 응답 형식·내용 거부에만 있고 연결 실패 등에는 없다."""
+    return [REJECTED_GUIDANCE] if record["draft"].get("code") in task_recommend.REJECTION_CODES else []
 
 
 SECTION_NAMES = {"split": "분할"}
@@ -34,7 +60,7 @@ def recommendation_notice(record):
         return []
 
     code = draft.get("code")
-    label = code_label(record, code) or "사유 코드 확인 불가"
+    label = code_text(record, code)
     rejection = draft.get("rejection")
     adapter = task_adapters.adapter(record["kind"])
     detailed = getattr(adapter, "REJECTION_DETAIL_CODES", ())
@@ -89,10 +115,19 @@ def build_facts(record):
                      consents={key: value["consent_id"] for key, value in record["consents"].items()},
                      draft={"source": draft["source"], "code": draft.get("code"),
                             "coverage": {key: coverage[key] for key in ("total", "detailed", "named", "summarized") if key in coverage}})
+    # 검색 근거(실험적 Graph RAG) 사용 기록은 이를 남긴 작업에만 절을 둔다. 저장된 기록만 쓰고 검색을 다시 하지 않는다.
+    rag = task_rag.view(draft)
+    extra = {} if rag is None else {"rag": rag}
+
+    if rag is not None:
+        usage = draft["rag"] if type(draft.get("rag")) is dict else {}
+        technical["draft"]["rag"] = {key: usage.get(key) for key in ("mode", "status", "code", "pack", "index", "embedding",
+                                                                    "included_items", "included_relations")}
+
     # 유형 어댑터가 새 절(핵심 결과·경고·활용)을 주지 않아도 공통 보고서 틀은 같은 절을 비워 둔다.
     return dict(facts, goal=record["goal"], cautions=cautions, technical=technical,
                 highlights=facts.get("highlights", []), warnings=facts.get("warnings", []), usage=facts.get("usage", []),
-                recommendation={"source": draft["source"], "code": draft.get("code")})
+                recommendation={"source": draft["source"], "code": draft.get("code")}, **extra)
 
 
 def answer_notes(record):
@@ -204,9 +239,50 @@ TECHNICAL_TAIL = "\n```\n\n</details>"
 WARNING_KINDS = ("정보 손실", "미처리", "미검증")
 
 
+def _figure_lines(facts, label):
+    """저장 그림의 상대 경로 링크. 저장하지 못했으면 숨기지 않고 사유를 적는다. 그림 결과가 없는 facts는 줄이 없다."""
+    figures = facts.get("figures") or {}
+    item = next((item for item in figures.get("items", []) if item["label"] == label), None)
+
+    if item is None:
+        return []
+
+    if item["status"] == "saved":
+        return [f"![{_plain(label)}]({figures['directory']}/{item['file']})", ""]
+
+    return ["- 그림 저장 실패: " + _plain(label) + " (" + _plain(item["reason"]) + ")", ""]
+
+
+def _chart_lines(chart, facts):
+    lines = ["### " + _plain(chart["title"]), *["- " + _plain(text) for text in chart["notes"]], "", *_figure_lines(facts, chart["title"])]
+
+    if chart["rows"]:
+        lines += ["- 막대: 이 그래프의 최댓값을 " + str(BAR_WIDTH) + "칸으로 한 텍스트 막대입니다(화면 그래프와 같은 값).", "",
+                  *_table(chart_rows(dict(chart, rows=_bars(chart)))), ""]
+
+    return lines
+
+
+def _section_charts(facts, section):
+    return [chart for chart in facts.get("charts") or [] if chart.get("section") == section]
+
+
+def _image_lines(facts):
+    notes = facts.get("image_notes") or {}
+    lines = []
+
+    for item in facts["images"]:
+        figure_lines = _figure_lines(facts, item["label"])
+        lines += ["- " + _plain(item["label"]) + (" — " + _plain(notes[item["label"]]) if item["label"] in notes else ""),
+                  *([""] if figure_lines else []), *figure_lines]
+
+    return (lines or ["(검증된 그래프 없음)"]) + [""]
+
+
 def render_markdown(facts):
     """공통 절 구성: 핵심 결과·주요 문제 → (처리 전 EDA·계획과 결정·분할, 유형이 줄 때) → 컬럼별 처리 → 실제 전후 비교 →
-    그래프(보고서 그래프 값 표, 유형이 줄 때 → 검증된 PNG 이름) → 경고 → 활용 → 접힌 기술 상세.
+    그래프 → 경고 → 참고 → 활용 → 접힌 기술 상세. 그래프에 절(section)을 준 유형은 그래프 절 없이 해당 절에 두고,
+    모델 의견(model_opinions)을 준 유형은 계산 사실과 분리한 절을 참고 사항 뒤에 둔다.
 
     유형 어댑터가 준 사실만 배치한다. 이전 형식 사실(highlights·warnings·usage 없음)은 해당 줄을 비워 둔다.
     입력 유래 문자열은 _plain으로 한 줄 글자로 바꾼다. 절 제목만 고정 Markdown이다.
@@ -216,6 +292,7 @@ def render_markdown(facts):
              _plain(" · ".join(f"{item['label']}: {item['value']}" for item in facts["metrics"])), "",
              *[_plain(text) for text in facts.get("lines", [])], "",
              "### 주요 문제", *_table(facts["problems"]), ""]
+    placed = any("section" in chart for chart in facts.get("charts") or [])
     # 처리 전 EDA·계획과 결정 절은 이를 주는 유형 어댑터만 채운다. 표마다 제목·대상·선정 안내(notes)·행을 둔다.
     for key, heading, note in (("eda_tables", "## 처리 전 데이터와 기본 EDA", facts.get("eda_note")),
                                ("decision_tables", "## 계획과 결정", None)):
@@ -225,29 +302,35 @@ def render_markdown(facts):
             for table in facts[key]:
                 lines += ["### " + _plain(table["title"]), *["- " + _plain(text) for text in table["notes"]], "", *_table(table["rows"], table.get("columns")), ""]
 
+            if placed and key == "eda_tables":
+                for chart in _section_charts(facts, "eda"):
+                    lines += _chart_lines(chart, facts)
+
+                lines += ["### 분할 EDA 그래프 (검증된 PNG)", *_image_lines(facts)]
+
     # 분할 표·그래프 설명은 이를 주는 유형 어댑터만 채운다. 없는 이전 형식·다른 유형 사실은 기존 줄 그대로 둔다.
     split = facts.get("split_table")
 
     if split:
         lines += ["## 분할 결과", _plain(split["title"]), "", *_table(split["rows"]), ""]
 
-    notes = facts.get("image_notes") or {}
+        for chart in _section_charts(facts, "split"):
+            lines += _chart_lines(chart, facts)
+
     lines += ["## 컬럼별 처리와 제외 사유", *_table(facts["processing"]), "",
-              "## 실제 전후 비교", *([_plain(facts["comparison_note"]), ""] if facts.get("comparison_note") else []), *_table(facts["comparison"]), "",
-              "## 그래프"]
-    # 보고서 그래프(charts)는 이를 주는 유형만 채운다. 화면 그래프와 같은 값을 표와 텍스트 막대로 남긴다.
-    for chart in facts.get("charts") or []:
-        lines += ["### " + _plain(chart["title"]), *["- " + _plain(text) for text in chart["notes"]], ""]
+              "## 실제 전후 비교", *([_plain(facts["comparison_note"]), ""] if facts.get("comparison_note") else []), *_table(facts["comparison"]), ""]
 
-        if chart["rows"]:
-            lines += ["- 막대: 이 그래프의 최댓값을 " + str(BAR_WIDTH) + "칸으로 한 텍스트 막대입니다(화면 그래프와 같은 값).", "",
-                      *_table(chart_rows(dict(chart, rows=_bars(chart)))), ""]
+    if not placed:
+        lines += ["## 그래프"]
+        # 보고서 그래프(charts)는 이를 주는 유형만 채운다. 화면 그래프와 같은 값을 표와 텍스트 막대로 남긴다.
+        for chart in facts.get("charts") or []:
+            lines += _chart_lines(chart, facts)
 
-    if facts.get("charts"):
-        lines += ["### 분할 EDA 그래프 (검증된 PNG, 화면에서 표시)"]
+        if facts.get("charts"):
+            lines += ["### 분할 EDA 그래프 (검증된 PNG, 화면에서 표시)"]
 
-    lines += [*(["- " + _plain(item["label"]) + (" — " + _plain(notes[item["label"]]) if item["label"] in notes else "")
-                 for item in facts["images"]] or ["(검증된 그래프 없음)"]), ""]
+        lines += _image_lines(facts)
+
     warnings = facts.get("warnings", [])
     lines += ["## 경고: 정보 손실·미처리·미검증"]
 
@@ -255,8 +338,23 @@ def render_markdown(facts):
         items = [item["내용"] for item in warnings if item["구분"] == kind]
         lines += ["### " + kind, *(["- " + _plain(text) for text in items] or ["- (없음)"])]
 
-    lines += ["", "## 참고 사항", *["- " + _plain(text) for text in facts["cautions"]], "",
-              "## 적용 구간과 결과 파일 활용", *["- " + _plain(text) for text in facts.get("usage", [])], "",
+    rag = facts.get("rag")
+
+    if rag:
+        lines += ["", "## 검색 근거 (실험적 Graph RAG)", *["- " + _plain(text) for text in rag["lines"]]]
+
+        if rag["items"] or rag["relations"]:
+            lines += ["", "### 생성 요청에 포함한 지식", *_table(rag["items"], task_rag.ITEM_COLUMNS), "",
+                      "### 생성 요청에 포함한 관계", *_table(rag["relations"], task_rag.RELATION_COLUMNS)]
+
+    lines += ["", "## 참고 사항", *["- " + _plain(text) for text in facts["cautions"]], ""]
+    opinions = facts.get("model_opinions")
+
+    if opinions:
+        lines += ["## 모델 의견과 한계 (계산 사실 아님)", "- " + _plain(MODEL_LIMITATION_NOTICE),
+                  *["- " + _plain(text) for text in opinions["notes"]], "", *_table(opinions["rows"], opinions["columns"]), ""]
+
+    lines += ["## 적용 구간과 결과 파일 활용", *["- " + _plain(text) for text in facts.get("usage", [])], "",
               "### " + facts.get("files_title", "결과 파일"), *_table(facts["files"]), ""]
     return "\n".join(lines) + "\n" + TECHNICAL_HEAD + json.dumps(facts["technical"], ensure_ascii=False, indent=2) + TECHNICAL_TAIL + "\n"
 
@@ -309,11 +407,23 @@ def write_report(record, directory, *, reuse_identical=False):
     import os
 
     facts = build_facts(record)
+    folder = directory / "report"
+    folder.mkdir(exist_ok=True)
+
+    if any("section" in chart for chart in facts.get("charts") or []):
+        from .report_figures import save_figures
+
+        try:
+            images = task_adapters.adapter(record["kind"]).images(record)
+        except Exception:
+            # 못 읽은 그림은 저장 결과에 실패로 남아 화면·보고서가 알린다. 전처리 완료 자체는 막지 않는다.
+            images = []
+
+        facts = save_figures(facts, images, folder, record["attempt"])
+
     text = render_markdown(facts)
     # 기존 보고서와 같은 줄 끝(텍스트 모드의 플랫폼 줄 끝)으로 쓴다. 해시는 실제 파일 바이트 기준이다.
     payload = text.replace("\n", os.linesep).encode("utf-8")
-    folder = directory / "report"
-    folder.mkdir(exist_ok=True)
     index = 1
     path = None
 
@@ -355,7 +465,8 @@ def rebuild_report(task_id, *, root=None):
     from . import task_store
     from .task_orchestrator import _check_names
 
-    with task_store.task_lock(task_id, root=root) as directory:
+    # 승인을 발급하지 않는 재조립이라 보호 이전 작업도 기존처럼 허용한다(작업 폴더 보유는 유지).
+    with task_store.task_lock(task_id, root=root, protected=False) as directory:
         record = task_store.load_task(task_id, root=root)
 
         if record["phase"] != "completed":

@@ -97,6 +97,13 @@ Thumbs.db
 /models/candidates/
 /models/retired/
 
+# 실험적 Graph RAG 벡터 색인(지식집에서 다시 만드는 생성물). 원본 지식집은 configs/agents/rag/에 추적한다.
+/models/rag/
+# RAG ON 예산용 Qwen3.5 토크나이저(공식 HF 고정 리비전에서 받는 12.8 MB 파일, 준비 방법은 docs/agents/GUIDE.md)
+/models/tokenizers/
+# 지식 출처 계산 스크립트의 재실행 결과(스크립트만 출처 해시 대상)
+/scripts/rag_checks/*.json
+
 # WM-811K 학습 checkpoint와 로컬 실행 보고서
 /models/wm811k/
 /reports/wm811k/canonical_validation_*/

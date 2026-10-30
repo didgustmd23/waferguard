@@ -97,8 +97,13 @@ class TabularSplitExportTest(unittest.TestCase):
         raw.write_text(frame.to_csv(index=False), encoding="utf-8")
         snapshot = create_snapshot(raw, directory / "snapshot", max_input_bytes=65536)
         config = materialization_config_id(snapshot, self.source.read_spec_json, self.inspect_id, self.limits, self.code_id,
-                                           inspection_sha256=self.inspection_sha256, max_output_bytes=65536)
-        states = LocalStateStore(directory / "run")
+                                           inspection_sha256=self.inspection_sha256, max_output_bytes=65536,
+                                           execution_runtime_id=self.source.execution_runtime_id)
+        # 생성 실행은 보호된 입력 저장소(<input_runs>/materialize/<run>) 아래에 있어야 출처 확인을 통과한다.
+        from src.agents.protected_store import create_store, trusted_principals
+        create_store(directory / "input_runs", trusted_principals())
+        (directory / "input_runs" / "materialize").mkdir()
+        states = LocalStateStore(directory / "input_runs" / "materialize" / "run")
         state = states.create("synthetic_actor", policy_version="tabular_input_v2")
         state.status, state.current_stage = "completed", "ingest"
         states.save(state, expected_revision=state.revision)
@@ -118,7 +123,7 @@ class TabularSplitExportTest(unittest.TestCase):
         complete_artifacts(output, ArtifactContext(scope.source_id, scope.config_id, scope.plan_id, scope.policy_version, scope.tool_id))
         return TabularSourceContract(str(directory / "snapshot"), snapshot, str(output / "table"), reference, self.source.read_spec_json,
                                      self.inspect_id, read_committed_artifact(states.directory, scope), self.limits, self.code_id,
-                                     self.inspection_sha256, 65536)
+                                     self.inspection_sha256, 65536, self.source.execution_runtime_id)
 
     def test_typed_split_and_export_preserve_positions_index_and_bool_target(self):
         original = Path(self.source.snapshot_directory, "input.bin").read_bytes()

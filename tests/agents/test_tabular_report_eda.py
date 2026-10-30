@@ -206,8 +206,9 @@ class DecisionFactsTest(unittest.TestCase):
         self.assertIn("질문 답변 1", summary["rows"][1]["내용"])
         rows = {row["설정 이름"]: row for row in settings["rows"]}
         self.assertEqual(rows["outlier"]["결정 출처"], "모델 권장")
-        self.assertEqual(rows["outlier"]["모델 의견"], "모델 문장: 극단값이 많음")
-        self.assertEqual(rows["numeric_imputation"]["모델 의견"], "-")
+        # 모델 문장은 계산 사실 표에 두지 않고 model_opinions의 별도 절에 있다.
+        self.assertNotIn("모델 의견", rows["outlier"])
+        self.assertNotIn("모델 문장: 극단값이 많음", str(settings))
         self.assertEqual(rows["outlier"]["실제 변경(근거)"], "Train 값 0개 clip(후보 worker 집계) · 적용 Train 0·Validation 0개(적용 worker 집계)")
         self.assertEqual(rows["numeric_imputation"]["실제 변경(근거)"], "Train 대치 1칸(후보 worker 집계)")
         self.assertEqual(rows["drop_constant"]["실제 변경(근거)"], "Train 기준 제거 1개(후보)")

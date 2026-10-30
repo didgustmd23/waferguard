@@ -100,7 +100,7 @@ def _binding(directory, request, action, committed):
     packet = binding["packet"]
     _require(type(packet) is dict)
     expected = build_packet(action, packet["snapshot"], packet["read_spec"], packet["limits"], packet["code_id"],
-                            inspection_id=packet["inspection_id"], inspection_sha256=packet["inspection_sha256"], max_output_bytes=packet["max_output_bytes"])
+                            runtime_id=packet["runtime_id"], inspection_id=packet["inspection_id"], inspection_sha256=packet["inspection_sha256"], max_output_bytes=packet["max_output_bytes"])
     _require(_json(expected) == _json(packet) and _hash(packet) == request.config_id and request.policy_version == POLICY_VERSION
              and request.stage == "ingest" and request.action_id == "run_ingest" and Snapshot(**packet["snapshot"]).source_id == request.source_id
              and asdict(request.limits) == packet["limits"])

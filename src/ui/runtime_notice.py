@@ -36,11 +36,19 @@ def render_permissions(st):
     return permissions["elevated"] is True
 
 
+EXECUTION_PERMISSION_ERROR = ("현재 UI 서버에 관리자 권한이 없어 승인·실행 요청을 보내지 않았습니다. "
+                              "관리자 PowerShell에서 UI를 다시 실행하세요.")
+
+
+def execution_permitted():
+    """화면 출력 없이 실행 권한만 판정한다. 안내는 호출한 화면이 EXECUTION_PERMISSION_ERROR로 보인다."""
+    return server_permissions()["elevated"] is True
+
+
 def require_execution_permissions(st):
     """승인 제출·실행 제출 시 다시 검사한다. 기존 관리자/승인 정책을 대체하지 않는다."""
-    if server_permissions()["elevated"] is True:
+    if execution_permitted():
         return True
 
-    st.error("현재 UI 서버에 관리자 권한이 없어 승인·실행 요청을 보내지 않았습니다. "
-             "관리자 PowerShell에서 UI를 다시 실행하세요.")
+    st.error(EXECUTION_PERMISSION_ERROR)
     return False

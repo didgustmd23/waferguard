@@ -15,6 +15,9 @@ SPLIT_POLICY = "tabular_split_v2"
 EXPORT_POLICY = "partition_export_v2"
 DIAGNOSTIC_POLICY = "tabular_diagnostic_worker_v2"
 MAX_SPLIT_ROWS = 1_000_000
+# 하위 단계가 받는 표형 출처 ID 형식. 부모 tabular_source_contract.SOURCE_ID_PATTERN과 같은 값이다(worker는 부모 모듈을 읽지 않는다).
+SOURCE_ID_PATTERN = r"tabular_(?:time_)?source:[0-9a-f]{64}"
+TIME_POLICY = "tabular_time_restore_v1"
 
 
 def digest(value):
@@ -27,8 +30,33 @@ def table_files(root, settings, *, extra=()):
     return tuple(str(Path(root) / "input" / name) for name in (*("table/" + name for name in sorted(FILES)), settings, *extra))
 
 
+def _hex(value):
+    if type(value) is not str or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+        raise ValueError("표형 출처 지문 형식이 다릅니다.")
+
+
+def _validate_restored(packet):
+    """시간 복원 파생 표 packet(경로 없는 내용 참조)을 검사한다. 부모 출처·규칙·확인한 미리보기·적용 설정 지문에 결합돼 있다."""
+    import re
+    keys = {"schema_version", "parent_source_id", "bundle", "rules", "rules_signature", "preview_sha256", "restoration_digest",
+            "restored_count", "policy_version", "application_config_id"}
+    if (set(packet) != keys or packet["policy_version"] != TIME_POLICY or type(packet["parent_source_id"]) is not str
+            or re.fullmatch(r"tabular_source:[0-9a-f]{64}", packet["parent_source_id"]) is None
+            or type(packet["rules"]) is not dict or packet["rules_signature"] != digest(packet["rules"])
+            or type(packet["restored_count"]) is not int or packet["restored_count"] < 1):
+        raise ValueError("검증된 시간 복원 파생 표 packet이 필요합니다.")
+    for key in ("rules_signature", "preview_sha256", "restoration_digest", "application_config_id"):
+        _hex(packet[key])
+    reference = BundleRef.from_dict(packet["bundle"])
+    if reference.rows > MAX_SPLIT_ROWS:
+        raise ValueError("현재 분할 실행은 1백만 행 이하만 지원합니다.")
+    return reference
+
+
 def validate_source(packet):
-    """생성 증거의 경로 없는 내용 참조와 typed 묶음 기대값만 복원한다."""
+    """생성 증거(원래 생성 표 또는 시간 복원 파생 표)의 경로 없는 내용 참조와 typed 묶음 기대값만 복원한다."""
+    if type(packet) is dict and packet.get("schema_version") == "tabular_time_source_v1":
+        return _validate_restored(packet)
     keys = {"schema_version", "snapshot", "bundle", "read_spec", "inspection_id", "inspection_sha256", "max_output_bytes",
             "loader_id", "loader_version", "policy_version", "materialization_config_id"}
     if (type(packet) is not dict or set(packet) != keys or packet["schema_version"] != "tabular_source_v2"
@@ -38,9 +66,7 @@ def validate_source(packet):
     CsvReadSpec.from_dict(packet["read_spec"])
     Snapshot(**packet["snapshot"])
     for key in ("inspection_id", "inspection_sha256", "materialization_config_id"):
-        value = packet[key]
-        if type(value) is not str or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
-            raise ValueError("표형 출처 지문 형식이 다릅니다.")
+        _hex(packet[key])
     reference = BundleRef.from_dict(packet["bundle"])
     if reference.rows > MAX_SPLIT_ROWS:
         raise ValueError("현재 분할 실행은 1백만 행 이하만 지원합니다.")
@@ -52,7 +78,8 @@ def validate_source(packet):
 def source_id(packet):
     """경로 없는 생성 참조 전체를 입력 식별값으로 고정한다."""
     validate_source(packet)
-    return "tabular_source:" + digest(packet)
+    prefix = "tabular_time_source:" if packet["schema_version"] == "tabular_time_source_v1" else "tabular_source:"
+    return prefix + digest(packet)
 
 
 def check_staged(root, packet):
@@ -61,6 +88,13 @@ def check_staged(root, packet):
     with worker_filesystem(root):
         inspect_bundle(Path(root) / "input/table", expected=reference, max_bytes=reference.size_bytes)
         provenance = read_bundle_provenance(Path(root) / "input/table", expected=reference)
+    if packet["schema_version"] == "tabular_time_source_v1":
+        # 파생 묶음의 provenance는 부모 출처·규칙·확인한 미리보기·복원 판정·건수·정책에 결합돼 있어야 한다.
+        expected = {key: packet[key] for key in ("parent_source_id", "rules_signature", "preview_sha256", "restoration_digest",
+                                                 "restored_count", "policy_version")}
+        if any(digest(provenance.get(key)) != digest(value) for key, value in expected.items()):
+            raise ValueError("시간 복원 파생 표의 계보가 다릅니다.")
+        return reference
     expected = {"source_snapshot_sha256": packet["snapshot"]["sha256"],
                 "source_snapshot_size_bytes": packet["snapshot"]["size_bytes"],
                 "read_spec": packet["read_spec"], "inspection_id": packet["inspection_id"],
