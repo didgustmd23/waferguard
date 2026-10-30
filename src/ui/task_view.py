@@ -883,6 +883,11 @@ def _render_final_plan(st, task, adapter, state, key, draft):
         _rows(st, [{"항목": path, "값": value, "출처": labels.get(origins[path]["source"], origins[path]["source"])}
                    for path, value in flatten(preview["plan"])])
 
+    if preview.get("blocked"):
+        # 검증은 통과했지만 이번 단계에서 실행하지 않는 계획이다. 동의·확정 버튼을 내지 않고 이유와 다음 행동만 보인다(서버도 거부).
+        st.warning(preview["blocked"]["message"])
+        return
+
     st.info(adapter.consent_c_text())
     consent_key = "task_consent_c_" + key
     agreed = st.checkbox("위 최종 계획과 진행 범위에 동의합니다", key=consent_key)

@@ -128,13 +128,15 @@ class TaskScreenTest(unittest.TestCase):
         next(item for item in app.button if item.label == "작업 시작").click().run()
         self.assertFalse(app.exception, [item.value for item in app.exception])
 
+        # v2는 계획 단계에서 time을 고를 수 있지만 시간 설정은 사용자가 직접 정한다. 모델의 time 제안은 random으로 바꾸지 않고 비운다.
         strategy = next(item for item in app.selectbox if item.label == "분할 방식")
         self.assertIsNone(strategy.value)
-        self.assertNotIn("time", strategy.options)
+        self.assertIn("time", strategy.options)
         self.assertEqual(sum(item.value.startswith("현재 로컬 모델의 한계:")
                              and "내용의 타당성을 보장하지 않습니다" in item.value
                              for item in app.text), 1)
-        self.assertTrue(any("random으로 자동 변경하지 않았습니다" in item.value for item in app.text))
+        self.assertTrue(any("모델이 time 분할을 제안했습니다." in item.value and "모델은 시간 설정을 정하지 않습니다" in item.value
+                            for item in app.text))
         # 분할 방식과 target 미지정은 모두 필수 질문으로 드러난다.
         self.assertTrue(any("[필수]" in item.value and "분할 방식" in item.value for item in app.text))
         self.assertTrue(any("[필수]" in item.value and "target(예측 대상)이 지정되지 않았습니다" in item.value for item in app.text))

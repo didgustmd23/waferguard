@@ -10,6 +10,8 @@ import json
 
 from src.preprocessing.input_profile import bind_input_profile_plan, input_profile_pipeline
 from src.preprocessing.tabular_bundle import verification_scope
+from src.preprocessing.time_restore import CODES as TIME_RESTORE_CODES, FREQUENCIES, MAX_FORMAT_LENGTH, MAX_INTERVAL_MINUTES
+from src.preprocessing.time_restore import TimeRestoreError, TimeRestoreRules
 from . import llm_task_assist as rules
 from . import llm_workflow_store as plans
 from . import pipeline_approval_cli as diagnostics
@@ -28,7 +30,7 @@ from .tabular_pipeline import ADAPTER_ID as DIAGNOSTIC_ADAPTER
 from .tabular_source_contract import ADAPTER_ID as PROFILE_ADAPTER, TabularSourceContract
 from .tabular_workflow_service import (_committed_bytes, candidate_sources, code_id as tabular_code_id,
                                       report_sources, source_of, verified_images)
-from .task_plan import PlanError, TaskProblem
+from .task_plan import PlanError, TaskProblem, signature
 from .workflow_service_registry import TABULAR_IDS, TABULAR_VERSION, workflow_service
 from .worker_contract import WorkerLimits
 
@@ -52,6 +54,32 @@ rejection_valid = shared.rejection_valid
 CODE_LABELS = dict(shared.CODE_LABELS, NUMERIC_ROLE_TYPE_UNSUPPORTED=(
     "수치형 역할에는 생성된 표에서 수치 자료형(정수·실수)으로 읽힌 컬럼만 지정할 수 있습니다. 숫자처럼 보이는 문자열(예: 앞자리 0)을 "
     "수치로 바꾸는 정비는 아직 지원하지 않습니다. 해당 컬럼은 범주형·식별자·제외 중에서 고르세요."))
+# ==========================================
+# 시간 분할 설정(계획의 time 구획)
+# - 사용자가 직접 지정·승인한다. 모델 요청 항목·기본 계획 표시에서 빼고(user_only) 모델 변경은 받지 않는다
+# - time 분할일 때만 채우고, 다른 분할 방식이면 기본값(모두 비움·확인 안 함) 그대로여야 한다
+# - 이번 단계는 설정·검증·동의 결합까지다. 시간 복원·time 분할 실행은 연결하지 않아 결정 C 발급 전에 멈춘다
+# ==========================================
+TIME_FIELDS = ("column", "timestamp_format", "timezone", "frequency", "interval_minutes", "row_order_confirmed")
+TIME_DEFAULT = {"column": None, "timestamp_format": None, "timezone": None, "frequency": None, "interval_minutes": None,
+                "row_order_confirmed": False}
+TIME_NOT_READY = ("time 분할 설정은 검증했지만, 시간 복원 미리보기·적용과 time 분할 실행은 아직 연결되지 않아 처리를 시작하지 않습니다. "
+                  "동의·승인은 만들지 않았고 작업은 그대로입니다. 다음 행동: 지금 진행하려면 분할 방식을 random 또는 group으로 바꾸고, "
+                  "time 분할은 후속 단계(복원 미리보기·확인 뒤 적용)가 연결된 뒤 사용하세요.")
+CODE_LABELS.update(TIME_RESTORE_CODES, **{
+    "TIME_SETTINGS_INVALID": "시간 설정 항목 구성이 계약과 다릅니다",
+    "TIME_SETTINGS_MISSING": "time 분할에 필요한 시간 설정(시간 컬럼·복원 주기·행 순서 확인)이 비어 있습니다",
+    "TIME_SETTINGS_UNUSED": "time 분할이 아닌데 시간 설정이 채워져 있습니다. time 분할을 고르거나 시간 설정을 비우세요",
+    "TIME_COLUMN_ROLE_MISMATCH": "시간 컬럼은 timestamp 역할로 지정한 한 컬럼과 같아야 합니다",
+    "TIME_FORMAT_REQUIRED": "시간 컬럼이 문자열로 읽혔으므로 시간 형식을 지정해야 합니다",
+    "TIME_SPLIT_NOT_READY": "시간 복원·time 분할 실행은 아직 연결되지 않았습니다",
+})
+TIME_CODES = set(TIME_RESTORE_CODES) | {"TIME_SETTINGS_INVALID", "TIME_SETTINGS_MISSING", "TIME_SETTINGS_UNUSED",
+                                        "TIME_COLUMN_ROLE_MISMATCH", "TIME_FORMAT_REQUIRED"}
+TIME_SUBJECTS = {"TIME_FREQUENCY_INVALID": ["time.frequency", "time.interval_minutes"], "TIME_FORMAT_INVALID": ["time.timestamp_format"],
+                 "TIME_TIMEZONE_INVALID": ["time.timezone"], "TIME_TIMEZONE_REQUIRED": ["time.timezone"],
+                 "TIME_TIMEZONE_CONFLICT": ["time.timestamp_format", "time.timezone"],
+                 "TIME_ROW_ORDER_UNCONFIRMED": ["time.row_order_confirmed"], "TIME_RULES_INVALID": ["time.column"]}
 INPUT_CHOICES = {
     "header_repair": {"label": "중복 컬럼명 처리", "options": {"number_duplicates": "같은 이름에 번호를 붙여 진행(이름_1, 이름_2)"}},
     "empty_field": {"label": "빈 칸 처리", "options": {"missing": "결측으로 읽기 (기본)",
@@ -255,7 +283,10 @@ def diagnosis_view(record):
 # ==========================================
 
 def plan_fields(record):
-    """CSV v1 명세에서 수치 자료형이 아닌 컬럼의 수치형 역할 선택지를 뺀다. 요청 허용 값·응답 형식·병합 검사가 이 명세를 같이 쓴다."""
+    """CSV v1 명세에서 수치 자료형이 아닌 컬럼의 수치형 역할 선택지를 빼고, time 분할과 사용자 전용 시간 설정 항목을 더한다.
+
+    요청 허용 값·응답 형식·병합 검사가 이 명세를 같이 쓴다. user_only 항목은 모델 요청·병합에서 빠진다(task_recommend).
+    """
     numeric = _numeric_columns(record)
     result = shared.plan_fields(record)
 
@@ -263,11 +294,27 @@ def plan_fields(record):
         if field["path"].startswith("roles.") and field["path"][len("roles."):] not in numeric:
             field["options"] = [option for option in field["options"] if option != "수치형"]
 
+        if field["path"] == "split.strategy":
+            field.pop("unsupported", None)
+
+    columns = [column["column"] for column in record["diagnostic"]["columns"]]
+    result += [{"path": "time.column", "type": "enum", "options": columns, "nullable": True, "user_only": True},
+               {"path": "time.timestamp_format", "type": "string", "nullable": True, "maxLength": MAX_FORMAT_LENGTH, "user_only": True},
+               {"path": "time.timezone", "type": "string", "nullable": True, "maxLength": MAX_FORMAT_LENGTH, "user_only": True},
+               {"path": "time.frequency", "type": "enum", "options": list(FREQUENCIES), "nullable": True, "user_only": True},
+               {"path": "time.interval_minutes", "type": "integer", "nullable": True, "minimum": 1, "maximum": MAX_INTERVAL_MINUTES,
+                "user_only": True},
+               {"path": "time.row_order_confirmed", "type": "boolean", "user_only": True}]
     return result
 
 
 def base_plan(record):
-    return shared.base_plan(record)
+    return dict(shared.base_plan(record), time=dict(TIME_DEFAULT))
+
+
+def normalize_plan(record, plan):
+    """time 구획이 생기기 전 기록의 계획(권장안·직전 확정)에 기본 시간 설정을 더한 사본. 저장 기록은 바꾸지 않는다."""
+    return plan if "time" in plan else dict(plan, time=dict(TIME_DEFAULT))
 
 
 def recommendation_input(record):
@@ -278,10 +325,16 @@ def recommendation_input(record):
 
 
 def questions(record, plan):
-    return shared.questions(record, plan)
+    return shared.questions(record, plan, time_split=True)
 
 
 def on_rejected(record, draft):
+    """모델이 time 분할을 제안해 시간 설정이 없어 거부되면 분할 방식을 비워 사용자가 고르게 한다. random으로 대체하지 않는다."""
+    if draft["code"] in TIME_CODES:
+        plan = json.loads(json.dumps(draft["plan"]))
+        plan["split"]["strategy"] = None
+        return dict(draft, plan=plan, notes=[*draft["notes"], "모델이 time 분할을 제안했습니다. " + rules.TIME_SETTINGS_MESSAGE])
+
     return shared.on_rejected(record, draft)
 
 
@@ -303,9 +356,57 @@ def _numeric_types(record, plan):
                         subjects=["roles." + name for name in wrong])
 
 
+def _time_settings(record, plan):
+    """시간 설정 검증. time 분할이 아니면 기본값이어야 하고, time 분할이면 사용자가 지정한 규칙이 복원 계약을 통과해야 한다.
+
+    데이터 값은 읽지 않는다. 결측 시각의 유일한 복원 가능 여부는 후속 단계의 격리 실행에서 같은 규칙(find_restorations)으로 판정한다.
+    """
+    time = plan["time"]
+    subjects = ["time." + name for name in TIME_FIELDS]
+
+    if type(time) is not dict or set(time) != set(TIME_FIELDS):
+        raise PlanError("TIME_SETTINGS_INVALID", CODE_LABELS["TIME_SETTINGS_INVALID"])
+
+    if plan["split"]["strategy"] != "time":
+        # 기본값은 타입까지 같아야 한다(0·0.0을 확인 안 함 False로 받지 않음). 다른 값이 확정 계획·동의에 남지 않게 한다.
+        if any(type(time[name]) is not type(value) or time[name] != value for name, value in TIME_DEFAULT.items()):
+            raise PlanError("TIME_SETTINGS_UNUSED", CODE_LABELS["TIME_SETTINGS_UNUSED"], subjects=subjects)
+
+        return None
+
+    missing = [name for name in ("column", "frequency") if time[name] is None]
+
+    if time["row_order_confirmed"] is not True:
+        missing.append("row_order_confirmed")
+
+    if missing:
+        raise PlanError("TIME_SETTINGS_MISSING", CODE_LABELS["TIME_SETTINGS_MISSING"], subjects=["time." + name for name in missing])
+
+    stamped = [name for name, role in plan["roles"].items() if role == rules._label("timestamp")]
+
+    if stamped != [time["column"]]:
+        raise PlanError("TIME_COLUMN_ROLE_MISMATCH", CODE_LABELS["TIME_COLUMN_ROLE_MISMATCH"],
+                        subjects=["time.column", *["roles." + name for name in stamped]])
+
+    column = next(row for row in record["diagnostic"]["columns"] if row["column"] == time["column"])
+
+    if time["timestamp_format"] is None and column["dtype_group"] != "datetime":
+        raise PlanError("TIME_FORMAT_REQUIRED", CODE_LABELS["TIME_FORMAT_REQUIRED"], subjects=["time.timestamp_format"])
+
+    try:
+        return TimeRestoreRules(**time)
+    except TimeRestoreError as error:
+        raise PlanError(error.code, error.message, subjects=TIME_SUBJECTS.get(error.code, subjects)) from error
+
+
 def validate_plan(record, plan):
-    """CSV v1과 같은 계획 검증에 생성된 표의 자료형 검사와 v2 작업 카탈로그 검증을 더한다."""
-    profile, preparation = rules.validate_plan(record["diagnostic"]["columns"], plan)
+    """CSV v1과 같은 계획 검증에 시간 설정 검증, 생성된 표의 자료형 검사와 v2 작업 카탈로그 검증을 더한다."""
+    if type(plan) is not dict or "time" not in plan:
+        raise PlanError("PLAN_FIELDS_INVALID", CODE_LABELS["PLAN_FIELDS_INVALID"])
+
+    profile, preparation = rules.validate_plan(record["diagnostic"]["columns"],
+                                               {key: value for key, value in plan.items() if key != "time"}, time_split=True)
+    _time_settings(record, plan)
     _numeric_types(record, plan)
 
     try:
@@ -362,10 +463,20 @@ def prepare(record, directory, plan, label):
 # 동의 내용·실행 대조값
 # ==========================================
 
+def execution_block(record, plan):
+    """검증을 통과한 계획이라도 이번 단계에서 실행하지 않는 이유. 조정기가 시도·동의를 만들기 전에 확인한다. 없으면 None."""
+    if plan["split"]["strategy"] == "time":
+        return PlanError("TIME_SPLIT_NOT_READY", TIME_NOT_READY, subjects=["split.strategy"])
+
+    return None
+
+
 def consent_c_content(record):
     plan = shared._plan(record)
+    # 사용자가 승인한 시간 설정을 동의 내용에 결합한다(time 분할이 아니면 기본값). 규칙이 바뀌면 동의 내용 해시도 달라진다.
+    time = plan.get("time", TIME_DEFAULT)
     return {"profile_signature": record["confirmed"]["profile_signature"], "preparation": plan["preparation"],
-            "split": plan["split"], "source_contract_id": _source(record).source_id,
+            "split": plan["split"], "time": time, "time_signature": signature(time), "source_contract_id": _source(record).source_id,
             "tabular_code_id": tabular_code_id(), "binding_code_id": binding_code_id(), "delegated_reviews": ["review_eda"]}
 
 

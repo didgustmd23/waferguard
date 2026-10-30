@@ -308,10 +308,22 @@ def _recommend(record, adapter, requester, root):
 # 계획 확인 (권장 변경·질문 답변·전체 검증) → 결정 C 단계
 # ==========================================
 
+def _normalized(record, plan):
+    """어댑터가 계획 구획을 늘린 뒤의 이전 기록 계획을 현재 구획으로 맞춘 사본(어댑터에 정규화가 없으면 그대로). 기록은 바꾸지 않는다."""
+    normalize = getattr(_adapter(record), "normalize_plan", None)
+    return plan if normalize is None else normalize(record, plan)
+
+
 def _shown_plan(record):
     """확인 화면에 보여 준 계획. 재시도면 직전에 확정한 계획, 아니면 권장안을 합친 계획."""
     confirmed = record.get("confirmed")
-    return confirmed["plan"] if confirmed and "plan" in confirmed else record["draft"]["plan"]
+    return _normalized(record, confirmed["plan"] if confirmed and "plan" in confirmed else record["draft"]["plan"])
+
+
+def _execution_block(adapter, record, final):
+    """검증을 통과한 계획이라도 어댑터가 이번 단계에서 실행하지 않는 이유(PlanError). 없으면 None."""
+    block = getattr(adapter, "execution_block", None)
+    return None if block is None else block(record, final)
 
 
 def review_state(record):
@@ -329,7 +341,7 @@ def review_state(record):
              if hasattr(adapter, "option_guide") else [])
     return {"plan": plan, "fields": adapter.plan_fields(record), "questions": questions, "findings": _findings(record),
             "problem": problem_view(record),
-            "changes": changes_between(adapter.base_plan(record), record["draft"]["plan"]),
+            "changes": changes_between(adapter.base_plan(record), _normalized(record, record["draft"]["plan"])),
             "recommended": recommended, "guide": guide}
 
 
@@ -427,6 +439,8 @@ def check_plan(record, plan, answers):
     adapter = _adapter(record)
     fields = adapter.plan_fields(record)
     shown = review_state(record)["questions"]
+    # 구획이 늘기 전 형식으로 제출한 계획(이전 화면·호출부)은 기본값으로 맞춘다. 새 구획의 값은 검증이 다시 판정한다.
+    plan = _normalized(record, plan) if type(plan) is dict else plan
     conflicts = answer_conflicts(_shown_plan(record), plan, shown, answers or {})
 
     # 양식에서 직접 바꾼 값과 답변이 다르면 어느 쪽도 자동으로 고르지 않는다. 사용자가 한쪽을 골라 다시 확인한다.
@@ -458,6 +472,7 @@ def unresolved_questions(record, plan, answers):
     """
     adapter = _adapter(record)
     shown = review_state(record)["questions"]
+    plan = _normalized(record, plan) if type(plan) is dict else plan
     final, applied = apply_answers(plan, shown, answers or {}, adapter.plan_fields(record))
     ids = {item["id"] for item in shown}
     return [dict(item, shown=item["id"] in ids) for item in _unresolved(adapter, record, final, applied)]
@@ -471,10 +486,14 @@ def preview_plan(record, plan, answers):
     adapter = _adapter(record)
     final, applied = check_plan(record, plan, answers)
     state = review_state(record)
-    source = origins(adapter.base_plan(record), state["recommended"], state["plan"], plan, applied)
+    # 출처는 검증과 같은 정규화 계획으로 계산한다(이전 형식 제출이면 새 구획 항목도 기본 계획 출처로 표시).
+    source = origins(adapter.base_plan(record), state["recommended"], state["plan"], _normalized(record, plan), applied)
     guide = adapter.option_guide(record, final, source) if hasattr(adapter, "option_guide") else []
+    block = _execution_block(adapter, record, final)
+    # 실행하지 않는 계획이면 화면이 확정 버튼 대신 이유와 다음 행동을 보인다. 확정 요청은 confirm_plan이 같은 판정으로 거부한다.
     return {"plan": final, "answers": applied, "origins": source, "digest": _preview_digest(record, final),
-            "plan_digest": signature(final), "changes": changes_between(state["plan"], final), "guide": guide}
+            "plan_digest": signature(final), "changes": changes_between(state["plan"], final), "guide": guide,
+            "blocked": None if block is None else {"code": block.code, "message": block.message}}
 
 
 def _preview_digest(record, final):
@@ -509,6 +528,12 @@ def confirm_plan(task_id, plan, answers=None, *, root=None, expected_digest=None
         if (expected_digest is None and record["phase"] == "awaiting_apply") or (
                 expected_digest is not None and expected_digest != _preview_digest(record, final)):
             raise PlanError("PLAN_PREVIEW_CHANGED", "미리 본 최종 계획과 확정하려는 계획 또는 작업 상태가 다릅니다. 최종 계획을 다시 확인하세요.")
+
+        # 이번 단계에서 실행하지 않는 계획은 이전 시도 보존·시도 번호·동의를 만들기 전에 거부한다.
+        block = _execution_block(adapter, record, final)
+
+        if block is not None:
+            raise block
 
         if record["steps"]:
             # 이전 시도의 단계·위임 기록·결정 C 동의는 지우지 않고 보존한다. 새 시도는 새 이름·새 동의로만 진행한다.

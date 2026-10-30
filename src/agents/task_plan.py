@@ -89,6 +89,10 @@ def value_allowed(field, value):
     if kind == "boolean":
         return type(value) is bool
 
+    # 사용자가 직접 적는 짧은 설정 문자열(시간 형식·시간대 등). 내용 규칙은 유형 어댑터의 계획 검증이 판정한다.
+    if kind == "string":
+        return type(value) is str and 0 < len(value) <= field.get("maxLength", MAX_TEXT) and value == value.strip()
+
     if kind in ("integer", "number"):
         if type(value) is bool or type(value) not in ((int,) if kind == "integer" else (int, float)):
             return False
