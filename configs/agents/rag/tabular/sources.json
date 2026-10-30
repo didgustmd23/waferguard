@@ -7,7 +7,7 @@
    "title": "표형 계획 규칙(지시문·판단 대상·계획 검증·결정적 질문)",
    "path": "src/agents/llm_task_assist.py",
    "version": null,
-   "sha256": "58346a729989b2d2e3fa484025b5b8e403d2b0128362cf315706943e3f6ade87",
+   "sha256": "4c0583464e6e4cf72672dc4e9cac04edca0845d23b9d308ebf3096ad393fb4fd",
    "enforce": true
   },
   {
@@ -16,7 +16,7 @@
    "title": "권장안 요청 예산·병합·거부",
    "path": "src/agents/task_recommend.py",
    "version": null,
-   "sha256": "3d7e38c851f5f3d15970fd7dfae8840f2befdb07f5e196a9dd3f24d7aa0a9dca",
+   "sha256": "651834599ee4b598b23a01cb9710710d1e94fa340b897afe90db5ebf361894ef",
    "enforce": true
   },
   {
@@ -34,7 +34,7 @@
    "title": "표형 v2 어댑터(수치형 역할 자료형 조건)",
    "path": "src/agents/tabular_v2_task.py",
    "version": null,
-   "sha256": "672f902dcbe279625369dc17d12501c333e780615e612008098e56dc209cf6e2",
+   "sha256": "c3d4f1c167c17abaae9e06a3b3679616e27ed9058f153aa43515f042baa8b3a1",
    "enforce": true
   },
   {
@@ -52,7 +52,7 @@
    "title": "SplitRules·분할 계산",
    "path": "src/preprocessing/split.py",
    "version": null,
-   "sha256": "9a70b0306aa2b7796ece802fa71dbc7d1d6cd5909ee361aa4d40cbf63e6d1df2",
+   "sha256": "743830585f0218af33973f79f7b1d11dd14e5960be4aba6842317a7df03b2939",
    "enforce": true
   },
   {
@@ -88,7 +88,7 @@
    "title": "설계: 계획과 질문·표형 검사와 옵션·분할·내보내기·Train 기준·정보 전달",
    "path": "docs/agents/DESIGN.md",
    "version": null,
-   "sha256": "1c6af99a3c589444211309eac9874f4721fa99102e92fc2f977cb3cfc980750b",
+   "sha256": "a53a047c6cf0ea9c88f6eb2be43ac4887fa5a5e4facc54fbac1cfeb0253572ce",
    "enforce": false
   },
   {
@@ -97,7 +97,7 @@
    "title": "사용 안내: 현재 구현 상태·옵션과 품질 지적",
    "path": "docs/agents/GUIDE.md",
    "version": null,
-   "sha256": "3c2c37ef7739b3996a0aeca2cd5499639d1a5503fb3bffde18a758ade9588892",
+   "sha256": "910e858d225b9f04c6f08a8365b95488bcba947ae56549e2773663fc8f232ca0",
    "enforce": false
   },
   {
@@ -169,7 +169,7 @@
    "title": "전처리 worker 행 메타데이터(row_metadata)",
    "path": "src/agents/tabular_preparation_worker.py",
    "version": null,
-   "sha256": "4952dfa3c86f5374ec5dc6ce197f3e67470e84fff0dd8348b3b4df56d05753fd",
+   "sha256": "91ce8153d9feb0d56b895374ad8f518c30645c908b87452fe1011bcf0d17484c",
    "enforce": true
   },
   {

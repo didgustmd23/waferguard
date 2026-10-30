@@ -136,8 +136,7 @@
    "label": "time 분할",
    "paths": [
     "split.strategy"
-   ],
-   "support": "unsupported"
+   ]
   },
   {
    "id": "N_ROLE_TARGET",
@@ -340,7 +339,7 @@
   {
    "id": "N_Q_TIME_PATH",
    "type": "question",
-   "label": "time 분할 미지원 상태에서 진행 방식"
+   "label": "time 분할 사용 여부와 시간 설정 확인"
   },
   {
    "id": "N_Q_UNIT",
@@ -919,7 +918,7 @@
    "type": "conflicts_with",
    "scope": "general",
    "condition": "미래를 예측하는 목표",
-   "caution": "제품은 time 분할 미지원",
+   "caution": "표형 v1은 time 분할 미지원, 표형 v2는 사용자 시간 설정 필요",
    "knowledge": [
     "K23"
    ]
@@ -943,7 +942,7 @@
    "type": "requires",
    "scope": "general",
    "condition": "과거로 학습하고 이후로 평가하려 할 때",
-   "caution": "제품 통합 작업 미지원(E45)",
+   "caution": "표형 v1은 미지원, 표형 v2는 사용자 시간 설정 필요(E45)",
    "knowledge": [
     "K23"
    ]
@@ -954,7 +953,7 @@
    "target": "N_Q_TIME_PATH",
    "type": "ask_question",
    "scope": "product",
-   "condition": "통합 작업에서 time 분할을 쓸 수 없음",
+   "condition": "표형 v1은 time 분할을 쓸 수 없고 표형 v2는 사용자 시간 설정이 필요함",
    "caution": "random으로 조용히 대체하지 않음",
    "knowledge": [
     "K24"
@@ -966,7 +965,7 @@
    "target": "N_Q_TIME_PATH",
    "type": "ask_question",
    "scope": "product",
-   "condition": "시간 형식을 지정할 수 없어 품질 검사가 멈춤",
+   "condition": "time 분할에 쓰지 않는 timestamp 역할",
    "caution": "필수 질문으로 제외 권장",
    "knowledge": [
     "K24"
