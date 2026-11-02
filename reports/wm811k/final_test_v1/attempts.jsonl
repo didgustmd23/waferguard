@@ -1,0 +1,36 @@
+{"at": "2026-11-02T10:29:08.481929+09:00", "run": "ResNet18:42", "event": "started", "rows_read": 0}
+{"at": "2026-11-02T10:29:11.305000+09:00", "run": "ResNet18:42", "event": "progress", "rows_read": 6464, "rows_total": 25834}
+{"at": "2026-11-02T10:29:12.673754+09:00", "run": "ResNet18:42", "event": "progress", "rows_read": 12928, "rows_total": 25834}
+{"at": "2026-11-02T10:29:14.045731+09:00", "run": "ResNet18:42", "event": "progress", "rows_read": 19392, "rows_total": 25834}
+{"at": "2026-11-02T10:29:15.473223+09:00", "run": "ResNet18:42", "event": "progress", "rows_read": 25834, "rows_total": 25834}
+{"at": "2026-11-02T10:29:15.612025+09:00", "run": "ResNet18:42", "event": "complete", "rows_read": 25834}
+{"at": "2026-11-02T10:29:15.645533+09:00", "run": "ResNet18:43", "event": "started", "rows_read": 0}
+{"at": "2026-11-02T10:29:17.730521+09:00", "run": "ResNet18:43", "event": "progress", "rows_read": 6464, "rows_total": 25834}
+{"at": "2026-11-02T10:29:19.178798+09:00", "run": "ResNet18:43", "event": "progress", "rows_read": 12928, "rows_total": 25834}
+{"at": "2026-11-02T10:29:20.583341+09:00", "run": "ResNet18:43", "event": "progress", "rows_read": 19392, "rows_total": 25834}
+{"at": "2026-11-02T10:29:22.082567+09:00", "run": "ResNet18:43", "event": "progress", "rows_read": 25834, "rows_total": 25834}
+{"at": "2026-11-02T10:29:22.214094+09:00", "run": "ResNet18:43", "event": "complete", "rows_read": 25834}
+{"at": "2026-11-02T10:29:22.248192+09:00", "run": "ResNet18:44", "event": "started", "rows_read": 0}
+{"at": "2026-11-02T10:29:24.251051+09:00", "run": "ResNet18:44", "event": "progress", "rows_read": 6464, "rows_total": 25834}
+{"at": "2026-11-02T10:29:25.724050+09:00", "run": "ResNet18:44", "event": "progress", "rows_read": 12928, "rows_total": 25834}
+{"at": "2026-11-02T10:29:27.152354+09:00", "run": "ResNet18:44", "event": "progress", "rows_read": 19392, "rows_total": 25834}
+{"at": "2026-11-02T10:29:28.643012+09:00", "run": "ResNet18:44", "event": "progress", "rows_read": 25834, "rows_total": 25834}
+{"at": "2026-11-02T10:29:28.859051+09:00", "run": "ResNet18:44", "event": "complete", "rows_read": 25834}
+{"at": "2026-11-02T10:29:28.865835+09:00", "run": "SmallWaferCNN:42", "event": "started", "rows_read": 0}
+{"at": "2026-11-02T10:29:30.746548+09:00", "run": "SmallWaferCNN:42", "event": "progress", "rows_read": 6464, "rows_total": 25834}
+{"at": "2026-11-02T10:29:32.217166+09:00", "run": "SmallWaferCNN:42", "event": "progress", "rows_read": 12928, "rows_total": 25834}
+{"at": "2026-11-02T10:29:33.647372+09:00", "run": "SmallWaferCNN:42", "event": "progress", "rows_read": 19392, "rows_total": 25834}
+{"at": "2026-11-02T10:29:35.059959+09:00", "run": "SmallWaferCNN:42", "event": "progress", "rows_read": 25834, "rows_total": 25834}
+{"at": "2026-11-02T10:29:35.120883+09:00", "run": "SmallWaferCNN:42", "event": "complete", "rows_read": 25834}
+{"at": "2026-11-02T10:29:35.126881+09:00", "run": "SmallWaferCNN:43", "event": "started", "rows_read": 0}
+{"at": "2026-11-02T10:29:37.077246+09:00", "run": "SmallWaferCNN:43", "event": "progress", "rows_read": 6464, "rows_total": 25834}
+{"at": "2026-11-02T10:29:38.485582+09:00", "run": "SmallWaferCNN:43", "event": "progress", "rows_read": 12928, "rows_total": 25834}
+{"at": "2026-11-02T10:29:39.911586+09:00", "run": "SmallWaferCNN:43", "event": "progress", "rows_read": 19392, "rows_total": 25834}
+{"at": "2026-11-02T10:29:41.277326+09:00", "run": "SmallWaferCNN:43", "event": "progress", "rows_read": 25834, "rows_total": 25834}
+{"at": "2026-11-02T10:29:41.325328+09:00", "run": "SmallWaferCNN:43", "event": "complete", "rows_read": 25834}
+{"at": "2026-11-02T10:29:41.330331+09:00", "run": "SmallWaferCNN:44", "event": "started", "rows_read": 0}
+{"at": "2026-11-02T10:29:43.243920+09:00", "run": "SmallWaferCNN:44", "event": "progress", "rows_read": 6464, "rows_total": 25834}
+{"at": "2026-11-02T10:29:44.628008+09:00", "run": "SmallWaferCNN:44", "event": "progress", "rows_read": 12928, "rows_total": 25834}
+{"at": "2026-11-02T10:29:46.079518+09:00", "run": "SmallWaferCNN:44", "event": "progress", "rows_read": 19392, "rows_total": 25834}
+{"at": "2026-11-02T10:29:47.436023+09:00", "run": "SmallWaferCNN:44", "event": "progress", "rows_read": 25834, "rows_total": 25834}
+{"at": "2026-11-02T10:29:47.486034+09:00", "run": "SmallWaferCNN:44", "event": "complete", "rows_read": 25834}

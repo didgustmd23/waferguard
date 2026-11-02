@@ -1,0 +1,9 @@
+{
+  "status": "lr_schedule_comparison_complete",
+  "artifacts": {
+    "comparison.json": "2e1b7a8a383db66d953f6725699444cf40e5fcb0332c6c34ea833a5ebe42ba86",
+    "comparison.md": "7f8381191aa8781b6608095767d18834a08b5854f58fa1e6eab5c4393d30cb69",
+    "seed_differences.csv": "3942c029b4c66396a559e84e0d0378eec58b33a5d470bf931bbd3f2a640058ee",
+    "summary.csv": "5fd6f2db33c9426ce36c986772e2068b69f3226decb1d318b1d9d7d0a07f9e12"
+  }
+}

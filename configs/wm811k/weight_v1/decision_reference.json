@@ -1,0 +1,11 @@
+{
+  "criteria_version": "wm_weight_decision_reference_v1",
+  "status": "reviewer_reference_not_user_approved_not_statistical",
+  "macro_f1_mean_difference_min_pp": -0.5,
+  "scratch_precision_mean_difference_min_pp": 5.0,
+  "scratch_precision_improved_seeds_min": 2,
+  "scratch_recall_mean_difference_min_pp": -3.0,
+  "random_recall_mean_difference_min_pp": -3.0,
+  "near_full_fn_increase_sum_max": 1,
+  "donut_fn_increase_sum_max": 3
+}

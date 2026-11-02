@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | 전처리 에이전트 | CSV·웨이퍼맵 전처리의 모듈 선택·사용자 승인·격리 실행·결과 관리 | 양현승 | CSV v2·`.npz` 통합 작업 구현, 합성 입력의 실제 격리·사용자 흐름 확인. 검증 범위·모델 한계는 에이전트 안내 참조 |
 | SECOM 머신러닝 | 공정 센서로 불량 위험 선별, 핵심 센서 20개 선택, OOF 문턱 비교·저장·추론 | ML: 양현승 / 데이터·EDA: 이종수 | V2 실험·저장·복원·기존 Test 비교 완료 |
-| WM-811K 딥러닝 | 검사 결과 맵의 9종 패턴 분류, 작은 CNN 학습·평가와 클래스별 오류 분석 | 이종수 | 작은 CNN 학습·동결·Test 1회 평가 이력 있음. 현행 checkpoint v2로의 재검증은 별개이며 ResNet18 비교는 후속 |
+| WM-811K 딥러닝 | 검사 결과 맵의 9종 패턴 분류, 3모델 비교와 클래스별 오류 분석 | 이종수 | 학습 39회로 튜닝 후 Validation으로 선정·동결한 ResNet18 종합후보·CNN 비교후보의 최종 Test 평가 완료 |
 
 ## 세 가지 구성 요소
 
@@ -22,7 +22,7 @@
 
 ### 전체 구성도
 
-세 영역은 로컬에서 각각 시작하는 **독립 실행 경로**입니다. 실행 간 결과를 자동 전달하는 연결은 없습니다. 아래 그림은 커밋 `4fd209c` 시점의 구조 기록입니다. 그림의 WM 점선은 당시 계획을 뜻하며, 현재는 작은 CNN 학습·평가가 구현됐고 ResNet18 비교는 후속입니다.
+세 영역은 로컬에서 각각 시작하는 **독립 실행 경로**입니다. 실행 간 결과를 자동 전달하는 연결은 없습니다. 아래 그림은 커밋 `4fd209c` 시점의 구조 기록입니다. 그림의 WM 점선은 당시 계획을 뜻하며, 현재는 3모델 학습과 Validation 비교가 구현됐습니다.
 
 [![WaferGuard 전체 구성도 — 전처리 에이전트·SECOM·WM의 독립 실행 경로](docs/architecture/overview.svg)](https://didgustmd23.github.io/waferguard/overview.html)
 
@@ -95,7 +95,7 @@ AP는 V1 **0.040461 → V2 0.075077**, ROC-AUC는 **0.488008 → 0.682330**으�
 
 데이터 출처는 [UCI SECOM](https://archive.ics.uci.edu/dataset/179/secom)입니다. 센서 파일과 label·timestamp 파일을 병합하며, label은 `-1`(정상), `1`(불량)입니다. 원본 데이터는 저장소에 포함하지 않습니다.
 
-WM-811K는 [Kaggle 배포본](https://www.kaggle.com/datasets/qingyi/wm811k-wafer-map)을 사용합니다. Lot 비중첩 분할로 학습한 작은 CNN을 동결해 Test 25,834건을 1회 평가한 기록이 있습니다: Accuracy **96.13%**, Macro-Recall **85.61%**, Macro-F1 **77.17%**. 기준선 대비 Macro-Recall은 **74.50%p** 높지만 `Loc` Recall은 58.10%, `Scratch` Precision은 30.56%입니다. 이 수치는 2026-10-24~25 코드의 실행 기록이며 현행 checkpoint v2·수치 검증 보완 코드로 재평가한 결과는 아닙니다. 이는 9종 패턴 분류 결과이지 실제 현장 불량 검출률이 아닙니다. 같은 Test로 추가 튜닝하지 않습니다. 원본·가공 데이터, checkpoint, 실행별 보고서는 저장소에 포함하지 않습니다. 재현 절차와 한계는 [WM-811K 기록](docs/WM811K/CACHE_DATASET.md)에 정리했습니다.
+WM-811K는 [Kaggle 배포본](https://www.kaggle.com/datasets/qingyi/wm811k-wafer-map)을 사용합니다. Lot 비중첩 분할의 Train 121,261건·Validation 25,827건으로 학습 39회를 실행하고, Validation으로 정한 두 구성을 Test 전에 동결해 같은 Test 25,834건으로 평가했습니다. Test Macro-F1은 종합후보 ResNet18 **84.77 ± 0.57%**, 비교후보 SmallWaferCNN **82.71 ± 0.15%**입니다(각 3 seed). 학습률 스케줄이 달라 구조만의 비교가 아니고, ResNet18은 Scratch Precision 43.51%로 오탐이 많으며 SmallWaferCNN은 61.19%입니다. 과거 평가 분할과 현재 Test의 표본 겹침은 미확인이므로 완전한 미사용을 보증하지 않습니다. 같은 Test를 seed별로 반복 평가한 값이며 통계적 유의성이나 실제 현장 불량 검출률을 뜻하지 않습니다. 상세는 [WM-811K 보고서](reports/wm811k/report.md#22-최종-test-결과)를 봅니다. 원본·가공 데이터, checkpoint, 실행별 보고서는 저장소에 포함하지 않습니다. 재현 절차와 한계는 [WM-811K 기록](docs/WM811K/CACHE_DATASET.md)에 정리했습니다.
 
 ![SECOM 클래스 분포](reports/secom/figures/eda/step3/class_distribution.png)
 

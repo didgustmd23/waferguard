@@ -1,0 +1,63 @@
+{
+  "session_version": "wm_final_test_session_v1",
+  "freeze_sha256": "437f19874de4ce67e4d23baba946e47853f2f8c28fe49b585cafd91dc01d6f1c",
+  "split_protocol_id": "wm_split_d02d993fd73c2cc4bf496d54774401c60a94b0d1737c7c135e7ae4837a6b85d6",
+  "source_split_manifest_sha256": "cb584be44cc7aec0bf02b88befdcac1b17aa7810726589e1e06f532a8d851fc5",
+  "transform_config": {
+    "transform_version": "wm_resize_v1",
+    "target_size": [
+      128,
+      128
+    ],
+    "resize_backend": "numpy_half_pixel_nearest_v1",
+    "preserve_aspect_ratio": true,
+    "padding_value": 0,
+    "channel_order": [
+      "defect",
+      "valid"
+    ],
+    "augmentation": "none"
+  },
+  "class_names": [
+    "None",
+    "Center",
+    "Donut",
+    "Edge-Loc",
+    "Edge-Ring",
+    "Loc",
+    "Near-Full",
+    "Random",
+    "Scratch"
+  ],
+  "majority_class_index": 0,
+  "test_cache": {
+    "test_cache_sha256": "50519dca6890c6746f35804e7694a8cbcd64ff27c7a98302728f10da78bc4cf5",
+    "test_samples_sha256": "bd9f2cae366740860597e0f3437656f65fa047373db8899a7215970573ed390f",
+    "test_rows": 25834,
+    "test_class_counts": [
+      22831,
+      574,
+      58,
+      763,
+      996,
+      389,
+      18,
+      89,
+      116
+    ]
+  },
+  "device": "cuda",
+  "code_fingerprint": {
+    "sha256": "6871c3cceaf87ca4a416ad63725aa51ce85879997484a428fc0a2df17fa1a19f",
+    "files": {
+      "cache.py": "b8c43bb85120dbce6f22c95cfb33086dea7275e6d8b5f55770e2959f37eb637b",
+      "dataset.py": "3fdcbab821441bcd1aaa7cf27ba658e48c7515d995fee4646f827d5bc033f222",
+      "evaluate.py": "4bd39b20abd1b647d8e12cc2f7e5a257370528d212fe6e29bc474b6216504c61",
+      "final_test.py": "1f399e8feb9b0066e29a44cbd7ac6580d386c4f1fec2e898973eb24130e29f22",
+      "metrics.py": "e0c1435098161511812f135361f7568e7b4e9315f2e65793d82f61b6ea627699",
+      "models.py": "fe87e715ac2779052c5b6a9ea11b3ae82298c0a3a51b87120b745f7f77f31252",
+      "transform.py": "eec2324b0eb2fef895ff758c94ddf26be7df7556d2e7e6a395350583b8053bda",
+      "validate_canonical.py": "5b1e29f232f17c07f12284e4a9329221187a43ed6f5dd40863d06239308ca13f"
+    }
+  }
+}

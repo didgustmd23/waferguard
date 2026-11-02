@@ -2,7 +2,7 @@
 
 ## 현재 구현 범위
 
-[변환 함수](../../src/wafer_dl/transform.py), [개발 구간 검사](../../src/wafer_dl/check_transform.py), [설정](../../configs/wm811k/transform.json)을 사용합니다. 실제 Train/Validation 맵 검사, 캐시·Dataset, CNN 학습과 동결 모델의 Test 평가는 완료했습니다. 결과와 Test 사용 범위는 [캐시·학습·평가 기록](CACHE_DATASET.md)을 확인하세요.
+[변환 함수](../../src/wafer_dl/transform.py), [개발 구간 검사](../../src/wafer_dl/check_transform.py), [설정](../../configs/wm811k/transform.json)을 사용합니다. 실제 Train/Validation 맵 검사와 캐시·Dataset 확인을 마쳤고, 이후 모델 실험과 동결 후보의 최종 Test 평가까지 진행했습니다. 이 검사 자체는 Test 배열을 읽지 않습니다. 실행 상태와 Test 사용 이력은 [캐시·Dataset 안내](CACHE_DATASET.md)를 확인하세요.
 
 이번 단계는 PyTorch 없이 NumPy로 실행합니다. PyTorch를 설치하지 못하면 다른 보간으로 대체하는 방식이 아니라, `numpy_half_pixel_nearest_v1`을 명시한 독립 변환 구현입니다. Dataset은 저장된 categorical 맵에서 같은 2채널을 생성합니다.
 
@@ -22,13 +22,15 @@
 
 ## 실행
 
-프로젝트 루트의 PowerShell에서 실행합니다.
+현재 분할 `data/splits/wm811k/group_v1`의 검사 결과는 `reports/wm811k/transform_v1`에 있습니다. 조회만 할 때는 [검사 보고서](../../reports/wm811k/transform_v1/transform_check.md)를 보면 되고 다시 실행할 필요가 없습니다.
+
+검사를 다시 하려면 프로젝트 루트의 PowerShell에서 아직 없는 새 출력 경로로 실행합니다. `<새_검사_이름>`을 실제 이름으로 바꾸세요. 입력 분할은 읽기만 합니다.
 
 ```powershell
 python -m src.wafer_dl.check_transform `
-  --split-dir data/splits/wm811k/group_v2 `
+  --split-dir data/splits/wm811k/group_v1 `
   --config configs/wm811k/transform.json `
-  --output-dir reports/wm811k/transform_v2
+  --output-dir reports/wm811k/<새_검사_이름>
 ```
 
 분할 산출물의 canonical_root를 사용합니다. canonical 폴더를 옮겼다면 `--canonical-dir "현재 실제 경로"`를 추가하세요. 원본 manifest 내용이 일치해야 하며 잘못 연결한 묶음은 거부합니다.

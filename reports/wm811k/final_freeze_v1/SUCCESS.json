@@ -1,0 +1,7 @@
+{
+  "status": "candidates_frozen_test_not_run",
+  "artifacts_sha256": {
+    "freeze.json": "437f19874de4ce67e4d23baba946e47853f2f8c28fe49b585cafd91dc01d6f1c",
+    "README.md": "93e748aab0a8835ee52ab41fceec340381a6fb4358b1d938c20f82c4b52385e6"
+  }
+}

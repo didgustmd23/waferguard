@@ -1,0 +1,15 @@
+{
+  "status": "final_test_run_complete",
+  "model_name": "SmallWaferCNN",
+  "role": "comparison_candidate",
+  "seed": 42,
+  "run_path": "models/wm811k/lr_v1/SmallWaferCNN/plateau_alpha0_75/SmallWaferCNN_d4_seed42",
+  "checkpoint_sha256": "b1ae4ce45ce832b06355d4b63a580ffc219ccf1792b4b99e2de579cd799cd81b",
+  "freeze_sha256": "437f19874de4ce67e4d23baba946e47853f2f8c28fe49b585cafd91dc01d6f1c",
+  "artifacts": {
+    "test_evaluation.json": "890216ac0e920e47bfc45c947b26e47afe13090222fc89d46ce50642653b8d52",
+    "SUCCESS.json": "bf9fd12e955f03acf0558518ce4226f60cbb8da3363d20e9a70a2be7ef2aba26"
+  },
+  "scope_note": "예정된 하나의 최종 평가 세션에서 동결 모델 상태 6개를 같은 Test로 평가했습니다. 전체 Test 접근이 1회라는 뜻이 아닙니다.",
+  "selection_scope_note": "test_used_for_model_selection=false는 이번 동결 절차의 범위를 뜻합니다. 과거 Test와 현재 Test의 표본 겹침은 미확인이며 이 값이 과거 이력을 증명하지 않습니다."
+}
