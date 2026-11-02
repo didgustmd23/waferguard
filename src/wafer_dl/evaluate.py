@@ -1,6 +1,12 @@
-"""One-time evaluation of a frozen WM-811K model on the approved Test split."""
+"""동결된 WM-811K 모델을 승인된 Test 구간에서 1회 평가한다.
+
+이미 결과를 본 Test를 후보 선정이나 비교 검증에 다시 쓰지 않는다.
+후보 모델 평가는 사용 이력을 확인한 평가 자료가 준비된 뒤에만 실행한다.
+"""
 
 import argparse
+from datetime import datetime
+import hashlib
 import json
 from pathlib import Path
 import time
@@ -8,10 +14,29 @@ import time
 import torch
 from torch.utils.data import DataLoader
 
+from .cache import file_digest
 from .dataset import WaferDataset
 from .metrics import classification_metrics
-from .models import SmallWaferCNN
+from .models import MODEL_NAMES, build_model
 from .validate_canonical import CLASS_NAMES, require, validation_stage
+
+
+EVALUATION_BATCH_SIZE = 64
+
+
+def sample_digest(pairs):
+    """표본 ID·라벨 순서쌍을 하나의 식별값으로 묶어 같은 Test인지 대조한다."""
+    payload = json.dumps([[sample, label] for sample, label in pairs]).encode('utf-8')
+    return hashlib.sha256(payload).hexdigest()
+
+
+def weights_digest(model):
+    """모델 파라미터·버퍼 값을 해시해 추론 전후 불변을 확인한다."""
+    digest = hashlib.sha256()
+    for name, value in sorted(model.state_dict().items()):
+        digest.update(name.encode('utf-8'))
+        digest.update(value.detach().cpu().numpy().tobytes())
+    return digest.hexdigest()
 
 
 def _require_finite_tensor(tensor, code):
@@ -29,7 +54,7 @@ def validate_checkpoint(checkpoint, dataset, train_class_counts):
     """Checkpoint와 Test 캐시의 모델·변환·실제 분할 계약을 대조한다."""
     require(type(checkpoint) is dict and
             checkpoint.get('checkpoint_version') == 'wm_cnn_checkpoint_v2' and
-            checkpoint.get('model_name') == 'SmallWaferCNN' and
+            checkpoint.get('model_name') in MODEL_NAMES and
             checkpoint.get('model_config') == {
                 'num_classes': len(CLASS_NAMES), 'input_channels': 2,
             } and checkpoint.get('class_mapping') ==
@@ -49,8 +74,12 @@ def validate_checkpoint(checkpoint, dataset, train_class_counts):
     return int(max(range(len(train_class_counts)), key=train_class_counts.__getitem__))
 
 
-def evaluate(cache_dir, checkpoint_path, output_dir, device='auto', approved=False):
-    """승인된 Test 캐시와 동결 checkpoint로 단일 평가를 수행한다."""
+def evaluate(cache_dir, checkpoint_path, output_dir, device='auto', approved=False,
+             progress=None):
+    """승인된 Test 캐시와 동결 checkpoint로 단일 평가를 수행한다.
+
+    progress(done, total)는 예측을 마친 누적 행 수만 받는다. 지표는 전달하지 않는다.
+    """
     require(approved is True, 'TEST_EVALUATION_APPROVAL_REQUIRED')
     require(device in ('auto', 'cpu', 'cuda'), 'INVALID_EVALUATION_DEVICE')
     if device == 'cuda' and not torch.cuda.is_available():
@@ -67,8 +96,10 @@ def evaluate(cache_dir, checkpoint_path, output_dir, device='auto', approved=Fal
         if checkpoint_file.is_relative_to(working_root) else checkpoint_file.name
     )
 
+    checkpoint_sha256 = file_digest(checkpoint_file)
     checkpoint = torch.load(checkpoint_file, map_location='cpu', weights_only=True)
     cache_root = Path(cache_dir).resolve(strict=True)
+    cache_sha256 = file_digest(cache_root / 'cache.json')
     cache_report = json.loads((cache_root / 'cache.json').read_text(encoding='utf-8'))
     require(cache_report.get('status') == 'cache_complete' and
             'test' in cache_report.get('splits', {}) and
@@ -79,13 +110,18 @@ def evaluate(cache_dir, checkpoint_path, output_dir, device='auto', approved=Fal
     dataset = WaferDataset(cache_root, split='test', allow_test=True)
     try:
         majority_class = validate_checkpoint(checkpoint, dataset, train_counts)
-        model = SmallWaferCNN(num_classes=len(CLASS_NAMES)).to(selected_device)
+        model = build_model(
+            checkpoint['model_name'], num_classes=len(CLASS_NAMES)
+        ).to(selected_device)
         model.load_state_dict(checkpoint['model_state_dict'], strict=True)
         _require_finite_model_weights(model)
         model.eval()
+        require(not any(module.training for module in model.modules()),
+                'MODEL_NOT_IN_EVAL_MODE')
+        weights_before = weights_digest(model)
         loader = DataLoader(
             dataset,
-            batch_size=64,
+            batch_size=EVALUATION_BATCH_SIZE,
             shuffle=False,
             num_workers=0,
             pin_memory=selected_device.type == 'cuda',
@@ -97,7 +133,9 @@ def evaluate(cache_dir, checkpoint_path, output_dir, device='auto', approved=Fal
         if selected_device.type == 'cuda':
             torch.cuda.reset_peak_memory_stats(selected_device)
             torch.cuda.synchronize(selected_device)
+        started_at = datetime.now().astimezone().isoformat()
         started = time.perf_counter()
+        predicted_rows = 0
         with torch.inference_mode():
             for batch in loader:
                 images = batch['image'].to(
@@ -119,9 +157,15 @@ def evaluate(cache_dir, checkpoint_path, output_dir, device='auto', approved=Fal
                 baseline_confusion += torch.bincount(
                     baseline_encoded, minlength=len(CLASS_NAMES) ** 2
                 ).reshape(len(CLASS_NAMES), len(CLASS_NAMES))
+                predicted_rows += int(targets.shape[0])
+                if progress is not None:
+                    progress(predicted_rows, len(dataset))
         if selected_device.type == 'cuda':
             torch.cuda.synchronize(selected_device)
         elapsed = time.perf_counter() - started
+        require(predicted_rows == len(dataset), 'TEST_ROW_COUNT_MISMATCH')
+        require(weights_digest(model) == weights_before and
+                file_digest(checkpoint_file) == checkpoint_sha256, 'MODEL_WEIGHTS_CHANGED')
         model_metrics = classification_metrics(model_confusion)
         baseline_metrics = classification_metrics(baseline_confusion)
         peak_memory = (
@@ -134,13 +178,31 @@ def evaluate(cache_dir, checkpoint_path, output_dir, device='auto', approved=Fal
             'checkpoint_version': checkpoint['checkpoint_version'],
             'model_name': checkpoint['model_name'],
             'checkpoint_path': checkpoint_reference,
+            'checkpoint_sha256': checkpoint_sha256,
             'selected_epoch': checkpoint['selected_epoch'],
             'selection_metric': checkpoint['selection_metric'],
             'split_protocol_id': dataset.protocol,
+            'source_split_manifest_sha256': dataset.source_split_manifest_sha256,
+            'transform_config': dataset.transform_config,
+            'class_names': list(CLASS_NAMES),
+            'evaluated_split': 'test',
+            'test_augmentation': 'none',
+            'test_cache_sha256': cache_sha256,
+            'test_samples_sha256': sample_digest(
+                (sample, label) for _, _, label, sample in dataset.records
+            ),
             'test_rows': len(dataset),
+            'predicted_rows': predicted_rows,
             'test_split_used_once_for_this_report': True,
             'test_used_for_model_selection': False,
+            'model_training_mode': False,
+            'weights_sha256': weights_before,
+            'weights_unchanged': True,
             'device': str(selected_device),
+            'batch_size': EVALUATION_BATCH_SIZE,
+            'evaluate_code_sha256': file_digest(Path(__file__)),
+            'started_at': started_at,
+            'finished_at': datetime.now().astimezone().isoformat(),
             'inference_seconds': elapsed,
             'inference_ms_per_sample': elapsed * 1000 / len(dataset),
             'peak_cuda_memory_bytes': peak_memory,
@@ -171,7 +233,7 @@ def evaluate(cache_dir, checkpoint_path, output_dir, device='auto', approved=Fal
 
 def main():
     parser = argparse.ArgumentParser(
-        description='동결된 WM-811K CNN의 명시적 단일 Test 평가'
+        description='동결된 WM-811K 모델의 명시적 단일 Test 평가'
     )
     parser.add_argument('--cache-dir', required=True)
     parser.add_argument('--checkpoint', required=True)

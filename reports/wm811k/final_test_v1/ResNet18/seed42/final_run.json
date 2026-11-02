@@ -1,0 +1,15 @@
+{
+  "status": "final_test_run_complete",
+  "model_name": "ResNet18",
+  "role": "primary_candidate",
+  "seed": 42,
+  "run_path": "models/wm811k/weight_v1/alpha0_75/ResNet18_d4_seed42",
+  "checkpoint_sha256": "43c34e32cb57be4ae493f833078e9966057b418905a9e83cf10468698c5941e2",
+  "freeze_sha256": "437f19874de4ce67e4d23baba946e47853f2f8c28fe49b585cafd91dc01d6f1c",
+  "artifacts": {
+    "test_evaluation.json": "293c8522284cbb791ce023cf613524f00b385f178fdb8985791bfd035570a4bc",
+    "SUCCESS.json": "07f87f0b4f4d1faa060f5b5d21593377ce91840c82046591b5164b1c67a0509f"
+  },
+  "scope_note": "예정된 하나의 최종 평가 세션에서 동결 모델 상태 6개를 같은 Test로 평가했습니다. 전체 Test 접근이 1회라는 뜻이 아닙니다.",
+  "selection_scope_note": "test_used_for_model_selection=false는 이번 동결 절차의 범위를 뜻합니다. 과거 Test와 현재 Test의 표본 겹침은 미확인이며 이 값이 과거 이력을 증명하지 않습니다."
+}

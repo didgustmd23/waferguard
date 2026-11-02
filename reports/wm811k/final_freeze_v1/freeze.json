@@ -1,0 +1,559 @@
+{
+  "freeze_version": "wm_candidate_freeze_v1",
+  "status": "candidates_frozen_test_not_run",
+  "created_local_time": "2026-11-02T09:58:53.053801+09:00",
+  "selection_basis": "Human decision using Validation; ResNet fixed alpha0.75 primary, CNN scheduled alpha0.75 comparison",
+  "comparison_scope": "Tuned pipelines; scheduler differs, so not an architecture-only comparison",
+  "hash_note": "Change/mix detection only; not authentication or filesystem locking",
+  "candidates": [
+    {
+      "model_name": "ResNet18",
+      "role": "primary_candidate",
+      "runs": [
+        {
+          "seed": 42,
+          "run_path": "models/wm811k/weight_v1/alpha0_75/ResNet18_d4_seed42",
+          "selected_epoch": 11,
+          "validation_macro_f1": 0.8460116437965531,
+          "contract": {
+            "contract_version": "wm_compare_run_v3",
+            "model_name": "ResNet18",
+            "seed": 42,
+            "device": "cuda",
+            "training_config": {
+              "augmentation": "d4",
+              "class_weight_alpha": 0.75,
+              "scratch_weight_factor": 1.0,
+              "training_version": "wm_cnn_train_v1",
+              "batch_size": 64,
+              "epochs": 30,
+              "learning_rate": 0.001,
+              "weight_decay": 0.0001,
+              "patience": 6,
+              "seed": 42,
+              "class_weighted": true,
+              "max_class_weight": 10.0,
+              "selection_metric": "macro_f1"
+            },
+            "split_protocol_id": "wm_split_d02d993fd73c2cc4bf496d54774401c60a94b0d1737c7c135e7ae4837a6b85d6",
+            "source_split_manifest_sha256": "cb584be44cc7aec0bf02b88befdcac1b17aa7810726589e1e06f532a8d851fc5",
+            "cache_sha256": "d967b8737aaf375d6c3066fb7cb87c068a8580ad0439068f4815e23ffc0269cb",
+            "code_fingerprint": {
+              "sha256": "1aaf425fdbbd0e771ba5a2b5f962f1b3c2fd1b497a721fa829f63b3346fea896",
+              "files": {
+                "augment.py": "fa6cccf7aedd97c49bbd5faa3534653fb48b124d984e272d0fea8b246e965560",
+                "cache.py": "b8c43bb85120dbce6f22c95cfb33086dea7275e6d8b5f55770e2959f37eb637b",
+                "compare.py": "84f03298ca99335cefd1d6ef3e54fe241d63d2e34e1c7b2efb36a9fc49815871",
+                "dataset.py": "3fdcbab821441bcd1aaa7cf27ba658e48c7515d995fee4646f827d5bc033f222",
+                "metrics.py": "e0c1435098161511812f135361f7568e7b4e9315f2e65793d82f61b6ea627699",
+                "models.py": "fe87e715ac2779052c5b6a9ea11b3ae82298c0a3a51b87120b745f7f77f31252",
+                "train.py": "f2875e598040f46e9de1e7d0bfae1e2f08d22d76e9254f9ee6671e3e1ee27fda",
+                "transform.py": "eec2324b0eb2fef895ff758c94ddf26be7df7556d2e7e6a395350583b8053bda",
+                "validate_canonical.py": "5b1e29f232f17c07f12284e4a9329221187a43ed6f5dd40863d06239308ca13f"
+              }
+            }
+          },
+          "model_config": {
+            "num_classes": 9,
+            "input_channels": 2
+          },
+          "transform_config": {
+            "transform_version": "wm_resize_v1",
+            "target_size": [
+              128,
+              128
+            ],
+            "resize_backend": "numpy_half_pixel_nearest_v1",
+            "preserve_aspect_ratio": true,
+            "padding_value": 0,
+            "channel_order": [
+              "defect",
+              "valid"
+            ],
+            "augmentation": "none"
+          },
+          "class_mapping": {
+            "0": "None",
+            "1": "Center",
+            "2": "Donut",
+            "3": "Edge-Loc",
+            "4": "Edge-Ring",
+            "5": "Loc",
+            "6": "Near-Full",
+            "7": "Random",
+            "8": "Scratch"
+          },
+          "artifacts_sha256": {
+            "best_model.pt": "43c34e32cb57be4ae493f833078e9966057b418905a9e83cf10468698c5941e2",
+            "training_report.json": "499deeb289c2b948ca97dd32b5d37d8b0c3893ce7b2f7d55da84ead6bc42744f",
+            "inference.json": "764a13997a9868f4debe4f2333abac095b117fa0a6f677b332ae7de3abf79d30",
+            "SUCCESS.json": "3af42d7ee81ff03d0bef19858928e4f63d923a1e1208932c46a2297d7a18f719"
+          }
+        },
+        {
+          "seed": 43,
+          "run_path": "models/wm811k/weight_v1/alpha0_75/ResNet18_d4_seed43",
+          "selected_epoch": 11,
+          "validation_macro_f1": 0.8472700600688682,
+          "contract": {
+            "contract_version": "wm_compare_run_v3",
+            "model_name": "ResNet18",
+            "seed": 43,
+            "device": "cuda",
+            "training_config": {
+              "augmentation": "d4",
+              "class_weight_alpha": 0.75,
+              "scratch_weight_factor": 1.0,
+              "training_version": "wm_cnn_train_v1",
+              "batch_size": 64,
+              "epochs": 30,
+              "learning_rate": 0.001,
+              "weight_decay": 0.0001,
+              "patience": 6,
+              "seed": 43,
+              "class_weighted": true,
+              "max_class_weight": 10.0,
+              "selection_metric": "macro_f1"
+            },
+            "split_protocol_id": "wm_split_d02d993fd73c2cc4bf496d54774401c60a94b0d1737c7c135e7ae4837a6b85d6",
+            "source_split_manifest_sha256": "cb584be44cc7aec0bf02b88befdcac1b17aa7810726589e1e06f532a8d851fc5",
+            "cache_sha256": "d967b8737aaf375d6c3066fb7cb87c068a8580ad0439068f4815e23ffc0269cb",
+            "code_fingerprint": {
+              "sha256": "1aaf425fdbbd0e771ba5a2b5f962f1b3c2fd1b497a721fa829f63b3346fea896",
+              "files": {
+                "augment.py": "fa6cccf7aedd97c49bbd5faa3534653fb48b124d984e272d0fea8b246e965560",
+                "cache.py": "b8c43bb85120dbce6f22c95cfb33086dea7275e6d8b5f55770e2959f37eb637b",
+                "compare.py": "84f03298ca99335cefd1d6ef3e54fe241d63d2e34e1c7b2efb36a9fc49815871",
+                "dataset.py": "3fdcbab821441bcd1aaa7cf27ba658e48c7515d995fee4646f827d5bc033f222",
+                "metrics.py": "e0c1435098161511812f135361f7568e7b4e9315f2e65793d82f61b6ea627699",
+                "models.py": "fe87e715ac2779052c5b6a9ea11b3ae82298c0a3a51b87120b745f7f77f31252",
+                "train.py": "f2875e598040f46e9de1e7d0bfae1e2f08d22d76e9254f9ee6671e3e1ee27fda",
+                "transform.py": "eec2324b0eb2fef895ff758c94ddf26be7df7556d2e7e6a395350583b8053bda",
+                "validate_canonical.py": "5b1e29f232f17c07f12284e4a9329221187a43ed6f5dd40863d06239308ca13f"
+              }
+            }
+          },
+          "model_config": {
+            "num_classes": 9,
+            "input_channels": 2
+          },
+          "transform_config": {
+            "transform_version": "wm_resize_v1",
+            "target_size": [
+              128,
+              128
+            ],
+            "resize_backend": "numpy_half_pixel_nearest_v1",
+            "preserve_aspect_ratio": true,
+            "padding_value": 0,
+            "channel_order": [
+              "defect",
+              "valid"
+            ],
+            "augmentation": "none"
+          },
+          "class_mapping": {
+            "0": "None",
+            "1": "Center",
+            "2": "Donut",
+            "3": "Edge-Loc",
+            "4": "Edge-Ring",
+            "5": "Loc",
+            "6": "Near-Full",
+            "7": "Random",
+            "8": "Scratch"
+          },
+          "artifacts_sha256": {
+            "best_model.pt": "fff465888d5d0eb4d0c6bd3cb60f85e431e0bc57931fd0b21acf16bfb2b3eb51",
+            "training_report.json": "531d9e1d7f4cf75b37f1efa71400d8919fd5a244aa07db70b29f86536de0b406",
+            "inference.json": "340ee7a71e6825d7cd9ea61d99c4c41bd951a1302009c68b420f8cc1d6f33c6e",
+            "SUCCESS.json": "8a17529da00a684567c7d0c83c88259b2548b4470dccd5576a8937de917a5a39"
+          }
+        },
+        {
+          "seed": 44,
+          "run_path": "models/wm811k/weight_v1/alpha0_75/ResNet18_d4_seed44",
+          "selected_epoch": 10,
+          "validation_macro_f1": 0.8258915480455469,
+          "contract": {
+            "contract_version": "wm_compare_run_v3",
+            "model_name": "ResNet18",
+            "seed": 44,
+            "device": "cuda",
+            "training_config": {
+              "augmentation": "d4",
+              "class_weight_alpha": 0.75,
+              "scratch_weight_factor": 1.0,
+              "training_version": "wm_cnn_train_v1",
+              "batch_size": 64,
+              "epochs": 30,
+              "learning_rate": 0.001,
+              "weight_decay": 0.0001,
+              "patience": 6,
+              "seed": 44,
+              "class_weighted": true,
+              "max_class_weight": 10.0,
+              "selection_metric": "macro_f1"
+            },
+            "split_protocol_id": "wm_split_d02d993fd73c2cc4bf496d54774401c60a94b0d1737c7c135e7ae4837a6b85d6",
+            "source_split_manifest_sha256": "cb584be44cc7aec0bf02b88befdcac1b17aa7810726589e1e06f532a8d851fc5",
+            "cache_sha256": "d967b8737aaf375d6c3066fb7cb87c068a8580ad0439068f4815e23ffc0269cb",
+            "code_fingerprint": {
+              "sha256": "1aaf425fdbbd0e771ba5a2b5f962f1b3c2fd1b497a721fa829f63b3346fea896",
+              "files": {
+                "augment.py": "fa6cccf7aedd97c49bbd5faa3534653fb48b124d984e272d0fea8b246e965560",
+                "cache.py": "b8c43bb85120dbce6f22c95cfb33086dea7275e6d8b5f55770e2959f37eb637b",
+                "compare.py": "84f03298ca99335cefd1d6ef3e54fe241d63d2e34e1c7b2efb36a9fc49815871",
+                "dataset.py": "3fdcbab821441bcd1aaa7cf27ba658e48c7515d995fee4646f827d5bc033f222",
+                "metrics.py": "e0c1435098161511812f135361f7568e7b4e9315f2e65793d82f61b6ea627699",
+                "models.py": "fe87e715ac2779052c5b6a9ea11b3ae82298c0a3a51b87120b745f7f77f31252",
+                "train.py": "f2875e598040f46e9de1e7d0bfae1e2f08d22d76e9254f9ee6671e3e1ee27fda",
+                "transform.py": "eec2324b0eb2fef895ff758c94ddf26be7df7556d2e7e6a395350583b8053bda",
+                "validate_canonical.py": "5b1e29f232f17c07f12284e4a9329221187a43ed6f5dd40863d06239308ca13f"
+              }
+            }
+          },
+          "model_config": {
+            "num_classes": 9,
+            "input_channels": 2
+          },
+          "transform_config": {
+            "transform_version": "wm_resize_v1",
+            "target_size": [
+              128,
+              128
+            ],
+            "resize_backend": "numpy_half_pixel_nearest_v1",
+            "preserve_aspect_ratio": true,
+            "padding_value": 0,
+            "channel_order": [
+              "defect",
+              "valid"
+            ],
+            "augmentation": "none"
+          },
+          "class_mapping": {
+            "0": "None",
+            "1": "Center",
+            "2": "Donut",
+            "3": "Edge-Loc",
+            "4": "Edge-Ring",
+            "5": "Loc",
+            "6": "Near-Full",
+            "7": "Random",
+            "8": "Scratch"
+          },
+          "artifacts_sha256": {
+            "best_model.pt": "373f0fe11190b29d18d1298c54a45bb058fec52be0467c53dce656c33e253b13",
+            "training_report.json": "0a8d2a244af0ac57124a3bc0526f7515c6454d33a5a0abdc3235b343f6874a5b",
+            "inference.json": "853d7a54408febdc903fac6be01e53fe4eeff9276594ce896a797a60e7df6b0e",
+            "SUCCESS.json": "a21d159b5ae991eb6b5e017eec917d0d64f1db985a64ffdfc493e607cd1c47ff"
+          }
+        }
+      ],
+      "validation_macro_f1_mean": 0.8397244173036561,
+      "validation_macro_f1_std": 0.011996128826107342
+    },
+    {
+      "model_name": "SmallWaferCNN",
+      "role": "comparison_candidate",
+      "runs": [
+        {
+          "seed": 42,
+          "run_path": "models/wm811k/lr_v1/SmallWaferCNN/plateau_alpha0_75/SmallWaferCNN_d4_seed42",
+          "selected_epoch": 15,
+          "validation_macro_f1": 0.8269468608050814,
+          "contract": {
+            "contract_version": "wm_compare_run_v3",
+            "model_name": "SmallWaferCNN",
+            "seed": 42,
+            "device": "cuda",
+            "training_config": {
+              "augmentation": "d4",
+              "class_weight_alpha": 0.75,
+              "scratch_weight_factor": 1.0,
+              "training_version": "wm_cnn_train_v1",
+              "batch_size": 64,
+              "epochs": 30,
+              "learning_rate": 0.001,
+              "weight_decay": 0.0001,
+              "patience": 6,
+              "seed": 42,
+              "class_weighted": true,
+              "max_class_weight": 10.0,
+              "selection_metric": "macro_f1",
+              "lr_scheduler": {
+                "type": "ReduceLROnPlateau",
+                "metric": "macro_f1",
+                "mode": "max",
+                "factor": 0.5,
+                "patience": 2,
+                "threshold": 0.0,
+                "threshold_mode": "abs",
+                "cooldown": 0,
+                "min_lr": 1e-05,
+                "eps": 1e-08
+              }
+            },
+            "split_protocol_id": "wm_split_d02d993fd73c2cc4bf496d54774401c60a94b0d1737c7c135e7ae4837a6b85d6",
+            "source_split_manifest_sha256": "cb584be44cc7aec0bf02b88befdcac1b17aa7810726589e1e06f532a8d851fc5",
+            "cache_sha256": "d967b8737aaf375d6c3066fb7cb87c068a8580ad0439068f4815e23ffc0269cb",
+            "code_fingerprint": {
+              "sha256": "31e7f2cbf7e4b5d6884fdb5bc7df23708dd9090fd43720e8d0b08565f815548e",
+              "files": {
+                "augment.py": "fa6cccf7aedd97c49bbd5faa3534653fb48b124d984e272d0fea8b246e965560",
+                "cache.py": "b8c43bb85120dbce6f22c95cfb33086dea7275e6d8b5f55770e2959f37eb637b",
+                "compare.py": "84f03298ca99335cefd1d6ef3e54fe241d63d2e34e1c7b2efb36a9fc49815871",
+                "dataset.py": "3fdcbab821441bcd1aaa7cf27ba658e48c7515d995fee4646f827d5bc033f222",
+                "metrics.py": "e0c1435098161511812f135361f7568e7b4e9315f2e65793d82f61b6ea627699",
+                "models.py": "fe87e715ac2779052c5b6a9ea11b3ae82298c0a3a51b87120b745f7f77f31252",
+                "train.py": "5e37fc2146fa987e5dea82ad67c7c342536f13d1d23974e57f2b0afa8cb4a017",
+                "transform.py": "eec2324b0eb2fef895ff758c94ddf26be7df7556d2e7e6a395350583b8053bda",
+                "validate_canonical.py": "5b1e29f232f17c07f12284e4a9329221187a43ed6f5dd40863d06239308ca13f"
+              }
+            }
+          },
+          "model_config": {
+            "num_classes": 9,
+            "input_channels": 2
+          },
+          "transform_config": {
+            "transform_version": "wm_resize_v1",
+            "target_size": [
+              128,
+              128
+            ],
+            "resize_backend": "numpy_half_pixel_nearest_v1",
+            "preserve_aspect_ratio": true,
+            "padding_value": 0,
+            "channel_order": [
+              "defect",
+              "valid"
+            ],
+            "augmentation": "none"
+          },
+          "class_mapping": {
+            "0": "None",
+            "1": "Center",
+            "2": "Donut",
+            "3": "Edge-Loc",
+            "4": "Edge-Ring",
+            "5": "Loc",
+            "6": "Near-Full",
+            "7": "Random",
+            "8": "Scratch"
+          },
+          "artifacts_sha256": {
+            "best_model.pt": "b1ae4ce45ce832b06355d4b63a580ffc219ccf1792b4b99e2de579cd799cd81b",
+            "training_report.json": "1870768a07802421428a46c51edae74a0c946f3cbfdc28087529f40dadd317d6",
+            "inference.json": "675b66692513fca69f041473a1f2d052c74fd066143d015015d30c7eec68649c",
+            "SUCCESS.json": "31dfbc7da1ddc82e848bc9b09a4d15aa66ac6725d04decbeeca03616b5fee5f6"
+          }
+        },
+        {
+          "seed": 43,
+          "run_path": "models/wm811k/lr_v1/SmallWaferCNN/plateau_alpha0_75/SmallWaferCNN_d4_seed43",
+          "selected_epoch": 11,
+          "validation_macro_f1": 0.836900578802333,
+          "contract": {
+            "contract_version": "wm_compare_run_v3",
+            "model_name": "SmallWaferCNN",
+            "seed": 43,
+            "device": "cuda",
+            "training_config": {
+              "augmentation": "d4",
+              "class_weight_alpha": 0.75,
+              "scratch_weight_factor": 1.0,
+              "training_version": "wm_cnn_train_v1",
+              "batch_size": 64,
+              "epochs": 30,
+              "learning_rate": 0.001,
+              "weight_decay": 0.0001,
+              "patience": 6,
+              "seed": 43,
+              "class_weighted": true,
+              "max_class_weight": 10.0,
+              "selection_metric": "macro_f1",
+              "lr_scheduler": {
+                "type": "ReduceLROnPlateau",
+                "metric": "macro_f1",
+                "mode": "max",
+                "factor": 0.5,
+                "patience": 2,
+                "threshold": 0.0,
+                "threshold_mode": "abs",
+                "cooldown": 0,
+                "min_lr": 1e-05,
+                "eps": 1e-08
+              }
+            },
+            "split_protocol_id": "wm_split_d02d993fd73c2cc4bf496d54774401c60a94b0d1737c7c135e7ae4837a6b85d6",
+            "source_split_manifest_sha256": "cb584be44cc7aec0bf02b88befdcac1b17aa7810726589e1e06f532a8d851fc5",
+            "cache_sha256": "d967b8737aaf375d6c3066fb7cb87c068a8580ad0439068f4815e23ffc0269cb",
+            "code_fingerprint": {
+              "sha256": "31e7f2cbf7e4b5d6884fdb5bc7df23708dd9090fd43720e8d0b08565f815548e",
+              "files": {
+                "augment.py": "fa6cccf7aedd97c49bbd5faa3534653fb48b124d984e272d0fea8b246e965560",
+                "cache.py": "b8c43bb85120dbce6f22c95cfb33086dea7275e6d8b5f55770e2959f37eb637b",
+                "compare.py": "84f03298ca99335cefd1d6ef3e54fe241d63d2e34e1c7b2efb36a9fc49815871",
+                "dataset.py": "3fdcbab821441bcd1aaa7cf27ba658e48c7515d995fee4646f827d5bc033f222",
+                "metrics.py": "e0c1435098161511812f135361f7568e7b4e9315f2e65793d82f61b6ea627699",
+                "models.py": "fe87e715ac2779052c5b6a9ea11b3ae82298c0a3a51b87120b745f7f77f31252",
+                "train.py": "5e37fc2146fa987e5dea82ad67c7c342536f13d1d23974e57f2b0afa8cb4a017",
+                "transform.py": "eec2324b0eb2fef895ff758c94ddf26be7df7556d2e7e6a395350583b8053bda",
+                "validate_canonical.py": "5b1e29f232f17c07f12284e4a9329221187a43ed6f5dd40863d06239308ca13f"
+              }
+            }
+          },
+          "model_config": {
+            "num_classes": 9,
+            "input_channels": 2
+          },
+          "transform_config": {
+            "transform_version": "wm_resize_v1",
+            "target_size": [
+              128,
+              128
+            ],
+            "resize_backend": "numpy_half_pixel_nearest_v1",
+            "preserve_aspect_ratio": true,
+            "padding_value": 0,
+            "channel_order": [
+              "defect",
+              "valid"
+            ],
+            "augmentation": "none"
+          },
+          "class_mapping": {
+            "0": "None",
+            "1": "Center",
+            "2": "Donut",
+            "3": "Edge-Loc",
+            "4": "Edge-Ring",
+            "5": "Loc",
+            "6": "Near-Full",
+            "7": "Random",
+            "8": "Scratch"
+          },
+          "artifacts_sha256": {
+            "best_model.pt": "aed4ce6224e69f08771fd1343f0a1cb1375c0a8b74a735cc39aab986d4aede8b",
+            "training_report.json": "fab0982ae322c8cc518a58a4554b4e4920b7cba0479784330cf6b86f15048ef8",
+            "inference.json": "73dd768aa47d8e8c8c85459b8f4336bbd4e69ea2fe192c466a8cc79f6e9530f9",
+            "SUCCESS.json": "cd2d32f01512252a96d0bb02167e45ce791387cfe19f4a5310c66c02e8c949e4"
+          }
+        },
+        {
+          "seed": 44,
+          "run_path": "models/wm811k/lr_v1/SmallWaferCNN/plateau_alpha0_75/SmallWaferCNN_d4_seed44",
+          "selected_epoch": 13,
+          "validation_macro_f1": 0.8242754275276831,
+          "contract": {
+            "contract_version": "wm_compare_run_v3",
+            "model_name": "SmallWaferCNN",
+            "seed": 44,
+            "device": "cuda",
+            "training_config": {
+              "augmentation": "d4",
+              "class_weight_alpha": 0.75,
+              "scratch_weight_factor": 1.0,
+              "training_version": "wm_cnn_train_v1",
+              "batch_size": 64,
+              "epochs": 30,
+              "learning_rate": 0.001,
+              "weight_decay": 0.0001,
+              "patience": 6,
+              "seed": 44,
+              "class_weighted": true,
+              "max_class_weight": 10.0,
+              "selection_metric": "macro_f1",
+              "lr_scheduler": {
+                "type": "ReduceLROnPlateau",
+                "metric": "macro_f1",
+                "mode": "max",
+                "factor": 0.5,
+                "patience": 2,
+                "threshold": 0.0,
+                "threshold_mode": "abs",
+                "cooldown": 0,
+                "min_lr": 1e-05,
+                "eps": 1e-08
+              }
+            },
+            "split_protocol_id": "wm_split_d02d993fd73c2cc4bf496d54774401c60a94b0d1737c7c135e7ae4837a6b85d6",
+            "source_split_manifest_sha256": "cb584be44cc7aec0bf02b88befdcac1b17aa7810726589e1e06f532a8d851fc5",
+            "cache_sha256": "d967b8737aaf375d6c3066fb7cb87c068a8580ad0439068f4815e23ffc0269cb",
+            "code_fingerprint": {
+              "sha256": "31e7f2cbf7e4b5d6884fdb5bc7df23708dd9090fd43720e8d0b08565f815548e",
+              "files": {
+                "augment.py": "fa6cccf7aedd97c49bbd5faa3534653fb48b124d984e272d0fea8b246e965560",
+                "cache.py": "b8c43bb85120dbce6f22c95cfb33086dea7275e6d8b5f55770e2959f37eb637b",
+                "compare.py": "84f03298ca99335cefd1d6ef3e54fe241d63d2e34e1c7b2efb36a9fc49815871",
+                "dataset.py": "3fdcbab821441bcd1aaa7cf27ba658e48c7515d995fee4646f827d5bc033f222",
+                "metrics.py": "e0c1435098161511812f135361f7568e7b4e9315f2e65793d82f61b6ea627699",
+                "models.py": "fe87e715ac2779052c5b6a9ea11b3ae82298c0a3a51b87120b745f7f77f31252",
+                "train.py": "5e37fc2146fa987e5dea82ad67c7c342536f13d1d23974e57f2b0afa8cb4a017",
+                "transform.py": "eec2324b0eb2fef895ff758c94ddf26be7df7556d2e7e6a395350583b8053bda",
+                "validate_canonical.py": "5b1e29f232f17c07f12284e4a9329221187a43ed6f5dd40863d06239308ca13f"
+              }
+            }
+          },
+          "model_config": {
+            "num_classes": 9,
+            "input_channels": 2
+          },
+          "transform_config": {
+            "transform_version": "wm_resize_v1",
+            "target_size": [
+              128,
+              128
+            ],
+            "resize_backend": "numpy_half_pixel_nearest_v1",
+            "preserve_aspect_ratio": true,
+            "padding_value": 0,
+            "channel_order": [
+              "defect",
+              "valid"
+            ],
+            "augmentation": "none"
+          },
+          "class_mapping": {
+            "0": "None",
+            "1": "Center",
+            "2": "Donut",
+            "3": "Edge-Loc",
+            "4": "Edge-Ring",
+            "5": "Loc",
+            "6": "Near-Full",
+            "7": "Random",
+            "8": "Scratch"
+          },
+          "artifacts_sha256": {
+            "best_model.pt": "4946e4dba5bed6a25f78ea925977429e28f18ccd30b5aad7395a01d9f24ac15d",
+            "training_report.json": "312b6f18261104954cc6cddb3b639ffcb7db22333a3e09a520decc0dcfda431d",
+            "inference.json": "18961a73e98aa2905f926b1d1c38e63d1c033345daf0f22a51f97834fdd494f2",
+            "SUCCESS.json": "a3687192280797a8337dac1e9aa332282666c7f5897a594062a06fe241c45189"
+          }
+        }
+      ],
+      "validation_macro_f1_mean": 0.8293742890450325,
+      "validation_macro_f1_std": 0.00665341394113073
+    }
+  ],
+  "evaluation_plan": {
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "checkpoint_count": 6,
+    "same_test_partition_for_all": true,
+    "fit_on_test": false,
+    "test_augmentation": "none",
+    "test_used_for_current_selection": false,
+    "test_executed_by_this_freeze": false,
+    "no_best_test_seed_selection": true,
+    "no_test_based_retuning": true,
+    "test_cache_preparation": "Pending; separate authorization/execution step",
+    "past_test_overlap": "Not established; do not assert current Test previously evaluated solely from historical evaluation"
+  }
+}

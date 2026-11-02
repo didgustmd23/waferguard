@@ -1,0 +1,173 @@
+{
+  "status": "weight_comparison_complete",
+  "selection_status": "선정 보류",
+  "selected_model": null,
+  "split": "validation",
+  "test_split_used": false,
+  "scope": "additional_validation_tuning",
+  "model_name": "ResNet18",
+  "augmentation": "d4",
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "candidate_name": "cap1_5",
+  "code": {
+    "baseline_code_sha256": "026d52b681bad5ebcc8a2c497c84128cf73b08f6d496f38ffcc63de20f9bef3f",
+    "candidate_code_sha256": "1aaf425fdbbd0e771ba5a2b5f962f1b3c2fd1b497a721fa829f63b3346fea896",
+    "same_code": false,
+    "differing_code_files": [
+      "train.py"
+    ]
+  },
+  "cache_sha256": "d967b8737aaf375d6c3066fb7cb87c068a8580ad0439068f4815e23ffc0269cb",
+  "criteria": {
+    "criteria_version": "wm_weight_decision_reference_v1",
+    "status": "reviewer_reference_not_user_approved_not_statistical",
+    "macro_f1_mean_difference_min_pp": -0.5,
+    "scratch_precision_mean_difference_min_pp": 5.0,
+    "scratch_precision_improved_seeds_min": 2,
+    "scratch_recall_mean_difference_min_pp": -3.0,
+    "random_recall_mean_difference_min_pp": -3.0,
+    "near_full_fn_increase_sum_max": 1,
+    "donut_fn_increase_sum_max": 3
+  },
+  "criteria_sha256": "e28802a6b3ebe43e73c52f9216ff86aae6a9d695d4047bf00b59977e649dd9e1",
+  "criteria_results": [
+    {
+      "item": "평균 Macro-F1 차이(%p)",
+      "value": 1.244315091,
+      "limit": -0.5,
+      "rule": ">=",
+      "passed": true
+    },
+    {
+      "item": "평균 Scratch Precision 차이(%p)",
+      "value": -2.249193689,
+      "limit": 5.0,
+      "rule": ">=",
+      "passed": false
+    },
+    {
+      "item": "Scratch Precision 개선 seed 수",
+      "value": 1,
+      "limit": 2,
+      "rule": ">=",
+      "passed": false
+    },
+    {
+      "item": "평균 Scratch Recall 차이(%p)",
+      "value": -3.418803419,
+      "limit": -3.0,
+      "rule": ">=",
+      "passed": false
+    },
+    {
+      "item": "평균 Random Recall 차이(%p)",
+      "value": 11.610486891,
+      "limit": -3.0,
+      "rule": ">=",
+      "passed": true
+    },
+    {
+      "item": "Near-Full FN 증가 합계",
+      "value": 5,
+      "limit": 1,
+      "rule": "<=",
+      "passed": false
+    },
+    {
+      "item": "Donut FN 증가 합계",
+      "value": 16,
+      "limit": 3,
+      "rule": "<=",
+      "passed": false
+    }
+  ],
+  "all_reference_items_passed": false,
+  "weight_settings": {
+    "baseline": {
+      "max_class_weight": 10.0,
+      "class_weight_alpha": 1.0,
+      "scratch_weight_factor": 1.0
+    },
+    "candidate": {
+      "max_class_weight": 1.5,
+      "class_weight_alpha": 1.0,
+      "scratch_weight_factor": 1.0
+    }
+  },
+  "class_weights": {
+    "baseline": {
+      "None": 0.006011943332850933,
+      "Center": 0.19460032880306244,
+      "Donut": 1.3936753273010254,
+      "Edge-Loc": 0.16748520731925964,
+      "Edge-Ring": 0.07961267977952957,
+      "Loc": 0.2176533043384552,
+      "Near-Full": 5.414366722106934,
+      "Random": 0.8892782926559448,
+      "Scratch": 0.637316107749939
+    },
+    "candidate": {
+      "None": 0.02710673399269581,
+      "Center": 0.8774166703224182,
+      "Donut": 1.5,
+      "Edge-Loc": 0.7551596164703369,
+      "Edge-Ring": 0.35895875096321106,
+      "Loc": 0.9813582301139832,
+      "Near-Full": 1.5,
+      "Random": 1.5,
+      "Scratch": 1.5
+    }
+  },
+  "selected_epochs": {
+    "baseline": {
+      "42": 11,
+      "43": 9,
+      "44": 6
+    },
+    "candidate": {
+      "42": 3,
+      "43": 9,
+      "44": 8
+    }
+  },
+  "input_digests": {
+    "baseline": {
+      "42": {
+        "best_model.pt": "d88e9fed9dda9c2d521e192050e573c7908dbe3a73682416b2a9b052d752d285",
+        "training_report.json": "c407bef21f5aa465e4388ee42681de1d15e5c18b43a7415f2e4eab84c9e287a8",
+        "SUCCESS.json": "bf79c1eeaf7f5b8b26507fd9aada27e50c37322c69a3b047a2a1d977df697fe9"
+      },
+      "43": {
+        "best_model.pt": "98143bb213a81c066784dad67964d0e408200ba97ce28e4bba9745a5057ce0f7",
+        "training_report.json": "a4d5624e9221725b449e2cb2995df9364750ab22cc46a327fded8b1a40b6ecc6",
+        "SUCCESS.json": "1446ab19c8bcda4b8793cfceef92aed0f9e0dc004a1c19bc354214c3f903cff6"
+      },
+      "44": {
+        "best_model.pt": "7caebafd297428ab03ee18e2b0f6b4a9f90598adc4dfebad0c3a95979168dce4",
+        "training_report.json": "8d4cd883e3fc325543dd5c84b77e4d3498c785af2b439b00746081a7c6de620e",
+        "SUCCESS.json": "b67de7a8d00293945663101ac7fdf9753d2efb7c97d4055f1684542c44b6f7db"
+      }
+    },
+    "candidate": {
+      "42": {
+        "best_model.pt": "0edd34537d13f3ad27490085b71270c26238554650a2d7ead242fb61344c4a09",
+        "training_report.json": "11ebada26a252b6ec6f873b7e6ebce91e7fefd00b14abfaefa040068b5bfe2a4",
+        "SUCCESS.json": "14679016641490438a9ba9d34253a368753758ec19bc842179e162f868de4cda"
+      },
+      "43": {
+        "best_model.pt": "3862fbf317e723e4678f70b4be0bf2505a145ea05e82be6e75f972421e20d776",
+        "training_report.json": "9b95196a008b42c620ac0e18daf47a966c5204458b12741bbf79eb23379d8af5",
+        "SUCCESS.json": "040f70adf5efa33879f83d10d8d7d1f55f8600fa903c70ac2cdcf072eaae1da6"
+      },
+      "44": {
+        "best_model.pt": "fd1e94427dee78f32cbab4cbf8e469bac093def6ede350d11baeb393814b3dd5",
+        "training_report.json": "136d4e2b269e6e609809350d011698aa657ed7e1829dcde2f1d3b8d365aa3253",
+        "SUCCESS.json": "82730a27056844ff6daf6b5ed2e5b834ee107886123e54ae11b8ee4c42e90cf2"
+      }
+    }
+  }
+}

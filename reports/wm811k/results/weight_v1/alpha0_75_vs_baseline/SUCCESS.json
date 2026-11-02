@@ -1,0 +1,9 @@
+{
+  "status": "weight_comparison_complete",
+  "artifacts": {
+    "comparison.json": "0041a974e79adf472fcbaec3ca89b153df6394b3dfccaf540898c8205f0eb55e",
+    "comparison.md": "13a1db34931f4de1bb0c8ede46e018385f361146c6b4ddf5090af1adb1066151",
+    "seed_differences.csv": "65b12d30f469db4c4944a96925da85a9c17a79283794d59f01f01d31a8b3e7c0",
+    "summary.csv": "0b35c7af20d28cf3992060b9d3f6c7373210e60219c3fe429f3dc4464b6f1af0"
+  }
+}

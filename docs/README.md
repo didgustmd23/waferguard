@@ -6,9 +6,9 @@ WaferGuard는 전처리 에이전트, SECOM 머신러닝, WM-811K 딥러닝의 �
 | --- | --- | --- |
 | SECOM 머신러닝 | [SECOM 문서 목록](README.md#secom-문서), [실행 안내](secom/USAGE.md) | 개발 결과·후보 모델 계약·실행 방법 기록 |
 | 범용 전처리 에이전트 | [사용 안내·현재 상태](agents/GUIDE.md), [단일 설계](agents/DESIGN.md) | 지원·검증·후속 범위는 사용 안내 한 곳에서 관리 |
-| WM-811K 딥러닝 | [전처리·학습 설계](WM811K/PREPROCESSING_DESIGN.md), [실행 결과](WM811K/CACHE_DATASET.md) | 작은 CNN 학습·동결·Test 1회 평가 완료; ResNet18 비교는 후속 |
+| WM-811K 딥러닝 | [전처리·학습 설계](WM811K/PREPROCESSING_DESIGN.md), [실행 안내](WM811K/CACHE_DATASET.md), [결과 보고서](../reports/wm811k/report.md) | 학습 39회·Validation 기반 후보 동결·동결 후보 6개의 최종 Test 평가 완료 |
 
-WM 전처리의 검증·분할·변환·캐시·Dataset, 작은 CNN 학습 및 동결 모델 Test 평가를 구현했습니다. 그룹 분할의 GPU 학습·Test 1회 평가는 2026-10-24~25 실행 기록입니다. 이후 checkpoint v2와 분할 해시·수치 검증을 보완했으며, 그 코드로 과거 성능을 재검증한 것은 아닙니다. 해당 Test 결과를 모델 개선에 사용하지 않으며, 두 데이터셋의 학습·평가는 독립적으로 수행합니다.
+WM 전처리의 검증·분할·변환·캐시·Dataset, 3모델 학습·Validation 비교와 동결 후보의 최종 평가를 구현했습니다. 수치와 해석은 [결과 보고서](../reports/wm811k/report.md#22-최종-test-결과)에 있습니다. 과거 평가 분할과 현재 Test의 표본 겹침은 미확인입니다. 두 데이터셋의 학습·평가는 독립적으로 수행합니다.
 
 전체 기한은 **2026-11-05**다. [프로젝트 마무리 일정](PROJECT_SCHEDULE.md)에 전처리(10/12~10/18), 에이전트(10/19~10/25), 테스트·보고서·발표자료 준비(10/26~11/05)의 완료 기준을 정리한다.
 
@@ -27,9 +27,9 @@ WM 전처리의 검증·분할·변환·캐시·Dataset, 작은 CNN 학습 및 �
 현재 상태를 여러 문서에 복제하거나 날짜별 구현 기록을 추가하지 않습니다. SECOM·WM의 실험/도메인 문서는 아래에서 별도로 관리합니다.
 
 ## WM-811K 문서
-- [입력 캐시·PyTorch Dataset](WM811K/CACHE_DATASET.md): 처리 흐름·분할 컬럼·학습 연결·실행 명령·실제 Validation 및 Test 평가 결과를 포함합니다.
+- [입력 캐시·PyTorch Dataset](WM811K/CACHE_DATASET.md): 처리 흐름·분할 컬럼·학습 연결·실행 명령과 현재 실험 상태를 포함합니다.
 - [입력 변환·패턴 보존 검사](WM811K/TRANSFORM_CHECK.md): 128 입력·2채널·Train/Validation 변환 검사와 시각 예시. Test 맵은 별도 캐시 단계에서 처리합니다.
-- [충돌 제외·그룹 분할 실행](WM811K/GROUP_SPLIT.md): 그룹 분할 계약·승인·실행 방법. 실제 학습·평가에는 `group_v2`를 사용했습니다.
+- [충돌 제외·그룹 분할 실행](WM811K/GROUP_SPLIT.md): 그룹 분할 계약·승인·실행 방법. 현재 실험은 `group_v1` 분할을 사용했습니다.
 - [EDA 해설 보고서](../reports/wm811k/report.md): analysis.ipynb의 분포·상관관계·패턴 예시 해석.
 - [전처리·학습 설계](WM811K/PREPROCESSING_DESIGN.md): 데이터 계약, 분할·변환 방법, 학습·평가 범위와 한계.
 

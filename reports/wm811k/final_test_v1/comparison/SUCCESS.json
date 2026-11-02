@@ -1,0 +1,12 @@
+{
+  "status": "final_test_comparison_complete",
+  "artifacts": {
+    "comparison.json": "b82589b2e13b51886875ac7b59f48eed0896814e41967a6d45042dcfe0d7536c",
+    "comparison.md": "5a7c412187fe8a786b1cc82bf9b645090a592ce453fcbfde49c2729e765c44d4",
+    "confusion_matrices.csv": "fd1244ab7118ec448fbdee17f2d7403c47eb4e89c07f7a07813267e736e3c41a",
+    "per_class.csv": "083a05654ad74edebd4bcb733370ca68d122b4a88481ea18c99cf1e1c566a141",
+    "runs.csv": "8f95edfcafb58fb43a14c949971892413d2682a48c1c4ededc1e6d40be06dcaf",
+    "seed_differences.csv": "b0092db8761950197842f222915fe9d51dc6061b68a265de1c2c908f19691cd1",
+    "summary.csv": "1a0e11a3201e7e5dd04524e7361fadcae12d8b4e5b686ae3fbda797e6cb1c87a"
+  }
+}

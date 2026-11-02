@@ -1,0 +1,198 @@
+{
+  "status": "lr_schedule_comparison_complete",
+  "selection_status": "선정 보류",
+  "selected_model": null,
+  "split": "validation",
+  "test_split_used": false,
+  "scope": "additional_validation_tuning",
+  "model_name": "ResNet18",
+  "augmentation": "d4",
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "candidate_name": "plateau_alpha0_75",
+  "code": {
+    "baseline_code_sha256": "1aaf425fdbbd0e771ba5a2b5f962f1b3c2fd1b497a721fa829f63b3346fea896",
+    "candidate_code_sha256": "31e7f2cbf7e4b5d6884fdb5bc7df23708dd9090fd43720e8d0b08565f815548e",
+    "same_code": false,
+    "differing_code_files": [
+      "train.py"
+    ]
+  },
+  "cache_sha256": "d967b8737aaf375d6c3066fb7cb87c068a8580ad0439068f4815e23ffc0269cb",
+  "learning_rate": 0.001,
+  "lr_scheduler": {
+    "type": "ReduceLROnPlateau",
+    "metric": "macro_f1",
+    "mode": "max",
+    "factor": 0.5,
+    "patience": 2,
+    "threshold": 0.0,
+    "threshold_mode": "abs",
+    "cooldown": 0,
+    "min_lr": 1e-05,
+    "eps": 1e-08
+  },
+  "training_config": {
+    "baseline": {
+      "augmentation": "d4",
+      "class_weight_alpha": 0.75,
+      "scratch_weight_factor": 1.0,
+      "training_version": "wm_cnn_train_v1",
+      "batch_size": 64,
+      "epochs": 30,
+      "learning_rate": 0.001,
+      "weight_decay": 0.0001,
+      "patience": 6,
+      "seed": 42,
+      "class_weighted": true,
+      "max_class_weight": 10.0,
+      "selection_metric": "macro_f1"
+    },
+    "candidate": {
+      "augmentation": "d4",
+      "class_weight_alpha": 0.75,
+      "scratch_weight_factor": 1.0,
+      "training_version": "wm_cnn_train_v1",
+      "batch_size": 64,
+      "epochs": 30,
+      "learning_rate": 0.001,
+      "weight_decay": 0.0001,
+      "patience": 6,
+      "seed": 42,
+      "class_weighted": true,
+      "max_class_weight": 10.0,
+      "selection_metric": "macro_f1",
+      "lr_scheduler": {
+        "type": "ReduceLROnPlateau",
+        "metric": "macro_f1",
+        "mode": "max",
+        "factor": 0.5,
+        "patience": 2,
+        "threshold": 0.0,
+        "threshold_mode": "abs",
+        "cooldown": 0,
+        "min_lr": 1e-05,
+        "eps": 1e-08
+      }
+    }
+  },
+  "schedules": {
+    "42": {
+      "state": "reduced_with_training",
+      "reductions": [
+        {
+          "epoch": 8,
+          "learning_rate": 0.001,
+          "next_learning_rate": 0.0005
+        },
+        {
+          "epoch": 11,
+          "learning_rate": 0.0005,
+          "next_learning_rate": 0.00025
+        }
+      ],
+      "first_reduction_epoch": 8,
+      "epochs_after_first_reduction": 3,
+      "selected_after_first_reduction": false,
+      "selected_epoch": 5,
+      "epochs_run": 11,
+      "last_trained_learning_rate": 0.0005
+    },
+    "43": {
+      "state": "reduced_with_training",
+      "reductions": [
+        {
+          "epoch": 7,
+          "learning_rate": 0.001,
+          "next_learning_rate": 0.0005
+        },
+        {
+          "epoch": 14,
+          "learning_rate": 0.0005,
+          "next_learning_rate": 0.00025
+        },
+        {
+          "epoch": 17,
+          "learning_rate": 0.00025,
+          "next_learning_rate": 0.000125
+        }
+      ],
+      "first_reduction_epoch": 7,
+      "epochs_after_first_reduction": 10,
+      "selected_after_first_reduction": true,
+      "selected_epoch": 11,
+      "epochs_run": 17,
+      "last_trained_learning_rate": 0.00025
+    },
+    "44": {
+      "state": "reduced_with_training",
+      "reductions": [
+        {
+          "epoch": 5,
+          "learning_rate": 0.001,
+          "next_learning_rate": 0.0005
+        },
+        {
+          "epoch": 9,
+          "learning_rate": 0.0005,
+          "next_learning_rate": 0.00025
+        },
+        {
+          "epoch": 13,
+          "learning_rate": 0.00025,
+          "next_learning_rate": 0.000125
+        },
+        {
+          "epoch": 16,
+          "learning_rate": 0.000125,
+          "next_learning_rate": 6.25e-05
+        }
+      ],
+      "first_reduction_epoch": 5,
+      "epochs_after_first_reduction": 11,
+      "selected_after_first_reduction": true,
+      "selected_epoch": 10,
+      "epochs_run": 16,
+      "last_trained_learning_rate": 0.000125
+    }
+  },
+  "input_digests": {
+    "baseline": {
+      "42": {
+        "best_model.pt": "43c34e32cb57be4ae493f833078e9966057b418905a9e83cf10468698c5941e2",
+        "training_report.json": "499deeb289c2b948ca97dd32b5d37d8b0c3893ce7b2f7d55da84ead6bc42744f",
+        "SUCCESS.json": "3af42d7ee81ff03d0bef19858928e4f63d923a1e1208932c46a2297d7a18f719"
+      },
+      "43": {
+        "best_model.pt": "fff465888d5d0eb4d0c6bd3cb60f85e431e0bc57931fd0b21acf16bfb2b3eb51",
+        "training_report.json": "531d9e1d7f4cf75b37f1efa71400d8919fd5a244aa07db70b29f86536de0b406",
+        "SUCCESS.json": "8a17529da00a684567c7d0c83c88259b2548b4470dccd5576a8937de917a5a39"
+      },
+      "44": {
+        "best_model.pt": "373f0fe11190b29d18d1298c54a45bb058fec52be0467c53dce656c33e253b13",
+        "training_report.json": "0a8d2a244af0ac57124a3bc0526f7515c6454d33a5a0abdc3235b343f6874a5b",
+        "SUCCESS.json": "a21d159b5ae991eb6b5e017eec917d0d64f1db985a64ffdfc493e607cd1c47ff"
+      }
+    },
+    "candidate": {
+      "42": {
+        "best_model.pt": "bf82a5c8c3c9d2e4b13569442b115eeb9121b674b7e535a8e18ae25d5b476dd1",
+        "training_report.json": "c56f2a2b7c588a4630f2427b30359e1f96d17f71177ae69ee2cdc89dd7b10e1b",
+        "SUCCESS.json": "d817432358745f766f4ae068ddc6e1f0921d93459884cf002a62df9937dd1e3c"
+      },
+      "43": {
+        "best_model.pt": "2f5dec970d1e170c29e970fb63eb794f963602705ee2f7c7c904550c65568690",
+        "training_report.json": "b65771e66460d705bbf309c428a06b0cff3515d0c187fdaf90dff4a13c630d42",
+        "SUCCESS.json": "d25aefcdae6016eeca8b1930b71fabe4e35aad5f6f12ef3bcdbf1880c6ca70f6"
+      },
+      "44": {
+        "best_model.pt": "7f8a3f8a07735061eaa6658fce0bb3d75b2225991e9c709ce2297f7842852846",
+        "training_report.json": "70b261588d623554bd54f0556f95cbfd449a6bb1dae0ac9449c5b2e84884dd09",
+        "SUCCESS.json": "c1ec1ab7ee4757125a387324a1666edab99eeb2d1d8bac659cfe33ea2a25de9c"
+      }
+    }
+  }
+}
